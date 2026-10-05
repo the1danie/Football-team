@@ -105,6 +105,10 @@ class Game(Base):
     # Минимум «Буду» к закрытию сбора, иначе игра отменяется (None/0 — без минимума).
     min_players: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cancel_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Минимум не набран к закрытию сбора: None — не спрашивали, "asked" — ждём решения админа,
+    # "keep" — админ решил проводить. min_recheck_at — когда спросить снова («Подождать»).
+    min_decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    min_recheck_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

@@ -209,7 +209,7 @@ def poll_invite(game: Game, deadline: datetime, now: datetime, penalty_points: i
     lines = ["📣 <b>Открыт сбор на игру — кто придёт?</b>", ""] + game_lines(game)
     lines += ["", f"Отметься {until(deadline, now)} кнопками ниже."]
     if game.min_players:
-        lines.append(f"Нужно минимум {game.min_players} {people_word(game.min_players)}, иначе отменим.")
+        lines.append(f"Нужно минимум {game.min_players} {people_word(game.min_players)}.")
     if penalty_points > 0:
         lines.append(f"Кто не ответит — получит {penalty_points} {minus_word(penalty_points)} ⚠️")
     return "\n".join(lines)
@@ -218,7 +218,7 @@ def poll_invite(game: Game, deadline: datetime, now: datetime, penalty_points: i
 def min_players_line(game: Game, yes: int) -> str:
     if yes >= game.min_players:
         return f"✅ Минимум {game.min_players} набран."
-    return f"⚠️ Пока {yes} из минимум {game.min_players} — иначе {KIND_WORDS.get(game.kind, 'игра')} отменится."
+    return f"⚠️ Пока {yes} из минимум {game.min_players} — отмечайтесь!"
 
 
 def rsvp_nudge(game: Game, deadline: datetime, now: datetime, penalty_points: int, yes: int = 0) -> str:

@@ -496,3 +496,20 @@ async def whatsapp_text(cb: CallbackQuery, session: AsyncSession, bot: Bot):
         bot, await actions.whatsapp_snapshot(bot, session, game), chat_ids=[cb.from_user.id],
         note="📤 Текущее состояние для группы WhatsApp 👇",
     )
+
+
+@router.callback_query(F.data.startswith("mind:"))
+async def min_decision(cb: CallbackQuery, session: AsyncSession, bot: Bot):
+    _, choice, game_id = cb.data.split(":")
+    game = await svc.get_game(session, int(game_id))
+    if game is None:
+        await cb.answer("Игра не найдена.", show_alert=True)
+        return
+    try:
+        note = await operations.decide_min(bot, session, game, choice, cb.from_user.id)
+    except operations.OpError as e:
+        await cb.answer(str(e), show_alert=True)
+        return
+    await cb.answer()
+    await cb.message.edit_reply_markup(reply_markup=None)
+    await cb.message.answer(note)

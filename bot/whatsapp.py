@@ -50,7 +50,7 @@ def _header(game: Game) -> list[str]:
 def announce(game: Game, deadline: datetime, now: datetime, link: str) -> str:
     lines = _header(game) + ["", f"Кто будет? Отметьтесь в боте {texts.until(deadline, now)}:", link]
     if game.min_players:
-        lines += ["", f"Нужно минимум {game.min_players} {texts.people_word(game.min_players)}, иначе отменим."]
+        lines += ["", f"Нужно минимум {game.min_players} {texts.people_word(game.min_players)}."]
     if config.penalty_points > 0:
         lines += ["", "Кто не ответит — получит минус ⚠️"]
     return "\n".join(lines)

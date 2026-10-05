@@ -44,6 +44,10 @@ class Config:
     group_reminder_hours: float = field(default_factory=lambda: _float("GROUP_REMINDER_HOURS", 2))
     # Новые игроки попадают в команду только после подтверждения админом (0 — сразу).
     require_approval: bool = field(default_factory=lambda: os.getenv("REQUIRE_APPROVAL", "1") not in ("0", "false"))
+    # Не набран минимум игроков: 0 — спросить админов (провести/подождать/отменить), 1 — отменять сразу.
+    min_players_auto_cancel: bool = field(
+        default_factory=lambda: os.getenv("MIN_PLAYERS_AUTO_CANCEL", "0") not in ("0", "false", "")
+    )
     # --- Опросы и минусы
     # Напомнить не ответившим за столько часов до закрытия сбора (= распределения обязанностей).
     rsvp_reminder_hours: float = field(default_factory=lambda: _float("RSVP_REMINDER_HOURS", 3))

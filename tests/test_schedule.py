@@ -6,6 +6,7 @@ from bot import webhook
 from bot.config import config
 from bot.models import Game, GameStatus, Schedule
 from bot.scheduler import tick
+from bot import operations
 from bot.services import games as svc
 from tests.conftest import make_user
 from tests.test_miniapp import ADMIN, api, team  # noqa: F401 — фикстуры
@@ -38,7 +39,7 @@ async def test_due_schedule_games(session):
     assert await svc.due_schedule_games(session, now) == []  # уже создана — не дублируем
 
 
-async def test_scheduler_creates_and_cancels_when_too_few(fake, monkeypatch):  # noqa: F811
+async def test_scheduler_creates_and_asks_admin_when_too_few(fake, monkeypatch):  # noqa: F811
     monkeypatch.setattr(config, "admin_ids", [1])
     sm, _ = await webhook._ensure_ready()
     now = config.now()
@@ -63,7 +64,7 @@ async def test_scheduler_creates_and_cancels_when_too_few(fake, monkeypatch):  #
         game_id = games[0].id
     assert any("По расписанию создана" in m.text for m in fake.sent(1))
     invite = next(m for m in fake.sent() if "Открыт сбор" in m.text)
-    assert "Нужно минимум 3 человека, иначе отменим" in invite.text
+    assert "Нужно минимум 3 человека" in invite.text
     wa = next(m for m in fake.sent(1) if m.parse_mode is None and "Отметьтесь в боте" in m.text)
     assert "Нужно минимум 3" in wa.text
 
@@ -88,29 +89,109 @@ async def test_scheduler_creates_and_cancels_when_too_few(fake, monkeypatch):  #
         await s.commit()
     async with sm() as s:
         g = await s.get(Game, game_id)
-        assert g.status == GameStatus.CANCELLED
-        assert g.cancel_reason == "не набралось людей — 2 из 3"
-        assert await svc.open_penalty_points(s) == {admin.id: 1}  # минус молчуну — до отмены
-        assert await svc.active_assignments(s, game_id) == []  # не распределяли
-    notified = {m.chat_id for m in fake.sent() if "отменена: не набралось людей — 2 из 3" in m.text}
-    assert {players[0].telegram_id, players[1].telegram_id, players[2].telegram_id} <= notified
-    assert any("отменена" in m.text and m.parse_mode is None for m in fake.sent(1))  # текст для WhatsApp
+        assert g.status == GameStatus.OPEN and g.min_decision == "asked"  # не отменили сами
+        assert await svc.open_penalty_points(s) == {admin.id: 1}  # минус молчуну — как обычно
+        assert await svc.active_assignments(s, game_id) == []  # без решения не распределяем
+    ask = next(m for m in fake.sent(1) if "Что делаем?" in m.text)
+    assert "2 из минимум 3" in ask.text
+    labels = [b.text for row in ask.reply_markup.inline_keyboard for b in row]
+    assert labels[:3] == ["✅ Провести всё равно", "⏳ Подождать ещё час", "❌ Отменить"]
+    assert not any("отменена" in m.text for m in fake.sent())
+
+    # --- повторный тик — не переспрашиваем
+    fake.reset()
+    async with sm() as s:
+        await tick(webhook.make_bot(), s)
+        await s.commit()
+    assert not any("Что делаем?" in m.text for m in fake.sent())
+
+    # --- «Подождать»: напомнили молчащим и «не знаю», через час спросим снова
+    async with sm() as s:
+        g = await s.get(Game, game_id)
+        note = await operations.decide_min(webhook.make_bot(), s, g, "wait", 1)
+        assert "Ждём час" in note and g.min_recheck_at is not None
+        g.min_recheck_at = config.now() - timedelta(minutes=1)
+        await s.commit()
+    assert any("под вопросом" in m.text for m in fake.sent(players[2].telegram_id))
+    fake.reset()
+    async with sm() as s:
+        await tick(webhook.make_bot(), s)
+        await s.commit()
+    assert any("Что делаем?" in m.text for m in fake.sent(1))
+
+    # --- Руслан передумал: «Буду» — минимум набран, тренировка состоится сама
+    fake.reset()
+    async with sm() as s:
+        g = await s.get(Game, game_id)
+        await svc.set_rsvp(s, g, await s.get(svc.User, players[2].id), "yes")
+        await s.commit()
+    async with sm() as s:
+        await tick(webhook.make_bot(), s)
+        await s.commit()
+        g = await s.get(Game, game_id)
+        assert g.status == GameStatus.DISTRIBUTED and g.min_decision == "keep"
+    assert any("минимум набрался" in m.text for m in fake.sent(1))
 
 
-async def test_enough_players_not_cancelled(session):
-    from bot import operations
-    from tests.test_bot_flow import FakeSession
+async def _undermanned_game(sm, days=1):
+    async with sm() as s:
+        users = [await make_user(s, n) for n in ("А", "Б")]
+        g = await svc.create_game(s, "training", config.now() + timedelta(days=days), None, None, min_players=5)
+        for u in users:
+            await svc.set_rsvp(s, g, u, "yes")
+        g.min_decision = "asked"
+        await s.commit()
+        return g.id, users
+
+
+async def test_min_decision_keep_and_cancel(fake, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(config, "admin_ids", [1])
+    sm, _ = await webhook._ensure_ready()
+    bot = webhook.make_bot()
+
+    gid, _ = await _undermanned_game(sm)
+    async with sm() as s:
+        note = await operations.decide_min(bot, s, await s.get(Game, gid), "keep", 1)
+        await s.commit()
+        assert "Проводим" in note and (await s.get(Game, gid)).status == GameStatus.DISTRIBUTED
+
+    gid, users = await _undermanned_game(sm, 2)
+    fake.reset()
+    async with sm() as s:
+        await operations.decide_min(bot, s, await s.get(Game, gid), "cancel", 1)
+        await s.commit()
+        g = await s.get(Game, gid)
+        assert g.status == GameStatus.CANCELLED and g.cancel_reason == "не набралось людей — 2 из 5"
+    assert any("отменена" in m.text for m in fake.sent(users[0].telegram_id))
+
+
+async def test_auto_cancel_option(session, monkeypatch):
     from aiogram import Bot
+
+    from tests.test_bot_flow import FakeSession
+
+    monkeypatch.setattr(config, "min_players_auto_cancel", True)
+    bot = Bot("42:TEST", session=FakeSession())
+    users = [await make_user(session, n) for n in ("А", "Б")]
+    game = await svc.create_game(session, "training", config.now() + timedelta(days=1), None, None, min_players=3)
+    for u in users:
+        await svc.set_rsvp(session, game, u, "yes")
+    assert await operations.check_min_players(bot, session, game) == "cancelled"
+    assert game.status == GameStatus.CANCELLED
+
+
+async def test_enough_players_ok(session):
+    from aiogram import Bot
+
+    from tests.test_bot_flow import FakeSession
 
     bot = Bot("42:TEST", session=FakeSession())
     users = [await make_user(session, n) for n in ("А", "Б", "В")]
     game = await svc.create_game(session, "training", config.now() + timedelta(days=1), None, None, min_players=3)
     for u in users:
         await svc.set_rsvp(session, game, u, "yes")
-    assert await operations.cancel_if_too_few(bot, session, game) is False
-    assert game.status == GameStatus.OPEN
-    game.min_players = None
-    assert await operations.cancel_if_too_few(bot, session, game) is False
+    assert await operations.check_min_players(bot, session, game) == "ok"
+    assert game.status == GameStatus.OPEN and game.min_decision is None
 
 
 async def test_miniapp_repeat_and_manage_schedule(team):  # noqa: F811

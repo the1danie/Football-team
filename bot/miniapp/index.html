@@ -344,10 +344,24 @@ function gameCard(g) {
       d.is_admin ? group(`🙈 Не ответили (${(g.no_answer || []).length})`, g.no_answer) : null);
   }
 
-  if (g.min_players && g.status !== "distributed") {
+  if (g.needs_decision) {
+    const decide = async (choice, question) => {
+      if (question && !(await confirmBox(question))) return;
+      const r = await api("min_decide", { game_id: g.id, choice }); if (r) { haptic("ok"); render(); }
+    };
+    add(card, h("div", { class: "banner", style: "margin-top:10px" },
+      h("b", {}, `Сбор закрыт: ${yes.length} из минимум ${g.min_players}. Что делаем?`),
+      h("div", { class: "small", style: "margin-top:4px" }, g.waiting_until
+        ? `Ждём до ${g.waiting_until} — потом спрошу снова. Если наберутся — состоится сама.`
+        : "Пока не решите, обязанности не распределяются. Если кто-то отметится и минимум наберётся — состоится сама."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn small", onclick: () => decide("keep") }, "✅ Провести"),
+        h("button", { class: "btn small secondary", onclick: () => decide("wait") }, "⏳ Подождать час")),
+      h("button", { class: "btn small danger", style: "width:100%;margin-top:8px", onclick: () => decide("cancel", "Отменить? Всем отметившимся придёт сообщение.") }, "❌ Отменить")));
+  } else if (g.min_players && g.status !== "distributed") {
     const ok = yes.length >= g.min_players;
     add(card, h("div", { class: "banner " + (ok ? "ok" : ""), style: "margin-top:10px" },
-      ok ? `✅ Минимум ${g.min_players} набран` : `⚠️ Пока ${yes.length} из минимум ${g.min_players} — иначе ${g.kind === "training" ? "тренировка" : "игра"} отменится`,
+      ok ? `✅ Минимум ${g.min_players} набран` : `⚠️ Пока ${yes.length} из минимум ${g.min_players} — зовите своих!`,
       h("div", { class: "bar", style: "margin-top:8px;background:rgba(0,0,0,.08)" },
         h("div", { style: `width:${Math.min(100, (yes.length / g.min_players) * 100)}%;background:${ok ? "var(--yes)" : "var(--maybe)"}` }))));
   }
@@ -590,7 +604,7 @@ function createSheet() {
     places.length ? h("div", { class: "people" }, places.map((p) => h("button", { class: "chip", onclick: () => { st.location = p; render(); } }, p))) : null,
     h("div", { class: "card", style: "margin-top:16px" },
       h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Минимум игроков"),
-        h("div", { class: "small muted" }, st.min ? `Если «Буду» меньше ${st.min} к закрытию сбора — отменится автоматически.` : "Без минимума — состоится при любом количестве.")),
+        h("div", { class: "small muted" }, st.min ? `Если к закрытию сбора «Буду» меньше ${st.min} — бот спросит вас: провести, подождать или отменить.` : "Без минимума — состоится при любом количестве.")),
         stepper(st.min, 0, 30, (v) => { st.min = v; render(); }, (v) => (v ? v : "нет"))),
       ed ? null : h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🔁 Повторять каждую неделю"),
         h("div", { class: "small muted" }, st.repeat && st.date

@@ -47,10 +47,6 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
             report = await actions.apply_penalties_and_announce(bot, session, game)
             if report:
                 await notifier.notify_admins(bot, report)
-            # Не набралось минимума — отменяем (после минусов: молчуны и сорвали сбор).
-            if await operations.cancel_if_too_few(bot, session, game):
-                await notifier.notify_admins(bot, f"❌ {texts.game_header(game)} отменена: {texts.h(game.cancel_reason)}.")
-                continue
         if now >= game.starts_at:
             continue
 
@@ -58,6 +54,16 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
         nudge_at = rsvp_reminder_at(game)
         if not game.rsvp_nudge_sent and not game.penalties_applied and nudge_at is not None and now >= nudge_at:
             await actions.send_rsvp_nudge(bot, session, game)
+
+        # Сбор закрыт, а минимум не набран — ждём решения админа (или отменяем при автоотмене).
+        if game.status == GameStatus.OPEN and now >= rsvp_deadline(game):
+            verdict = await operations.check_min_players(bot, session, game)
+            if verdict == "cancelled":
+                await notifier.notify_admins(bot, f"❌ {texts.game_header(game)} отменена: {texts.h(game.cancel_reason)}.")
+                continue
+            if verdict == "waiting":
+                await session.flush()
+                continue
 
         auto_at = distribute_at(game)
         if game.status == GameStatus.OPEN and auto_at is not None and now >= auto_at:

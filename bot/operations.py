@@ -3,7 +3,7 @@
 Ошибки, которые нужно показать человеку, — OpError с понятным текстом.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -126,7 +126,10 @@ async def create_game(
     if penalties_enabled(game) and config.penalty_points > 0:
         hint.append(f"Кто не ответит к этому времени — получит −{config.penalty_points}.")
     if game.min_players:
-        hint.append(f"Если «Буду» будет меньше {game.min_players}, игра отменится автоматически.")
+        hint.append(
+            f"Если к закрытию сбора «Буду» будет меньше {game.min_players}, "
+            + ("игра отменится автоматически." if config.min_players_auto_cancel else "бот спросит вас: проводить или отменить.")
+        )
 
     announce = whatsapp.announce(game, deadline, now, await whatsapp.game_link(bot, game))
     return game, poll_report, " ".join(hint), announce
@@ -207,6 +210,8 @@ def _require_active(game: Game) -> None:
 
 async def distribute(bot: Bot, session: AsyncSession, game: Game) -> str:
     _require_active(game)
+    if game.min_players:
+        game.min_decision = "keep"  # админ распределил сам — значит, проводим
     return await actions.distribute_and_announce(bot, session, game)
 
 
@@ -239,15 +244,104 @@ async def cancel_game(
         await notifier.send_dm(bot, user, f"❌ {texts.game_header(game)} отменена{texts.h(why)}.")
 
 
-async def cancel_if_too_few(bot: Bot, session: AsyncSession, game: Game) -> bool:
-    """Сбор закрыт, а «Буду» меньше минимума — отменяем. True, если отменили."""
-    if not game.min_players or game.status not in GameStatus.ACTIVE:
-        return False
+MIN_RECHECK = timedelta(hours=1)
+
+
+def _min_decision_markup(game: Game) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Провести всё равно", callback_data=f"mind:keep:{game.id}")],
+            [InlineKeyboardButton(text="⏳ Подождать ещё час", callback_data=f"mind:wait:{game.id}")],
+            [InlineKeyboardButton(text="❌ Отменить", callback_data=f"mind:cancel:{game.id}")],
+        ]
+    )
+
+
+async def _ask_min_decision(bot: Bot, game: Game, yes: int) -> None:
+    word = texts.KIND_WORDS.get(game.kind, "игра")
+    text = (
+        f"⚠️ <b>{texts.game_header(game)}</b>\n\n"
+        f"Сбор закрыт: «Буду» — {yes} из минимум {game.min_players}.\n"
+        f"Что делаем? Пока вы не решили, обязанности не распределяются. "
+        f"Если кто-то ещё отметится и минимум наберётся — {word} состоится сама."
+    )
+    markup = keyboards.with_app_button(_min_decision_markup(game), game.id)
+    for admin_id in config.all_admin_ids:
+        await notifier.send_raw(bot, admin_id, text, markup)
+
+
+async def check_min_players(bot: Bot, session: AsyncSession, game: Game) -> str:
+    """Сбор закрыт — проверить минимум. "ok" — можно распределять, "waiting" — ждём решения
+    админа, "cancelled" — отменено (только при MIN_PLAYERS_AUTO_CANCEL=1)."""
+    if not game.min_players or game.status not in GameStatus.ACTIVE or game.min_decision == "keep":
+        return "ok"
     yes = await svc.yes_count(session, game.id)
     if yes >= game.min_players:
-        return False
-    await cancel_game(bot, session, game, None, f"не набралось людей — {yes} из {game.min_players}")
-    return True
+        if game.min_decision == "asked":  # пока ждали — набрались
+            game.min_decision = "keep"
+            await notifier.notify_admins(
+                bot, f"✅ {texts.game_header(game)}: минимум набрался ({yes} из {game.min_players}) — проводим."
+            )
+        return "ok"
+    if config.min_players_auto_cancel:
+        await cancel_game(bot, session, game, None, f"не набралось людей — {yes} из {game.min_players}")
+        return "cancelled"
+    if game.min_decision is None or (game.min_recheck_at and config.now() >= game.min_recheck_at):
+        game.min_decision = "asked"
+        game.min_recheck_at = None
+        await _ask_min_decision(bot, game, yes)
+    return "waiting"
+
+
+async def decide_min(bot: Bot, session: AsyncSession, game: Game, choice: str, admin_chat_id: int) -> str:
+    """Решение админа по недобору: keep / wait / cancel. Возвращает итог для показа."""
+    _require_active(game)
+    yes = await svc.yes_count(session, game.id)
+    if choice == "keep":
+        game.min_decision = "keep"
+        game.min_recheck_at = None
+        await session.flush()
+        if game.status == GameStatus.OPEN:
+            await actions.distribute_and_announce(bot, session, game)
+            return f"✅ Проводим ({yes} чел.). Обязанности распределены."
+        return f"✅ Проводим ({yes} чел.)."
+    if choice == "wait":
+        game.min_decision = "asked"
+        game.min_recheck_at = config.now() + MIN_RECHECK
+        await session.flush()
+        await _call_for_players(bot, session, game, yes)
+        return "⏳ Ждём час: молчащим и сомневающимся напомнили, потом спрошу снова."
+    if choice == "cancel":
+        await cancel_game(bot, session, game, admin_chat_id, f"не набралось людей — {yes} из {game.min_players}")
+        return "❌ Отменена, все отметившиеся получили сообщение."
+    raise OpError("Неизвестное решение.")
+
+
+async def _call_for_players(bot: Bot, session: AsyncSession, game: Game, yes: int) -> None:
+    """«Под вопросом»: напомнить молчащим и «Не знаю», админам — текст для WhatsApp."""
+    word = texts.KIND_WORDS.get(game.kind, "игра")
+    text = (
+        f"⚠️ <b>{texts.game_header(game)}</b>\n\n"
+        f"Пока {yes} из минимум {game.min_players} — {word} под вопросом. Придёшь? Отметься 👇"
+    )
+    users = {u.id: u for u in await svc.non_responders(session, game)}
+    users.update({u.id: u for u in (await svc.participants_by_status(session, game.id))[Rsvp.MAYBE]})
+    for user in users.values():
+        await notifier.send_dm(bot, user, text, keyboards.with_app_button(keyboards.rsvp(game), game.id))
+    link = await whatsapp.game_link(bot, game)
+    await whatsapp.send_draft(
+        bot,
+        f"⚠️ *{texts.game_header(game)}*\n\nПока {yes} из минимум {game.min_players} — {word} под вопросом.\n"
+        f"Кто придёт — отметьтесь:\n{link}",
+        note="⏳ Позовите ещё людей в WhatsApp 👇",
+    )
+
+
+def needs_min_decision(game: Game, yes: int) -> bool:
+    return bool(
+        game.min_players and yes < game.min_players and game.status == GameStatus.OPEN
+        and game.min_decision == "asked"
+    )
 
 
 async def create_from_schedule(bot: Bot, session: AsyncSession, schedule, starts_at: datetime) -> Game:

@@ -103,6 +103,8 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         "penalty": config.penalty_points if penalties_enabled(game) and not game.penalties_applied else 0,
         "participants": {s: [_user_brief(u) for u in by_status[s]] for s in Rsvp.ALL},
         "min_players": game.min_players or 0,
+        "needs_decision": is_admin and operations.needs_min_decision(game, len(by_status[Rsvp.YES])),
+        "waiting_until": texts.fmt_time(game.min_recheck_at) if game.min_recheck_at else None,
         "from_schedule": game.schedule_id is not None,
         "duties": duties,
     }
@@ -210,7 +212,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel",
 }
 
@@ -327,6 +329,8 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 "whatsapp": {"text": announce, "url": whatsapp.share_url(announce)},
                 "state": await state_view(bot, session, tg, user),
             }
+        elif action == "min_decide":
+            note = await operations.decide_min(bot, session, await _game(session, body), body.get("choice", ""), tg_id)
         elif action == "update_game":
             game = await _game(session, body)
             day = date.fromisoformat(body.get("date", ""))
