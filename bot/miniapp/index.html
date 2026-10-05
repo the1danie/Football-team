@@ -82,6 +82,8 @@
   .countdown .cd-num { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .countdown.urgent { background: var(--no-soft); }
   .countdown.urgent .cd-num { color: var(--no); }
+  .audit-item { align-items: flex-start; }
+  .audit-time { min-width: 44px; padding-top: 2px; font-variant-numeric: tabular-nums; }
   .past-item { margin-bottom: 8px; border-radius: 16px; background: var(--card); }
   .history { letter-spacing: 1px; font-size: 14px; }
   .rate { font-weight: 800; font-size: 18px; min-width: 52px; text-align: right; }
@@ -707,6 +709,7 @@ function profileTab() {
           onclick: async () => { haptic(); const r = await api("profile", { car: !u.car }); if (r) render(); } }))),
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
       h("div", { class: "small muted", style: "margin-top:4px" }, "За неответ на опрос или неявку после «Буду». Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
+    S.data.real_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openAudit() }, "📜 Журнал действий админов") : null,
     S.data.real_owner ? h("div", { class: "card" },
       h("div", { style: "font-weight:600" }, "👁 Посмотреть как…"),
       h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Приложение глазами другой роли — данные настоящие, меняются только права. Ваши ответы «Буду/Не буду» сохраняются как обычно."),
@@ -874,7 +877,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;
@@ -1028,6 +1031,32 @@ function reportSheet() {
         h("div", { class: "history" }, r.history)),
       h("div", { class: "rate " + cls(r) }, `${r.rate}%`))))
       : h("div", { class: "card empty muted" }, "Прошедших игр за этот период нет."));
+}
+
+async function openAudit(actorId, more) {
+  const prev = S.sheet && S.sheet.type === "audit" ? S.sheet : null;
+  const actor = actorId === undefined ? (prev ? prev.actor : null) : actorId;
+  const offset = more && prev ? prev.entries.length : 0;
+  const r = await api("audit", { actor_id: actor, offset });
+  if (r) openSheet({ type: "audit", actor, actors: r.actors, more: r.more, entries: more && prev ? [...prev.entries, ...r.entries] : r.entries });
+}
+function auditSheet() {
+  const s = S.sheet;
+  let lastDay = null;
+  const items = [];
+  s.entries.forEach((e) => {
+    if (e.day !== lastDay) { items.push(h("div", { class: "label", style: "margin:14px 2px 6px" }, e.day)); lastDay = e.day; }
+    items.push(h("div", { class: "item audit-item" },
+      h("div", { class: "audit-time muted small" }, e.time),
+      h("div", { class: "grow" }, h("div", { class: "small", style: "font-weight:700" }, e.actor), h("div", {}, e.text))));
+  });
+  return h("div", {}, h("h3", {}, "📜 Журнал действий"),
+    h("p", { class: "muted small", style: "margin:-6px 2px 10px" }, "Что делали админы в боте и приложении. Действия бота по расписанию и самих игроков сюда не попадают."),
+    s.actors.length > 1 ? h("div", { class: "people", style: "margin-bottom:6px" },
+      [{ id: null, name: "Все" }, ...s.actors].map((a) => h("button", { class: "chip" + ((s.actor || null) === a.id ? " accent" : ""),
+        onclick: () => openAudit(a.id) }, a.name + (a.count ? ` · ${a.count}` : "")))) : null,
+    s.entries.length ? h("div", {}, items) : h("div", { class: "card empty muted" }, "Пока пусто."),
+    s.more ? h("button", { class: "btn secondary", style: "margin-top:10px", onclick: () => openAudit(undefined, true) }, "Показать ещё") : null);
 }
 
 function createdSheet() {

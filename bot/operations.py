@@ -9,7 +9,7 @@ from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, keyboards, notifier, texts, whatsapp
+from bot import actions, audit, keyboards, notifier, texts, whatsapp
 from bot.config import config
 from bot.deadlines import distribute_at, penalties_enabled, rsvp_deadline
 from bot.models import Assignment, AssignmentStatus, Duty, Game, GameStatus, Rsvp, SwapStatus, User, UserStatus
@@ -54,13 +54,16 @@ async def add_manual_player(session: AsyncSession, name: str, has_car: bool) -> 
     taken = {u.name.lower() for u in await svc.all_users(session) if u.status != UserStatus.BLOCKED}
     if name.lower() in taken:
         raise OpError("Игрок с таким именем уже есть — добавьте фамилию или букву.")
-    return await svc.create_manual_user(session, name, has_car)
+    user = await svc.create_manual_user(session, name, has_car)
+    await audit.record(session, f"✍️ Добавил вручную игрока {user.name}")
+    return user
 
 
 async def link_account(bot: Bot, session: AsyncSession, manual: User, telegram_id: int, username: str | None) -> None:
     """Связать игрока, добавленного вручную, с его Telegram (по ссылке-приглашению или админом)."""
     if not manual.is_manual:
         raise OpError("Этот игрок уже привязан к Telegram.")
+    await audit.record(session, f"🔗 Связал {manual.name} с Telegram")
     try:
         await svc.link_telegram(session, manual, telegram_id, username)
     except ValueError:
@@ -143,6 +146,9 @@ async def change_rsvp(
     if user.is_staff:
         raise OpError(f"Ты в штабе команды ({user.staff_title.lower()}) — отмечаться не нужно, список виден в приложении.")
     result = await svc.set_rsvp(session, game, user, status)
+    actor = audit.current()
+    if by_admin and result.changed and (actor is None or actor.telegram_id != user.telegram_id):
+        await audit.record(session, f"🙋 Отметил за {user.name}: {texts.RSVP_LABELS[status]}", game)
     if result.changed:
         await notifier.refresh_game(bot, session, game)
         await notifier.announce_reassignments(bot, game, result.reassigned)
@@ -199,6 +205,7 @@ async def create_game(
         )
 
     announce = whatsapp.clean(whatsapp.announce(game, deadline, now, await whatsapp.game_link(bot, game)))
+    await audit.record(session, "➕ Создал", game)
     return game, poll_report, " ".join(hint), announce
 
 
@@ -281,6 +288,8 @@ async def update_game(
         )
     link = await whatsapp.game_link(bot, game)
     wa = whatsapp.clean("\n".join([f"*Изменения: {texts.game_header(game)}*", "", *changes, "", "Отметиться:", link]))
+    if changes:
+        await audit.record(session, "✏️ Изменил: " + "; ".join(changes), game)
     return changes, wa
 
 
@@ -294,6 +303,7 @@ async def distribute(bot: Bot, session: AsyncSession, game: Game) -> str:
     _require_active(game)
     if game.min_players:
         game.min_decision = "keep"  # админ распределил сам — значит, проводим
+    await audit.record(session, "🎯 Распределил обязанности" + (" заново" if game.status == GameStatus.DISTRIBUTED else ""), game)
     return await actions.distribute_and_announce(bot, session, game)
 
 
@@ -308,6 +318,7 @@ async def cancel_game(
     dropped = await svc.cancel_game(session, game)
     notify.update({a.user.id: a.user for a in dropped})
     game.cancel_reason = (reason or "")[:255] or None
+    await audit.record(session, "❌ Отменил" + (f" ({reason})" if reason else ""), game)
     await notifier.refresh_game(bot, session, game)
 
     why = f": {reason}" if reason else ""
@@ -380,6 +391,8 @@ async def decide_min(bot: Bot, session: AsyncSession, game: Game, choice: str, a
     """Решение админа по недобору: keep / wait / cancel. Возвращает итог для показа."""
     _require_active(game)
     yes = await svc.yes_count(session, game.id)
+    await audit.record(session, {"keep": "👍 Недобор: проводим", "wait": "⏳ Недобор: ждём час",
+                                 "cancel": "Недобор: отменяем"}.get(choice, choice) + f" ({yes} чел.)", game)
     if choice == "keep":
         game.min_decision = "keep"
         game.min_recheck_at = None
@@ -446,6 +459,9 @@ async def assign_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty, u
     if user is not None and duty.requires_car and not user.has_car:
         raise OpError(f"Для «{duty.name}» нужна машина.")
     old_user, _ = await svc.set_assignment(session, game, duty, user)
+    await audit.record(
+        session, f"🔧 Назначение {duty.title}: {old_user.name if old_user else '—'} → {user.name if user else 'никто'}", game
+    )
     await notifier.refresh_game(bot, session, game)
     if old_user is not None and (user is None or old_user.id != user.id):
         await notifier.send_dm(
@@ -528,6 +544,9 @@ async def player_action(
     if config.is_owner(user.telegram_id) and action in ("block", "admin_off"):
         raise OpError("Главного админа нельзя удалить или лишить прав (он задан в настройках ADMIN_IDS).")
 
+    old_name = user.name
+    if action in ("admin_on", "admin_off"):
+        await audit.record(session, f"👑 {user.name}: {'выдал' if action == 'admin_on' else 'снял'} права админа")
     if action == "admin_on":
         if not user.is_approved:
             raise OpError("Сначала примите игрока в команду.")
@@ -617,6 +636,13 @@ async def player_action(
         note = "Имя изменено"
     else:
         raise OpError("Неизвестное действие.")
+    await audit.record(session, f"👤 {old_name}: " + {
+        "approve": "принял в команду", "block": "удалил из команды / отклонил",
+        "car": f"машина — {'есть' if user.has_car else 'нет'}", "car_on": "машина — есть", "car_off": "машина — нет",
+        "unlock": "разрешил менять машину самому",
+        "active": "вернул в состав" if user.is_active else "убрал из состава", "rename": f"переименовал в «{user.name}»",
+        "staff": f"штаб: {user.staff_title}", "staff_off": "вернул в игроки",
+    }.get(action, action))
     await session.flush()
     return note
 
@@ -630,6 +656,7 @@ async def mark_attendance(bot: Bot, session: AsyncSession, game: Game, user: Use
     if config.now() < game.starts_at - timedelta(hours=1):
         raise OpError("Отмечать, кто пришёл, можно с часа до начала.")
     result = await svc.set_attendance(session, game, user, present)
+    await audit.record(session, f"👥 Кто пришёл: {user.name} — {'пришёл' if present else 'НЕ пришёл'}", game)
     await notifier.refresh_game(bot, session, game)
     await notifier.announce_reassignments(bot, game, result.reassigned)
     if result.penalty_total is not None:

@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
@@ -10,7 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, keyboards, notifier, operations, texts, whatsapp
+from bot import actions, audit, keyboards, notifier, operations, texts, whatsapp
 from bot.config import config
 from bot.middlewares import IsAdmin
 from bot.models import Duty, Game, GameStatus, Rsvp, User
@@ -377,6 +377,7 @@ async def toggle_duty(message: Message, command: CommandObject, session: AsyncSe
         await message.answer("Нет такой обязанности.")
         return
     duty.is_active = not duty.is_active
+    await audit.record(session, f"⚙️ Обязанность {duty.title}: {'включена' if duty.is_active else 'выключена'}")
     await message.answer(f"{duty.title}: {'включена' if duty.is_active else 'выключена'}.")
 
 
@@ -500,6 +501,8 @@ async def penalties_user(cb: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data.startswith("pendel:"))
 async def penalty_cancel(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     penalty = await svc.cancel_penalty(session, int(cb.data.split(":")[1]))
+    if penalty is not None:
+        await audit.record(session, f"♻️ Снял минус: {(await session.get(User, penalty.user_id)).name}", penalty.game)
     if penalty is None:
         await cb.answer("Минус уже снят или отработан.", show_alert=True)
         return
@@ -579,6 +582,7 @@ async def rsvp_request_decision(cb: CallbackQuery, session: AsyncSession, bot: B
         return
     label = texts.RSVP_LABELS[status]
     if kind == "rqno":
+        await audit.record(session, f"✖️ Отклонил просьбу {user.name} изменить ответ на «{label}»", game)
         await notifier.send_dm(bot, user, f"✖️ Админ не стал менять твой ответ на «{label}» ({texts.game_header(game)}).")
         await cb.message.edit_text(cb.message.html_text + f"\n\n✖️ Отклонено ({texts.h(cb.from_user.first_name)})")
         await cb.answer("Отклонено")
@@ -594,3 +598,21 @@ async def rsvp_request_decision(cb: CallbackQuery, session: AsyncSession, bot: B
     await notifier.send_dm(bot, user, note)
     await cb.message.edit_text(cb.message.html_text + f"\n\n✅ Подтверждено ({texts.h(cb.from_user.first_name)})")
     await cb.answer("Готово")
+
+
+@router.message(Command("log"))
+async def audit_log(message: Message, session: AsyncSession):
+    """Журнал действий админов — только главному."""
+    if not config.is_owner(message.chat.id):
+        await message.answer("Журнал видит только главный админ.")
+        return
+    rows = await svc.audit_entries(session, limit=25)
+    if not rows:
+        await message.answer("📜 Журнал пуст — админы пока ничего не делали.")
+        return
+    lines = ["<b>📜 Последние действия админов</b>", ""]
+    for r in rows:
+        local = r.created_at.replace(tzinfo=timezone.utc).astimezone(config.tz)
+        lines.append(f"{local:%d.%m %H:%M} · <b>{texts.h(r.actor_name)}</b>: {texts.h(r.text)}")
+    lines += ["", "Полный журнал с фильтром по админу — в приложении: Профиль → «Журнал действий админов»."]
+    await message.answer("\n".join(lines))

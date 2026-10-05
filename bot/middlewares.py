@@ -72,7 +72,10 @@ class AccessMiddleware(BaseMiddleware):
         if config.is_admin(tg_user.id):
             if user is not None and user.status != UserStatus.APPROVED:
                 user.status = UserStatus.APPROVED
-            return await handler(event, data)
+            from bot import audit  # noqa: PLC0415
+
+            with audit.acting(tg_user.id, user.id if user else None, user.name if user else tg_user.first_name):
+                return await handler(event, data)
         if user is not None and user.status == UserStatus.APPROVED:
             return await handler(event, data)
 

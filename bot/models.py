@@ -282,3 +282,16 @@ class FsmRecord(Base):
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
     state: Mapped[str | None] = mapped_column(String(255), nullable=True)
     data: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class AuditLog(Base):
+    """Журнал действий админов: кто, когда, что сделал (видит главный админ)."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    actor_name: Mapped[str] = mapped_column(String(64))
+    text: Mapped[str] = mapped_column(String(500))
+    game_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

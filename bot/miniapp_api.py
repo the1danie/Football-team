@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ from urllib.parse import parse_qsl
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, operations, texts, whatsapp
+from bot import actions, audit, operations, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
@@ -307,6 +308,12 @@ async def _user(session: AsyncSession, raw_id: Any) -> User:
 
 async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
     """Выполнить действие из Mini App. Возвращает данные для ответа."""
+    me = await svc.get_user_by_tg(session, int(tg["id"]))
+    with audit.acting(int(tg["id"]), me.id if me else None, me.name if me else tg.get("first_name", "")):
+        return await _handle(bot, session, tg, body)
+
+
+async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
     action = body.get("action", "state")
     tg_id = int(tg["id"])
     await svc.refresh_admins(session)
@@ -387,6 +394,26 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
         elif action == "web_logout":
             user.web_version = (user.web_version or 0) + 1
             note = "Все личные ссылки отключены. Новую можно получить в боте: /web."
+        elif action == "audit":
+            if not config.is_owner(tg_id):
+                raise ApiError("Журнал видит только главный админ.", 403)
+            offset = max(0, int(body.get("offset") or 0))
+            actor = int(body.get("actor_id") or 0) or None
+            rows = await svc.audit_entries(session, actor, limit=51, offset=offset)
+            now = config.now()
+
+            def when(dt):
+                local = dt.replace(tzinfo=timezone.utc).astimezone(config.tz).replace(tzinfo=None)
+                delta = (now.date() - local.date()).days
+                day = "Сегодня" if delta == 0 else "Вчера" if delta == 1 else texts.fmt_date(local, weekday=True)
+                return {"day": day, "time": texts.fmt_time(local)}
+
+            return {
+                "entries": [{"id": r.id, "actor": r.actor_name, "actor_id": r.actor_id, "text": r.text, **when(r.created_at)}
+                            for r in rows[:50]],
+                "more": len(rows) > 50,
+                "actors": [{"id": a, "name": n, "count": c} for a, n, c in await svc.audit_actors(session)],
+            }
         elif action == "archive":
             offset = max(0, int(body.get("offset") or 0))
             past = await svc.past_games(session, config.now(), limit=11, offset=offset, past_after_hours=PAST_AFTER_HOURS)
@@ -423,6 +450,7 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 )
                 session.add(schedule)
                 await session.flush()
+                await audit.record(session, f"🔁 Создал расписание {EVERY_WEEKDAY[schedule.weekday]} в {schedule.time_label}")
                 # Опрос — только когда откроется окно (за open_days_before дней), а не сразу.
                 first = svc.next_occurrence(schedule, config.now())
                 opens_at = first - timedelta(days=schedule.open_days_before)
@@ -461,6 +489,7 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             game = await _game(session, body)
             if game.status in GameStatus.ACTIVE and config.now() < game.starts_at + timedelta(hours=PAST_AFTER_HOURS):
                 raise ApiError("Удалить можно отменённую или прошедшую игру. Предстоящую сначала отмените.")
+            await audit.record(session, "🗑 Удалил из архива", game)
             await svc.delete_game(session, game)
             note = "🗑 Игра удалена"
         elif action == "penalize_silent":
@@ -470,6 +499,8 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             from bot.actions import penalize_late_silent
 
             report = await penalize_late_silent(bot, session, game)
+            if report:
+                await audit.record(session, "⚠️ " + re.sub(r"<[^>]+>", "", report), game)
             note = "Минусы поставлены" if report else "Некому ставить минус"
         elif action == "team_invite":
             text = whatsapp.team_invite((await bot.me()).username)
@@ -491,6 +522,9 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 duty.requires_car = bool(body["requires_car"])
             if "active" in body:
                 duty.is_active = bool(body["active"])
+            await audit.record(session, f"⚙️ Обязанность {duty.title}: " + ", ".join(
+                [("до игры" if duty.phase == DutyPhase.BEFORE else "после игры"),
+                 ("нужна машина" if duty.requires_car else "без машины"), ("включена" if duty.is_active else "выключена")]))
             await session.flush()
             return {"duties": [duty_view(d) for d in await svc.all_duties(session)]}
         elif action == "min_decide":
@@ -537,9 +571,12 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 x.kind = body["kind"]
             if {"weekday", "minutes", "location", "kind"} & body.keys():
                 note = f"Расписание: {EVERY_WEEKDAY[x.weekday]} в {x.time_label}. Уже созданные игры не меняются."
+            await audit.record(session, f"🔁 Расписание {EVERY_WEEKDAY[x.weekday]} в {x.time_label}: изменено"
+                               + (" (включено)" if x.is_active else " (на паузе)"))
         elif action == "schedule_delete":
             x = await session.get(Schedule, int(body.get("id", 0)))
             if x is not None:
+                await audit.record(session, f"🔁 Удалил расписание {EVERY_WEEKDAY[x.weekday]} в {x.time_label}")
                 await session.delete(x)
                 note = "Расписание удалено. Уже созданные игры остались."
         elif action == "distribute":
@@ -601,6 +638,7 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             penalty = await svc.cancel_penalty(session, int(body.get("penalty_id", 0)))
             if penalty is None:
                 raise ApiError("Минус уже снят или отработан.")
+            await audit.record(session, f"♻️ Снял минус: {(await _user(session, penalty.user_id)).name}", penalty.game)
             return {"note": "Минус снят", "player": await player_view(session, await _user(session, penalty.user_id), True)}
         else:
             raise ApiError("Неизвестное действие.", 404)

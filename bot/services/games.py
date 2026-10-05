@@ -96,6 +96,25 @@ async def link_telegram(session: AsyncSession, manual: User, telegram_id: int, u
     await session.flush()
 
 
+async def audit_entries(session: AsyncSession, actor_id: int | None = None, limit: int = 50, offset: int = 0):
+    from bot.models import AuditLog
+
+    q = select(AuditLog).order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+    if actor_id:
+        q = q.where(AuditLog.actor_id == actor_id)
+    return list((await session.scalars(q.offset(offset).limit(limit))).all())
+
+
+async def audit_actors(session: AsyncSession) -> list[tuple[int, str, int]]:
+    from bot.models import AuditLog
+
+    rows = await session.execute(
+        select(AuditLog.actor_id, func.max(AuditLog.actor_name), func.count())
+        .where(AuditLog.actor_id.is_not(None)).group_by(AuditLog.actor_id)
+    )
+    return sorted(rows.all(), key=lambda r: -r[2])
+
+
 async def name_from_telegram(session: AsyncSession, tg_user) -> str:
     """Имя для команды из профиля Telegram: имя, а если такое уже есть у другого игрока — имя и фамилия."""
     existing = await get_user_by_tg(session, tg_user.id)
