@@ -6,6 +6,7 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from bot.config import config
+from bot.fsm_storage import current_session
 
 
 class DbSessionMiddleware(BaseMiddleware):
@@ -22,11 +23,14 @@ class DbSessionMiddleware(BaseMiddleware):
     ) -> Any:
         async with self.sessionmaker() as session:
             data["session"] = session
+            token = current_session.set(session)
             try:
                 result = await handler(event, data)
             except Exception:
                 await session.rollback()
                 raise
+            finally:
+                current_session.reset(token)
             await session.commit()
             return result
 

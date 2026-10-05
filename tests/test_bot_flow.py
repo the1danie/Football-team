@@ -4,31 +4,32 @@ import itertools
 from datetime import datetime, timedelta
 
 import pytest
-from aiogram import Bot, Dispatcher
+from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import (
     AnswerCallbackQuery,
     EditMessageReplyMarkup,
     EditMessageText,
     GetMe,
+    GetWebhookInfo,
     SendMessage,
+    SetWebhook,
     TelegramMethod,
 )
-from aiogram.types import Chat, Message, Update, User
+from aiogram.types import Chat, Message, Update, User, WebhookInfo
 
 from bot import texts
 from bot.config import config
 from bot.db import init_db, make_engine, make_sessionmaker
-from bot.handlers import build_router
-from bot.middlewares import DbSessionMiddleware
+from bot.app import make_dispatcher
 from bot.models import Assignment, AssignmentStatus, Game, GameStatus
 from bot.scheduler import tick
 from bot.services import games as svc
+from tests.conftest import db_url
 
 GROUP = -100500
 ADMIN = 1
 BOT_USER = User(id=999, is_bot=True, first_name="Duty", username="duty_bot")
-ROUTER = build_router()  # роутеры aiogram — синглтоны, собираем один раз
 
 
 class FakeSession(BaseSession):
@@ -53,6 +54,9 @@ class FakeSession(BaseSession):
                 message_id=next(self.ids), date=datetime.now(), chat=Chat(id=method.chat_id, type=chat_type),
                 from_user=BOT_USER, text=method.text,
             )
+        if isinstance(method, GetWebhookInfo):
+            url = next((c.url for c in reversed(self.calls) if isinstance(c, SetWebhook)), "")
+            return WebhookInfo(url=url, has_custom_certificate=False, pending_update_count=0)
         if isinstance(method, (EditMessageText, EditMessageReplyMarkup, AnswerCallbackQuery)):
             return True
         return True
@@ -126,16 +130,13 @@ def buttons(markup):
 async def h(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "admin_ids", [ADMIN])
     monkeypatch.setattr(config, "group_chat_id", None)
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'flow.db'}")
+    engine = make_engine(await db_url(tmp_path))
     await init_db(engine)
     sm = make_sessionmaker(engine)
     fake = FakeSession()
     bot = Bot("42:TEST", session=fake)
-    dp = Dispatcher()
-    dp.update.outer_middleware(DbSessionMiddleware(sm))
-    dp.include_router(ROUTER)
+    dp = make_dispatcher(sm)  # тот же диспетчер, что в проде, включая хранение диалогов в БД
     yield Harness(dp, bot, fake, sm)
-    ROUTER._parent_router = None
     await engine.dispose()
 
 

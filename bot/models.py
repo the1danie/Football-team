@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -138,3 +138,13 @@ class Setting(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(255))
+
+
+class FsmRecord(Base):
+    """Состояние пошаговых диалогов (создание игры, ввод имени) — переживает перезапуски."""
+
+    __tablename__ = "fsm_states"
+
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    state: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)

@@ -73,6 +73,61 @@ score = (сколько раз игрок выполнял эту обязанн
 
 ## Запуск
 
+Два режима, код один и тот же:
+
+| | Vercel + Neon (бесплатно) | Сервер / Docker |
+|---|---|---|
+| Как бот получает сообщения | webhook: Telegram сам вызывает `/api/webhook` | polling: бот сам опрашивает Telegram |
+| Напоминания и автораспределение | внешний планировщик вызывает `/api/tick` раз в 5 минут | встроенный цикл раз в минуту |
+| База | Neon (PostgreSQL) | PostgreSQL в Docker или SQLite |
+
+### Vercel + Neon
+
+**1. База в Neon.** На [neon.tech](https://neon.tech) создайте проект, регион — *AWS Europe Central 1 (Frankfurt)*,
+рядом с функциями Vercel (`fra1` в `vercel.json`). Скопируйте строку подключения (Connection string),
+вариант *Pooled connection* (с `-pooler` в адресе) — она подходит как есть:
+`postgresql://…-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require`.
+
+Можно и через Vercel: *Storage → Create Database → Neon* — тогда `DATABASE_URL` пропишется в проект сам.
+
+**2. Проект в Vercel.** *Add New → Project*, импортируйте репозиторий с GitHub, Framework Preset — *Other*.
+В *Environment Variables* добавьте:
+
+| Переменная | Значение |
+|---|---|
+| `BOT_TOKEN` | токен от @BotFather |
+| `ADMIN_IDS` | ваш Telegram ID (несколько — через запятую) |
+| `DATABASE_URL` | строка подключения из Neon |
+| `WEBHOOK_SECRET` | случайная строка из `A-Z a-z 0-9 _ -`, например из `openssl rand -hex 32` |
+| `CRON_SECRET` | ещё одна случайная строка |
+| `TZ_NAME` | `Asia/Almaty` (или ваш часовой пояс) |
+
+Нажмите *Deploy*.
+
+**3. Подключите бота к Vercel.** Откройте в браузере (адрес — основной домен проекта, не превью):
+
+```
+https://<ваш-проект>.vercel.app/api/setup?secret=<WEBHOOK_SECRET>
+```
+
+Должен прийти ответ `{"ok": true, "bot": "@…", "webhook": "https://…/api/webhook", …}`. Это создаёт
+таблицы, регистрирует webhook в Telegram и меню команд. Повторять нужно, только если сменился домен.
+
+**4. Планировщик.** Бесплатный cron в Vercel срабатывает не чаще раза в день, поэтому используем
+[cron-job.org](https://cron-job.org) (бесплатно): *Create cronjob* →
+URL `https://<ваш-проект>.vercel.app/api/tick?secret=<CRON_SECRET>`, расписание — каждые 5 минут.
+Напоминания и автораспределение будут приходить с точностью до этих 5 минут.
+
+На тарифе Vercel Pro вместо этого можно добавить в `vercel.json`
+`"crons": [{"path": "/api/tick", "schedule": "*/5 * * * *"}]` — Vercel сам передаст `CRON_SECRET`.
+
+**5.** Добавьте бота в чат команды и отправьте там `/bindchat`.
+
+Проверить, что Telegram доходит до бота: `https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo` —
+поле `last_error_message` должно быть пустым.
+
+> Если позже переедете на сервер, `python -m bot` сам отключит webhook и перейдёт на polling.
+
 ### Docker (VPS)
 
 ```bash
@@ -97,15 +152,25 @@ python -m bot
 pytest
 ```
 
-Тесты покрывают алгоритм, сервисный слой на реальной БД и сквозной сценарий через настоящий
-диспетчер aiogram с фейковым Telegram API: регистрация → создание игры → отметки → распределение →
-отказ → обмен → ручное назначение → статистика → напоминания → отмена.
+Тесты покрывают алгоритм, сервисный слой на реальной БД, сквозной сценарий через настоящий
+диспетчер aiogram с фейковым Telegram API (регистрация → создание игры → отметки → распределение →
+отказ → обмен → ручное назначение → статистика → напоминания → отмена) и адреса для Vercel.
+
+По умолчанию тесты идут на SQLite. Прогон на PostgreSQL (база будет очищена):
+
+```bash
+TEST_DATABASE_URL="postgresql://user:pass@localhost:5432/test?sslmode=disable" pytest
+```
 
 ## Структура
 
 ```
+api/                  функции Vercel: webhook.py, tick.py, setup.py
 bot/
-  __main__.py         запуск: python -m bot
+  __main__.py         запуск на сервере: python -m bot
+  webhook.py          режим webhook (ASGI) для Vercel
+  app.py              сборка бота и диспетчера для обоих режимов
+  fsm_storage.py      состояния диалогов в БД
   config.py           настройки из переменных окружения
   models.py           таблицы: users, games, game_participants, duties, assignments, swap_requests
   services/
@@ -122,5 +187,4 @@ tests/
 
 - Одна команда на одного бота (один общий чат).
 - Схема БД создаётся через `create_all`; при изменении моделей в будущем стоит подключить Alembic.
-- Состояние диалогов (создание игры, ввод имени) хранится в памяти — при перезапуске бота
-  незавершённый диалог нужно начать заново. Сами данные хранятся в БД.
+- На Vercel первый ответ после долгого простоя может занять 1–3 секунды: просыпаются функция и база Neon.

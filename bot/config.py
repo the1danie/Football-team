@@ -21,7 +21,10 @@ def _float(name: str, default: float) -> float:
 class Config:
     bot_token: str = field(default_factory=lambda: os.getenv("BOT_TOKEN", ""))
     database_url: str = field(
-        default_factory=lambda: os.getenv("DATABASE_URL", "sqlite+aiosqlite:///football.db")
+        # Интеграция Neon в Vercel задаёт DATABASE_URL (и POSTGRES_URL).
+        default_factory=lambda: os.getenv("DATABASE_URL")
+        or os.getenv("POSTGRES_URL")
+        or "sqlite+aiosqlite:///football.db"
     )
     admin_ids: list[int] = field(default_factory=lambda: _int_list(os.getenv("ADMIN_IDS", "")))
     # Чат команды можно задать здесь или командой /bindchat в самом чате.
@@ -35,6 +38,13 @@ class Config:
     personal_reminder_hours: float = field(default_factory=lambda: _float("PERSONAL_REMINDER_HOURS", 3))
     # Напоминание в общий чат.
     group_reminder_hours: float = field(default_factory=lambda: _float("GROUP_REMINDER_HOURS", 2))
+    # --- Режим webhook (Vercel)
+    # Секрет, который Telegram присылает в заголовке каждого запроса (A-Z, a-z, 0-9, _ и -).
+    webhook_secret: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
+    # Секрет для /api/tick (Vercel Cron присылает его как «Authorization: Bearer …»).
+    cron_secret: str = field(default_factory=lambda: os.getenv("CRON_SECRET", ""))
+    # Публичный адрес, например https://football-bot.vercel.app (по умолчанию — из запроса).
+    public_url: str = field(default_factory=lambda: os.getenv("PUBLIC_URL", "").rstrip("/"))
     # Через сколько часов после начала игра считается завершённой.
     finish_after_hours: float = field(default_factory=lambda: _float("FINISH_AFTER_HOURS", 3))
 

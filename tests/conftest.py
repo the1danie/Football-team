@@ -1,3 +1,4 @@
+import os
 import random
 from datetime import datetime, timedelta
 
@@ -8,9 +9,24 @@ from bot.models import User
 from bot.services import games as svc
 
 
+from bot.models import Base
+
+
+async def db_url(tmp_path, name: str = "test.db") -> str:
+    """SQLite по умолчанию; TEST_DATABASE_URL=postgresql://… — прогон на PostgreSQL (чистая схема)."""
+    url = os.getenv("TEST_DATABASE_URL")
+    if not url:
+        return f"sqlite+aiosqlite:///{tmp_path / name}"
+    engine = make_engine(url, serverless=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+    return url
+
+
 @pytest.fixture
 async def session(tmp_path):
-    engine = make_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    engine = make_engine(await db_url(tmp_path))
     await init_db(engine)
     async with make_sessionmaker(engine)() as s:
         yield s

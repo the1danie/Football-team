@@ -1,15 +1,11 @@
+"""Запуск на сервере (polling): python -m bot"""
+
 import asyncio
 import logging
 
-from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats
-
+from bot.app import make_bot, make_dispatcher, set_commands
 from bot.config import config
 from bot.db import init_db, make_engine, make_sessionmaker
-from bot.handlers import build_router
-from bot.middlewares import DbSessionMiddleware
 from bot.scheduler import run_scheduler
 
 
@@ -22,21 +18,11 @@ async def main() -> None:
     await init_db(engine)
     sessionmaker = make_sessionmaker(engine)
 
-    bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher()
-    dp.update.outer_middleware(DbSessionMiddleware(sessionmaker))
-    dp.include_router(build_router())
-
-    await bot.set_my_commands(
-        [
-            BotCommand(command="menu", description="Главное меню"),
-            BotCommand(command="game", description="Текущая игра"),
-            BotCommand(command="profile", description="Мой профиль"),
-            BotCommand(command="stats", description="Статистика"),
-            BotCommand(command="help", description="Помощь"),
-        ],
-        scope=BotCommandScopeAllPrivateChats(),
-    )
+    bot = make_bot()
+    dp = make_dispatcher(sessionmaker)
+    await set_commands(bot)
+    # Если бот раньше работал через webhook (Vercel), polling без этого не получит апдейты.
+    await bot.delete_webhook()
 
     scheduler = asyncio.create_task(run_scheduler(bot, sessionmaker))
     try:
