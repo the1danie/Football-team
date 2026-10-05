@@ -12,7 +12,7 @@ from aiogram import Bot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from bot import actions, notifier, texts
+from bot import actions, notifier, texts, whatsapp
 from bot.config import config
 from bot.deadlines import distribute_at, rsvp_deadline, rsvp_reminder_at
 from bot.models import Game, GameStatus
@@ -66,6 +66,11 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
             assignments = await svc.active_assignments(session, game.id)
             if game.chat_id and assignments:
                 await bot.send_message(game.chat_id, texts.group_reminder(game, now, assignments))
+            elif assignments:
+                await whatsapp.send_draft(
+                    bot, whatsapp.reminder(game, now, assignments),
+                    note="⚽ Напоминание перед игрой — для группы WhatsApp 👇",
+                )
             game.group_reminder_sent = True
 
         await session.flush()

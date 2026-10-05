@@ -32,7 +32,8 @@ HELP = (
 )
 ADMIN_HELP = (
     "\n\n<b>Администратору</b>\n"
-    "/bindchat — выполнить в чате команды, чтобы бот публиковал туда игры\n"
+    "/bindchat — если команда в Telegram-группе: выполнить там, бот будет публиковать игры в неё. "
+    "Без этого (команда в WhatsApp) бот присылает вам готовые тексты с кнопкой «📤 Отправить в WhatsApp»\n"
     "/duties — список обязанностей\n"
     "/add_duty 🩹 Аптечка — добавить обязанность (добавьте слово «машина», если нужна машина)\n"
     "/toggle_duty &lt;id&gt; — включить/выключить обязанность\n"
@@ -87,12 +88,30 @@ async def start(message: Message, command: CommandObject, session: AsyncSession,
     user = await require_profile(message, session, state)
     if user is None:
         return
-    if payload.startswith("swap_"):
-        from bot.handlers.swap import open_swap  # избегаем циклического импорта
-
-        await open_swap(message, session, user, int(payload.removeprefix("swap_")))
+    if await open_payload(message, session, user, payload):
         return
     await show_menu(message, f"Привет, {texts.h(user.name)}! ⚽\n\n{HELP}")
+
+
+async def open_payload(message: Message, session: AsyncSession, user: User, payload: str) -> bool:
+    """Ссылки вида t.me/бот?start=…: game_<id> — опрос по игре, swap_<id> — обмен."""
+    kind, _, raw_id = payload.partition("_")
+    if not raw_id.isdigit():
+        return False
+    if kind == "swap":
+        from bot.handlers.swap import open_swap  # избегаем циклического импорта
+
+        await open_swap(message, session, user, int(raw_id))
+        return True
+    if kind == "game":
+        game = await svc.get_game(session, int(raw_id))
+        if game is None:
+            return False
+        await show_menu(message, f"Привет, {texts.h(user.name)}! ⚽")
+        text, markup = await actions.game_card(session, game, user, config.is_admin(message.chat.id))
+        await message.answer(text, reply_markup=markup)
+        return True
+    return False
 
 
 @router.message(Command("help"))
@@ -132,11 +151,7 @@ async def profile_car(cb: CallbackQuery, session: AsyncSession, state: FSMContex
     await cb.message.edit_text(texts.profile_text(user) + "\n\n✅ Профиль сохранён.")
     await cb.answer()
 
-    payload = data.get("after_profile", "")
-    if payload.startswith("swap_"):
-        from bot.handlers.swap import open_swap
-
-        await open_swap(cb.message, session, user, int(payload.removeprefix("swap_")))
+    if await open_payload(cb.message, session, user, data.get("after_profile", "")):
         return
     await show_menu(cb.message, HELP)
 

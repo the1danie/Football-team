@@ -10,7 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, keyboards, notifier, texts
+from bot import actions, keyboards, notifier, texts, whatsapp
 from bot.config import config
 from bot.deadlines import distribute_at, penalties_enabled, rsvp_deadline
 from bot.middlewares import IsAdmin
@@ -37,11 +37,6 @@ class NewGame(StatesGroup):
 @router.message(Command("new"))
 async def new_game(message: Message, session: AsyncSession, state: FSMContext):
     await state.clear()
-    if await notifier.group_chat_id(session) is None:
-        await message.answer(
-            "Чат команды не привязан.\n\nДобавьте бота в общий чат команды и отправьте там /bindchat."
-        )
-        return
     await state.set_state(NewGame.date)
     await message.answer(
         "📅 Выберите дату или напишите её в формате <b>ДД.ММ</b> (например, 10.10):",
@@ -166,16 +161,16 @@ async def new_game_abort(cb: CallbackQuery, state: FSMContext):
 async def new_game_publish(cb: CallbackQuery, session: AsyncSession, state: FSMContext, bot: Bot):
     data = await state.get_data()
     await state.clear()
-    chat_id = await notifier.group_chat_id(session)
-    if chat_id is None:
-        await cb.answer("Чат команды не привязан (/bindchat).", show_alert=True)
-        return
+    chat_id = await notifier.group_chat_id(session)  # необязательно: команда может сидеть в WhatsApp
     creator = await svc.get_user_by_tg(session, cb.from_user.id)
     game = await svc.create_game(
         session, data["kind"], datetime.fromisoformat(data["starts_at"]), data.get("location"), creator
     )
-    await notifier.publish_game(bot, session, game, chat_id)
-    await cb.message.edit_text(f"✅ Опубликовано в чат команды: {texts.game_header(game)}")
+    if chat_id is not None:
+        await notifier.publish_game(bot, session, game, chat_id)
+        await cb.message.edit_text(f"✅ Опубликовано в чат команды: {texts.game_header(game)}")
+    else:
+        await cb.message.edit_text(f"✅ Игра создана: {texts.game_header(game)}")
     await cb.answer()
     poll_report = await actions.send_poll_invites(bot, session, game, skip=creator)
     now, deadline = config.now(), rsvp_deadline(game)
@@ -188,6 +183,12 @@ async def new_game_publish(cb: CallbackQuery, session: AsyncSession, state: FSMC
         hint.append(f"Кто не ответит к этому времени — получит −{config.penalty_points}.")
     text, markup = await actions.game_card(session, game, creator, True)
     await cb.message.answer(f"{text}\n\n{poll_report}\n\n<i>{' '.join(hint)}</i>", reply_markup=markup)
+    # Анонс для группы WhatsApp — с ссылкой, по которой игрок сразу попадает на опрос.
+    link = await whatsapp.game_link(bot, game)
+    await whatsapp.send_draft(
+        bot, whatsapp.announce(game, deadline, now, link), chat_ids=[cb.from_user.id],
+        note="📤 Анонс для группы WhatsApp — нажмите кнопку под ним и выберите группу 👇",
+    )
 
 
 # ----------------------------------------------------------------- действия с игрой
@@ -254,6 +255,11 @@ async def run_action(message: Message, session: AsyncSession, bot: Bot, action: 
     elif action == "cancelyes":
         dropped = await svc.cancel_game(session, game)
         await notifier.refresh_game(bot, session, game)
+        if not game.chat_id:
+            await whatsapp.send_draft(
+                bot, f"❌ *{texts.game_header(game)} отменена.*", chat_ids=[message.chat.id],
+                note="Сообщите команде в WhatsApp 👇",
+            )
         if game.chat_id:
             await bot.send_message(
                 game.chat_id,
@@ -485,3 +491,15 @@ async def penalty_cancel(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     text, markup = await _user_penalties_view(session, user)
     await cb.message.edit_text(text, reply_markup=markup)
     await cb.answer("Минус снят")
+
+
+@router.callback_query(F.data.startswith("wa:"))
+async def whatsapp_text(cb: CallbackQuery, session: AsyncSession, bot: Bot):
+    await cb.answer()
+    game = await svc.get_game(session, int(cb.data.split(":")[1]))
+    if game is None:
+        return
+    await whatsapp.send_draft(
+        bot, await actions.whatsapp_snapshot(bot, session, game), chat_ids=[cb.from_user.id],
+        note="📤 Текущее состояние для группы WhatsApp 👇",
+    )

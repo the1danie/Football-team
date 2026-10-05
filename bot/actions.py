@@ -1,11 +1,11 @@
 """Сценарии, общие для хендлеров и планировщика."""
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import keyboards, notifier, texts
+from bot import keyboards, notifier, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline
 from bot.models import Game, GameStatus, Rsvp, User
@@ -29,6 +29,12 @@ async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game) -
         lines += ["", warning]
         if game.chat_id and any(d.requires_car for d in result.unassigned):
             await bot.send_message(game.chat_id, texts.no_car_warning())
+    if not game.chat_id:
+        link = await whatsapp.game_link(bot, game)
+        await whatsapp.send_draft(
+            bot, whatsapp.duties(game, yes, result.assignments, result.unassigned, link),
+            note="🎯 Обязанности для группы WhatsApp 👇",
+        )
     return "\n".join(lines)
 
 
@@ -64,6 +70,12 @@ async def send_rsvp_nudge(bot: Bot, session: AsyncSession, game: Game) -> None:
             game.chat_id, texts.group_nudge(game, users, deadline, now),
             reply_to_message_id=game.announce_message_id, allow_sending_without_reply=True,
         )
+    else:
+        link = await whatsapp.game_link(bot, game)
+        await whatsapp.send_draft(
+            bot, whatsapp.nudge(game, users, deadline, now, link),
+            note="⏰ Не все отметились — напомните в группе WhatsApp 👇",
+        )
 
 
 async def apply_penalties_and_announce(bot: Bot, session: AsyncSession, game: Game) -> str:
@@ -79,6 +91,11 @@ async def apply_penalties_and_announce(bot: Bot, session: AsyncSession, game: Ga
         await notifier.send_dm(bot, r.user, texts.penalty_dm(game, r.points, r.total, config.penalty_limit))
     if config.penalty_announce and game.chat_id:
         await bot.send_message(game.chat_id, texts.penalty_group(game, [r.user for r in results], points))
+    elif config.penalty_announce:
+        await whatsapp.send_draft(
+            bot, whatsapp.penalties(game, [r.user for r in results], points),
+            note="🙈 Кто получил минус — для группы WhatsApp 👇",
+        )
     over = [(r.user, r.total) for r in results if config.penalty_limit and r.total >= config.penalty_limit]
     if over:
         await notifier.notify_admins(bot, texts.penalty_limit_admin(over, config.penalty_limit))
@@ -130,5 +147,18 @@ async def game_card(
         b.adjust(3, 1)
     if is_admin:
         b.attach(InlineKeyboardBuilder.from_markup(keyboards.game_admin(game)))
+        b.row(InlineKeyboardButton(text="📤 Текст для WhatsApp", callback_data=f"wa:{game.id}"))
     markup = b.as_markup()
     return "\n".join(lines), (markup if markup.inline_keyboard else None)
+
+
+async def whatsapp_snapshot(bot: Bot, session: AsyncSession, game: Game) -> str:
+    """Текущее состояние игры для WhatsApp: кто идёт или, после распределения, обязанности."""
+    link = await whatsapp.game_link(bot, game)
+    by_status = await svc.participants_by_status(session, game.id)
+    if game.status == GameStatus.DISTRIBUTED:
+        return whatsapp.duties(
+            game, len(by_status[Rsvp.YES]),
+            await svc.active_assignments(session, game.id), await svc.unassigned_duties(session, game), link,
+        )
+    return whatsapp.status(game, by_status, link)

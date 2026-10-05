@@ -160,11 +160,6 @@ async def test_full_flow(h: Harness):
     for uid, (name, car) in players.items():
         await h.register(uid, name, car)
 
-    # --- создание игры без привязанного чата
-    fake.reset()
-    await h.text(ADMIN, texts.BTN_CREATE)
-    assert "/bindchat" in fake.sent(ADMIN)[-1].text
-
     # не-админ не может привязать чат
     await h.text(2, "/bindchat", chat_id=GROUP)
     assert "только для администраторов" in fake.sent(GROUP)[-1].text
@@ -412,7 +407,7 @@ async def test_poll_nudge_and_penalties(h: Harness, monkeypatch):
     assert sorted(m.chat_id for m in invites) == [2, 4]
     assert "получит 1 минус" in invites[0].text
     game_id = int(buttons(invites[0].reply_markup)[0].callback_data.split(":")[1])
-    report = fake.sent(ADMIN)[-1].text
+    report = next(m.text for m in fake.sent(ADMIN) if "Опрос отправлен" in m.text)
     assert "Опрос отправлен в личку: 2" in report and "Сбор закрывается" in report
 
     # Арман отвечает прямо из личного сообщения
@@ -503,3 +498,122 @@ async def test_name_from_telegram(h: Harness):
     async with h.sm() as s:
         assert (await svc.get_user_by_tg(s, 3)).name == "Арман С."
         assert (await svc.get_user_by_tg(s, 2)).name == "Арман"
+
+
+def _wa_text(msg) -> str:
+    """Текст, который откроется в WhatsApp по кнопке под сообщением."""
+    from urllib.parse import unquote
+
+    url = buttons(msg.reply_markup)[0].url
+    assert url.startswith("https://wa.me/?text=")
+    return unquote(url.removeprefix("https://wa.me/?text="))
+
+
+async def test_whatsapp_team_without_telegram_group(h: Harness):
+    """Команда сидит в WhatsApp: Telegram-группы нет, админ получает готовые тексты для WhatsApp."""
+    fake = h.fake
+    await h.register(ADMIN, "Даниял", car=True)
+    await h.register(2, "Арман", car=False)
+
+    # --- игра создаётся без /bindchat
+    fake.reset()
+    await h.text(ADMIN, texts.BTN_CREATE)
+    tomorrow = config.now() + timedelta(days=1)
+    await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
+    await h.click(ADMIN, "newtime:2000")
+    await h.click(ADMIN, "newkind:game")
+    await h.text(ADMIN, "Стадион Динамо")
+    await h.click(ADMIN, "newgame:publish")
+    assert not [m for m in fake.sent() if m.chat_id < 0]  # в Telegram-группы ничего
+    draft = fake.sent(ADMIN)[-1]
+    assert draft.parse_mode is None  # обычный текст — копируется как есть
+    wa = _wa_text(draft)
+    assert wa == draft.text
+    assert "*⚽ Игра —" in wa and "Стадион Динамо" in wa and "Кто не ответит — получит минус" in wa
+    link = next(line for line in wa.splitlines() if line.startswith("https://t.me/"))
+    game_id = int(link.rsplit("_", 1)[1])
+    assert link == f"https://t.me/duty_bot?start=game_{game_id}"
+    assert any(m.chat_id == 2 and "Открыт сбор" in m.text for m in fake.sent())  # опрос в личку
+
+    # --- новый игрок пришёл по ссылке из WhatsApp: регистрация и сразу опрос
+    fake.reset()
+    h.names[5] = "Максим"
+    await h.text(5, f"/start game_{game_id}")
+    assert "Есть ли у тебя машина" in fake.sent(5)[-1].text
+    await h.click(5, "car:0")
+    card = fake.sent(5)[-1]
+    assert "Игра —" in card.text and "Твой статус: не отмечен" in card.text
+    assert [b.text for b in buttons(card.reply_markup)][:3] == ["✅ Буду", "❌ Не буду", "🤔 Пока не знаю"]
+    await h.click(5, f"rsvp:{game_id}:yes")
+    assert "Твой статус: ✅ Буду" in fake.edits(5)[-1].text
+
+    # --- админ в любой момент берёт текущий список для WhatsApp
+    fake.reset()
+    await h.click(ADMIN, f"wa:{game_id}")
+    assert "✅ Буду (1): Максим" in _wa_text(fake.sent(ADMIN)[-1])
+
+    # --- напоминание молчащим: лично + текст для WhatsApp админу
+    async with h.sm() as s:
+        g = await s.get(Game, game_id)
+        g.created_at -= timedelta(days=2)
+        for u in (await s.scalars(__import__("sqlalchemy").select(svc.User))).all():
+            u.created_at -= timedelta(days=3)
+        g.starts_at = config.now() + timedelta(hours=7)
+        await s.commit()
+    fake.reset()
+    await _tick(h)
+    wa = _wa_text(fake.sent(ADMIN)[-1])
+    assert "Ещё не отметились (2): Арман, Даниял" in wa and link in wa and "потом минус" in wa
+
+    # --- закрытие сбора: минусы и обязанности — тоже текстами для WhatsApp
+    async with h.sm() as s:
+        (await s.get(Game, game_id)).starts_at = config.now() + timedelta(hours=4)
+        await s.commit()
+    fake.reset()
+    await _tick(h)
+    drafts = [_wa_text(m) for m in fake.sent(ADMIN) if m.reply_markup and buttons(m.reply_markup)[0].url]
+    assert any("Не ответили на опрос: Арман, Даниял — по −1" in d for d in drafts)
+    duties = next(d for d in drafts if "*Обязанности*" in d)
+    assert "💧 Вода — Максим" in duties or "Максим" in duties
+    assert "⚽ Мячи — ⚠️ не назначено" in duties  # у Максима нет машины
+    assert not [m for m in fake.sent() if m.chat_id < 0]
+
+    # --- напоминание перед игрой
+    async with h.sm() as s:
+        (await s.get(Game, game_id)).starts_at = config.now() + timedelta(hours=1)
+        await s.commit()
+    fake.reset()
+    await _tick(h)
+    reminder = _wa_text(fake.sent(ADMIN)[-1])
+    assert "*Сегодня игра в" in reminder and "Ответственные:" in reminder and "Максим" in reminder
+
+    # --- отмена
+    fake.reset()
+    await h.click(ADMIN, f"adm:cancelyes:{game_id}")
+    assert any("отменена" in _wa_text(m) for m in fake.sent(ADMIN) if m.reply_markup)
+
+
+def test_whatsapp_share_url_limit():
+    from bot import whatsapp
+
+    assert whatsapp.share_markup("Привет") is not None
+    assert whatsapp.share_markup("Я" * 2000) is None  # слишком длинно для кнопки — только текст
+
+
+async def test_whatsapp_draft_falls_back_to_plain_text(monkeypatch):
+    from aiogram.exceptions import TelegramBadRequest
+
+    from bot import whatsapp
+
+    session = FakeSession()
+    original = session.make_request
+
+    async def picky(bot, method, timeout=None):
+        if isinstance(method, SendMessage) and method.reply_markup is not None:
+            raise TelegramBadRequest(method=method, message="BUTTON_URL_INVALID")
+        return await original(bot, method, timeout)
+
+    session.make_request = picky
+    bot = Bot("42:TEST", session=session)
+    await whatsapp.send_draft(bot, "Текст", chat_ids=[1])
+    assert [m.text for m in session.sent(1)] == ["Текст"]
