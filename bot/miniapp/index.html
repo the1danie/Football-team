@@ -155,6 +155,7 @@
   .sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--sep); margin: 4px auto 10px; }
   .sheet h3 { margin: 4px 2px 12px; font-size: 19px; }
   @keyframes up { from { transform: translateY(40px); opacity: .5; } }
+  .sheet-bg.still, .sheet-bg.still .sheet { animation: none; }
   @keyframes fade { from { opacity: 0; } }
 
   .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(90px + env(safe-area-inset-bottom));
@@ -273,7 +274,9 @@ async function api(action, body = {}, { quiet } = {}) {
 // ---------------------------------------------------------------- отрисовка
 function render() {
   const root = document.getElementById("app");
+  const y = window.scrollY;
   root.replaceChildren(screen());
+  if (S.keepScroll !== false) window.scrollTo(0, y);
   renderSheet();
   if (tg && tg.BackButton) { S.sheet ? tg.BackButton.show() : tg.BackButton.hide(); }
 }
@@ -649,14 +652,25 @@ function closeSheet() { S.sheet = null; render(); }
 if (tg && tg.BackButton) tg.BackButton.onClick(closeSheet);
 
 function renderSheet() {
+  // Перерисовка того же окна — без анимации и с сохранением прокрутки (окно не «прыгает» наверх).
+  const old = document.querySelector(".sheet-bg");
+  const same = !!(old && S.sheet && old.__sheet === S.sheet);
+  const oldBox = old && old.querySelector(".sheet");
+  const scrollTop = same && oldBox ? oldBox.scrollTop : 0;
+  const pickScroll = same ? [...old.querySelectorAll(".pick")].map((p) => p.scrollLeft) : [];
   document.querySelectorAll(".sheet-bg").forEach((x) => x.remove());
   if (!S.sheet) return;
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet }[S.sheet.type]();
-  const bg = h("div", { class: "sheet-bg", onclick: (e) => { if (e.target === bg) closeSheet(); } },
-    h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content));
+  const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
+  const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
+  bg.__sheet = S.sheet;
   document.body.append(bg);
+  if (same) {
+    box.scrollTop = scrollTop;
+    bg.querySelectorAll(".pick").forEach((p, i) => { p.scrollLeft = pickScroll[i] || 0; });
+  }
 }
 
 function createSheet() {

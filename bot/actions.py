@@ -204,9 +204,9 @@ async def whatsapp_snapshot(bot: Bot, session: AsyncSession, game: Game) -> str:
     link = await whatsapp.game_link(bot, game)
     by_status = await svc.participants_by_status(session, game.id)
     if game.status == GameStatus.DISTRIBUTED:
-        return whatsapp.duties(
+        return whatsapp.clean_duties(
             game, len(by_status[Rsvp.YES]),
             await svc.active_assignments(session, game.id), await svc.unassigned_duties(session, game), link,
             await svc.pending_after_duties(session, game), after_at(game),
         )
-    return whatsapp.status(game, by_status, link)
+    return whatsapp.clean(whatsapp.status(game, by_status, link))

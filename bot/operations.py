@@ -131,7 +131,7 @@ async def create_game(
             + ("игра отменится автоматически." if config.min_players_auto_cancel else "бот спросит вас: проводить или отменить.")
         )
 
-    announce = whatsapp.announce(game, deadline, now, await whatsapp.game_link(bot, game))
+    announce = whatsapp.clean(whatsapp.announce(game, deadline, now, await whatsapp.game_link(bot, game)))
     return game, poll_report, " ".join(hint), announce
 
 
@@ -198,7 +198,7 @@ async def update_game(
             reply_to_message_id=game.announce_message_id,
         )
     link = await whatsapp.game_link(bot, game)
-    wa = "\n".join([f"✏️ *Изменения: {texts.game_header(game)}*", "", *changes, "", "Отметиться:", link])
+    wa = whatsapp.clean("\n".join([f"*Изменения: {texts.game_header(game)}*", "", *changes, "", "Отметиться:", link]))
     return changes, wa
 
 
@@ -236,7 +236,7 @@ async def cancel_game(
         )
     else:
         await whatsapp.send_draft(
-            bot, f"❌ *{texts.game_header(game)} отменена*{why}.",
+            bot, f"*{texts.game_header(game)} отменена*{why}.",
             chat_ids=[admin_chat_id] if admin_chat_id else None,
             note="Сообщите команде в WhatsApp 👇",
         )
@@ -331,7 +331,7 @@ async def _call_for_players(bot: Bot, session: AsyncSession, game: Game, yes: in
     link = await whatsapp.game_link(bot, game)
     await whatsapp.send_draft(
         bot,
-        f"⚠️ *{texts.game_header(game)}*\n\nПока {yes} из минимум {game.min_players} — {word} под вопросом.\n"
+        f"*{texts.game_header(game)}*\n\nПока {yes} из минимум {game.min_players} — {word} под вопросом.\n"
         f"Кто придёт — отметьтесь:\n{link}",
         note="⏳ Позовите ещё людей в WhatsApp 👇",
     )

@@ -76,7 +76,7 @@ async def test_scheduler_after_training(fake, monkeypatch):  # noqa: F811
         await s.commit()
         assert {a.duty.code for a in await svc.active_assignments(s, gid)} == {"water"}
     draft = next(m.text for m in fake.sent(1) if m.parse_mode is None and "*Обязанности*" in m.text)
-    assert "💧 Вода —" in draft and "После тренировки (около" in draft and "⚽ Мячи" in draft
+    assert "Вода —" in draft and "После тренировки (около" in draft and "Мячи" in draft
 
     # тренировка началась 1,5 часа назад
     async with sm() as s:
@@ -89,7 +89,7 @@ async def test_scheduler_after_training(fake, monkeypatch):  # noqa: F811
         codes = {a.duty.code for a in await svc.active_assignments(s, gid)}
         assert codes == {"water", "balls", "bibs"}
     assert any("После тренировки" in m.text and "на тебе" in m.text for m in fake.sent())
-    assert any("🏁 После тренировки" in m.text and m.parse_mode is None for m in fake.sent(1))
+    assert any("*После тренировки" in m.text and m.parse_mode is None for m in fake.sent(1))
 
     fake.reset()
     async with sm() as s:
@@ -141,8 +141,8 @@ def test_gather_time(monkeypatch):
     assert texts.gather_time(game) == "22:30"
     assert "23:00 (сбор в 22:30)" in "\n".join(texts.game_lines(game))  # опрос и напоминания в личку
     assert "Сегодня тренировка в 23:00, сбор в 22:30." in texts.personal_reminder(game, now, [])
-    assert "🕢 Сбор в 22:30" in whatsapp.announce(game, now, now, "https://t.me/x")
-    assert "*Сегодня тренировка в 23:00, сбор в 22:30*" in whatsapp.reminder(game, now, [])
+    assert "Сбор в 22:30" in whatsapp.clean(whatsapp.announce(game, now, now, "https://t.me/x"))
+    assert "*Сегодня тренировка в 23:00, сбор в 22:30*" in whatsapp.clean(whatsapp.reminder(game, now, []))
     monkeypatch.setattr(config, "gather_minutes", 0)
     assert texts.gather_time(game) is None and "сбор" not in texts.personal_reminder(game, now, [])
 
@@ -196,3 +196,34 @@ async def test_laundry_merged_into_bibs_on_existing_db(tmp_path, monkeypatch):
     async with sm() as s:
         assert (await s.scalar(select(Duty).where(Duty.code == "laundry"))).is_active is True
     await engine.dispose()
+
+
+def test_whatsapp_texts_have_no_emoji():
+    """WhatsApp по ссылке показывает эмодзи как «�» — в текстах для него только слова."""
+    from datetime import datetime
+    from urllib.parse import unquote
+
+    from bot import whatsapp
+    from bot.models import Assignment, User
+
+    game = Game(kind="training", starts_at=datetime(2026, 10, 5, 23, 0), location="Жас Оркен", status="open",
+                min_players=5)
+    now = datetime(2026, 10, 5, 12, 0)
+    u = User(name="Даниял Абуов", telegram_id=1)
+    duty = Duty(emoji="🧴", name="Аптечка", action="принести аптечку", phase="before", requires_car=False)
+    texts_ = [
+        whatsapp.announce(game, now, now, "https://t.me/x?start=game_1"),
+        whatsapp.status(game, {"yes": [u], "maybe": [], "no": []}, "https://t.me/x"),
+        whatsapp.nudge(game, [u], now, now, "https://t.me/x", 2),
+        whatsapp.duties(game, 3, [Assignment(user=u, duty=duty)], [duty], "https://t.me/x"),
+        whatsapp.reminder(game, now, [Assignment(user=u, duty=duty)]),
+        whatsapp.after_duties(game, [Assignment(user=u, duty=duty)], []),
+        "⚽ ✅ 🤔 ❌ 📍 🕢 ⏰ 🙈 🏁 ⚠️ ✏️ 🔄 👕",
+    ]
+    for t in texts_:
+        cleaned = whatsapp.clean(t)
+        assert not whatsapp._EMOJI.search(cleaned), cleaned
+        assert not whatsapp._EMOJI.search(unquote(whatsapp.share_url(t).split("text=")[1]))
+    assert whatsapp.clean(texts_[0]).startswith("*Тренировка — 5 октября (пн), 23:00*\nСбор в 22:30\nМесто: Жас Оркен")
+    assert "Буду (1): Даниял Абуов" in whatsapp.clean(texts_[1])
+    assert "Аптечка — Даниял Абуов" in whatsapp.clean(texts_[3])

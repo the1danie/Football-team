@@ -536,7 +536,7 @@ async def test_whatsapp_team_without_telegram_group(h: Harness):
     assert draft.parse_mode is None  # обычный текст — копируется как есть
     wa = _wa_text(draft)
     assert wa == draft.text
-    assert "*⚽ Игра —" in wa and "Стадион Динамо" in wa and "Кто не ответит — получит минус" in wa
+    assert "*Игра —" in wa and "Стадион Динамо" in wa and "Кто не ответит — получит минус" in wa
     link = next(line for line in wa.splitlines() if line.startswith("https://t.me/"))
     game_id = int(link.rsplit("_", 1)[1])
     assert link == f"https://t.me/duty_bot?start=game_{game_id}"
@@ -560,7 +560,7 @@ async def test_whatsapp_team_without_telegram_group(h: Harness):
     # --- админ в любой момент берёт текущий список для WhatsApp
     fake.reset()
     await h.click(ADMIN, f"wa:{game_id}")
-    assert "✅ Буду (1): Максим" in _wa_text(fake.sent(ADMIN)[-1])
+    assert "Буду (1): Максим" in _wa_text(fake.sent(ADMIN)[-1])
 
     # --- напоминание молчащим: лично + текст для WhatsApp админу
     async with h.sm() as s:
@@ -584,8 +584,8 @@ async def test_whatsapp_team_without_telegram_group(h: Harness):
     drafts = [_wa_text(m) for m in fake.sent(ADMIN) if m.reply_markup and buttons(m.reply_markup)[0].url]
     assert any("Не ответили на опрос: Арман, Даниял — по −1" in d for d in drafts)
     duties = next(d for d in drafts if "*Обязанности*" in d)
-    assert "💧 Вода — Максим" in duties or "Максим" in duties
-    assert "⚽ Мячи — ⚠️ не назначено" in duties  # у Максима нет машины
+    assert "Вода — Максим" in duties or "Максим" in duties
+    assert "Мячи — не назначено" in duties  # у Максима нет машины
     assert not [m for m in fake.sent() if m.chat_id < 0]
 
     # --- напоминание перед игрой
