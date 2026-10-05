@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -50,6 +50,9 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(64))
     has_car: Mapped[bool] = mapped_column(Boolean, default=False)
     profile_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # В составе команды: получает опросы, за молчание получает минусы.
+    # Админ может временно исключить (травма, уехал).
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
@@ -69,6 +72,9 @@ class Game(Base):
 
     personal_reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     group_reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Напоминание тем, кто не отметился, и начисление минусов.
+    rsvp_nudge_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    penalties_applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -131,6 +137,33 @@ class SwapRequest(Base):
     )
     status: Mapped[str] = mapped_column(String(16), default=SwapStatus.PENDING)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PenaltyStatus:
+    OPEN = "open"  # действует
+    REDEEMED = "redeemed"  # отработан обязанностью
+    CANCELLED = "cancelled"  # снят администратором
+
+
+class Penalty(Base):
+    """Минус за то, что игрок не ответил на опрос до закрытия сбора."""
+
+    __tablename__ = "penalties"
+    __table_args__ = (UniqueConstraint("user_id", "game_id", "reason"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    game_id: Mapped[int | None] = mapped_column(ForeignKey("games.id", ondelete="SET NULL"), nullable=True)
+    points: Mapped[int] = mapped_column(Integer, default=1)
+    reason: Mapped[str] = mapped_column(String(32), default="no_response")
+    status: Mapped[str] = mapped_column(String(16), default=PenaltyStatus.OPEN, index=True)
+    # Игра, на которой минус отработан обязанностью.
+    redeemed_game_id: Mapped[int | None] = mapped_column(
+        ForeignKey("games.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    game: Mapped["Game | None"] = relationship(foreign_keys=[game_id], lazy="joined")
 
 
 class Setting(Base):

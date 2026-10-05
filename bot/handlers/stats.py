@@ -24,8 +24,14 @@ async def team_view(session: AsyncSession):
     rows = await svc.team_stats(session)
     if not rows:
         return "Статистики пока нет.", None
+    minuses = await svc.open_penalty_points(session)
     lines = ["<b>📊 Статистика команды</b>", ""]
-    lines += [f"{texts.h(u.name)} — {n} {duties_word(n)}" for u, n in rows]
+    lines += [
+        f"{texts.h(u.name)} — {n} {duties_word(n)}" + (f" · ⚠️ −{minuses[u.id]}" if minuses.get(u.id) else "")
+        for u, n in rows
+    ]
+    if minuses:
+        lines += ["", "⚠️ — минусы за неответы на опросы"]
     lines += ["", "Нажми на игрока, чтобы посмотреть подробности."]
     b = InlineKeyboardBuilder()
     for u, _ in rows:
@@ -57,6 +63,10 @@ async def player(cb: CallbackQuery, session: AsyncSession):
         return
     lines = [f"<b>{texts.h(user.name)}</b>{' 🚗' if user.has_car else ''}", ""]
     lines += [f"{d.emoji} {texts.h(d.name)} — {n}" for d, n in await svc.player_stats(session, user.id)]
+    minuses = await svc.user_penalties(session, user.id)
+    if minuses:
+        lines += ["", f"⚠️ Минусы: {sum(p.points for p in minuses)}"]
+        lines += [f"• не ответил — {texts.game_header(p.game)}" for p in minuses if p.game]
     b = InlineKeyboardBuilder()
     b.button(text="← Вся команда", callback_data="stat:all")
     await cb.message.edit_text("\n".join(lines), reply_markup=b.as_markup())

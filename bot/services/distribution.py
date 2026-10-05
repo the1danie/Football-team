@@ -5,6 +5,7 @@
 score = (сколько раз игрок выполнял эту обязанность) * 3
       + (сколько всего обязанностей у игрока)
       + 2, если у игрока была обязанность на прошлой игре
+      - 10 × (действующие минусы за неответ на опрос)
 
 Чем меньше score, тем выше приоритет. Все обязанности игры распределяются
 разом так, чтобы суммарный score был минимальным (задача о назначениях,
@@ -29,6 +30,8 @@ class Candidate:
     duty_counts: dict[int, int] = field(default_factory=dict)  # duty_id -> сколько раз выполнял
     total: int = 0
     busy_last_game: bool = False
+    # Действующие минусы × вес (config.penalty_priority): такие игроки получают обязанности первыми.
+    penalty_bonus: float = 0
 
 
 @dataclass(frozen=True)
@@ -38,11 +41,12 @@ class DutySpec:
     sort_order: int = 0
 
 
-def score(candidate: Candidate, duty_id: int) -> int:
+def score(candidate: Candidate, duty_id: int) -> float:
     return (
         candidate.duty_counts.get(duty_id, 0) * DUTY_WEIGHT
         + candidate.total
         + (RECENT_PENALTY if candidate.busy_last_game else 0)
+        - candidate.penalty_bonus
     )
 
 

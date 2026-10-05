@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.config import config
 from bot.models import (
     Assignment,
     AssignmentStatus,
@@ -14,6 +15,8 @@ from bot.models import (
     Game,
     GameParticipant,
     GameStatus,
+    Penalty,
+    PenaltyStatus,
     Rsvp,
     Setting,
     SwapRequest,
@@ -40,6 +43,14 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, default_na
 
 async def all_users(session: AsyncSession) -> list[User]:
     return list((await session.scalars(select(User).order_by(User.name))).all())
+
+
+async def roster(session: AsyncSession) -> list[User]:
+    """Состав команды: заполнили профиль и не исключены админом."""
+    rows = await session.scalars(
+        select(User).where(User.profile_completed.is_(True), User.is_active.is_(True)).order_by(User.name)
+    )
+    return list(rows.all())
 
 
 # ---------------------------------------------------------------- настройки
@@ -215,6 +226,7 @@ async def build_candidates(
             ).all()
         )
 
+    penalties = await open_penalty_points(session, ids)
     return [
         Candidate(
             user_id=u.id,
@@ -222,6 +234,7 @@ async def build_candidates(
             duty_counts=per_user.get(u.id, {}),
             total=sum(per_user.get(u.id, {}).values()),
             busy_last_game=u.id in busy_last,
+            penalty_bonus=penalties.get(u.id, 0) * config.penalty_priority,
         )
         for u in users
     ]
@@ -508,3 +521,87 @@ async def player_stats(session: AsyncSession, user_id: int) -> list[tuple[Duty, 
     }
     duties = list((await session.scalars(select(Duty).order_by(Duty.sort_order, Duty.id))).all())
     return [(d, counts.get(d.id, 0)) for d in duties if d.is_active or counts.get(d.id)]
+
+
+# ---------------------------------------------------------------- опросы и минусы
+
+
+async def non_responders(session: AsyncSession, game: Game) -> list[User]:
+    """Игроки состава, которые не нажали ни одну кнопку опроса.
+
+    Тех, кто присоединился к боту уже после публикации игры, не считаем.
+    """
+    answered = set(
+        (await session.scalars(select(GameParticipant.user_id).where(GameParticipant.game_id == game.id))).all()
+    )
+    return [u for u in await roster(session) if u.id not in answered and u.created_at <= game.created_at]
+
+
+async def open_penalty_points(session: AsyncSession, user_ids: list[int] | None = None) -> dict[int, int]:
+    q = (
+        select(Penalty.user_id, func.sum(Penalty.points))
+        .where(Penalty.status == PenaltyStatus.OPEN)
+        .group_by(Penalty.user_id)
+    )
+    if user_ids is not None:
+        q = q.where(Penalty.user_id.in_(user_ids))
+    return {uid: int(total) for uid, total in (await session.execute(q)).all()}
+
+
+@dataclass
+class PenaltyResult:
+    user: User
+    points: int  # начислено сейчас
+    total: int  # всего действующих минусов
+
+
+async def apply_no_response_penalties(session: AsyncSession, game: Game) -> list[PenaltyResult]:
+    """Закрытие сбора: минус каждому, кто так и не ответил. Выполняется один раз на игру."""
+    if game.penalties_applied:
+        return []
+    game.penalties_applied = True
+    if config.penalty_points <= 0:
+        await session.flush()
+        return []
+    users = await non_responders(session, game)
+    for user in users:
+        session.add(Penalty(user_id=user.id, game_id=game.id, points=config.penalty_points))
+    await session.flush()
+    totals = await open_penalty_points(session, [u.id for u in users])
+    return [PenaltyResult(u, config.penalty_points, totals.get(u.id, 0)) for u in users]
+
+
+async def redeem_penalties(session: AsyncSession, game: Game) -> list[tuple[User, int]]:
+    """Игра прошла: каждая выполненная обязанность списывает один (самый старый) минус."""
+    redeemed: dict[int, tuple[User, int]] = {}
+    for a in await active_assignments(session, game.id):
+        penalty = await session.scalar(
+            select(Penalty)
+            .where(Penalty.user_id == a.user_id, Penalty.status == PenaltyStatus.OPEN)
+            .order_by(Penalty.created_at, Penalty.id)
+            .limit(1)
+        )
+        if penalty is None:
+            continue
+        penalty.status = PenaltyStatus.REDEEMED
+        penalty.redeemed_game_id = game.id
+        user, n = redeemed.get(a.user_id, (a.user, 0))
+        redeemed[a.user_id] = (user, n + 1)
+        await session.flush()
+    return list(redeemed.values())
+
+
+async def user_penalties(session: AsyncSession, user_id: int, open_only: bool = True) -> list[Penalty]:
+    q = select(Penalty).where(Penalty.user_id == user_id).order_by(Penalty.created_at, Penalty.id)
+    if open_only:
+        q = q.where(Penalty.status == PenaltyStatus.OPEN)
+    return list((await session.scalars(q)).all())
+
+
+async def cancel_penalty(session: AsyncSession, penalty_id: int) -> Penalty | None:
+    penalty = await session.get(Penalty, penalty_id)
+    if penalty is None or penalty.status != PenaltyStatus.OPEN:
+        return None
+    penalty.status = PenaltyStatus.CANCELLED
+    await session.flush()
+    return penalty

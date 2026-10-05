@@ -353,3 +353,126 @@ async def test_auto_distribution_and_finish(h: Harness):
         assert (await s.get(Game, game_id)).status == GameStatus.FINISHED
         assert all(a.status == AssignmentStatus.ACTIVE for a in (await s.scalars(
             __import__("sqlalchemy").select(Assignment).where(Assignment.game_id == game_id))).all())
+
+
+async def _tick(h: Harness):
+    async with h.sm() as s:
+        await tick(h.bot, s)
+        await s.commit()
+
+
+async def _move_game(h: Harness, game_id: int, starts_in: timedelta):
+    async with h.sm() as s:
+        g = await s.get(Game, game_id)
+        g.starts_at = config.now() + starts_in
+        g.created_at = g.created_at - timedelta(days=2)
+        # игроки были в боте до публикации игры
+        for u in (await s.scalars(__import__("sqlalchemy").select(svc.User))).all():
+            u.created_at = min(u.created_at, g.created_at - timedelta(minutes=1))
+        await s.commit()
+
+
+async def test_poll_nudge_and_penalties(h: Harness, monkeypatch):
+    monkeypatch.setattr(config, "penalty_limit", 1)
+    fake = h.fake
+    await h.register(ADMIN, "Даниял", car=True)
+    for uid, name in ((2, "Арман"), (3, "Тимур"), (4, "Руслан")):
+        await h.register(uid, name, car=False)
+    await h.text(ADMIN, "/bindchat", chat_id=GROUP)
+
+    # Тимур травмирован — админ убирает его из состава
+    async with h.sm() as s:
+        timur = await svc.get_user_by_tg(s, 3)
+        ruslan = await svc.get_user_by_tg(s, 4)
+    await h.text(ADMIN, "/players")
+    assert "Состав команды" in fake.sent(ADMIN)[-1].text
+    await h.click(ADMIN, f"roster:{timur.id}")
+    assert "🚫 Тимур" in [b.text for b in buttons(fake.last_markup(ADMIN))]
+
+    # --- публикация: опрос приходит в личку всем из состава, кроме автора
+    fake.reset()
+    await h.text(ADMIN, texts.BTN_CREATE)
+    tomorrow = config.now() + timedelta(days=1)
+    await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
+    await h.click(ADMIN, "newtime:2000")
+    await h.click(ADMIN, "newkind:game")
+    await h.click(ADMIN, "newloc:skip")
+    await h.click(ADMIN, "newgame:publish")
+    invites = [m for m in fake.sent() if "Открыт сбор" in m.text]
+    assert sorted(m.chat_id for m in invites) == [2, 4]
+    assert "получит 1 минус" in invites[0].text
+    game_id = int(buttons(invites[0].reply_markup)[0].callback_data.split(":")[1])
+    report = fake.sent(ADMIN)[-1].text
+    assert "Опрос отправлен в личку: 2" in report and "Сбор закрывается" in report
+
+    # Арман отвечает прямо из личного сообщения
+    fake.reset()
+    await h.click(2, f"rsvp:{game_id}:yes")
+    assert "Твой статус: ✅ Буду" in fake.edits(2)[-1].text
+    assert "Подтвердили: 1 человек" in fake.edits(GROUP)[-1].text
+
+    # --- напоминание молчащим: лично и списком в чате, один раз
+    await _move_game(h, game_id, timedelta(hours=7))  # сбор закроется через 2 ч, напоминание — за 3 ч
+    fake.reset()
+    await _tick(h)
+    nudges = [m for m in fake.sent() if "ещё не ответил" in m.text]
+    assert sorted(m.chat_id for m in nudges) == [ADMIN, 4]  # автор игры тоже не отметился
+    group = fake.sent(GROUP)[-1].text
+    assert "Ещё не отметились (2)" in group and "Руслан" in group and "Арман" not in group and "Тимур" not in group
+    fake.reset()
+    await _tick(h)
+    assert fake.sent() == []
+
+    # --- сбор закрыт: минус Руслану (и автору игры, который сам не отметился)
+    await _move_game(h, game_id, timedelta(hours=4))
+    fake.reset()
+    await _tick(h)
+    penalized = sorted(m.chat_id for m in fake.sent() if "Ты не ответил на опрос" in m.text)
+    assert penalized == [ADMIN, 4]
+    assert any("Начислено: −1. Всего: 1 минус." in m.text for m in fake.sent(4))
+    assert any("Не ответили на опрос" in m.text and "Руслан" in m.text for m in fake.sent(GROUP))
+    admin_texts = [m.text for m in fake.sent(ADMIN)]
+    assert any("1 и больше минусов" in t for t in admin_texts)  # лимит
+    assert any("Автоматическое распределение" in t for t in admin_texts)
+    async with h.sm() as s:
+        assert (await svc.open_penalty_points(s)) == {ruslan.id: 1, (await svc.get_user_by_tg(s, ADMIN)).id: 1}
+    # повторный тик не начисляет ещё раз
+    fake.reset()
+    await _tick(h)
+    assert not any("Ты не ответил" in m.text for m in fake.sent())
+
+    # --- минусы видны в профиле и статистике
+    fake.reset()
+    await h.text(4, texts.BTN_PROFILE)
+    assert "Минусы: 1" in fake.sent(4)[-1].text
+    await h.text(4, texts.BTN_STATS)
+    assert "Руслан — 0 обязанностей · ⚠️ −1" in fake.sent(4)[-1].text
+
+    # --- игрок не может смотреть /penalties, админ — может и снимает минус
+    fake.reset()
+    await h.text(4, "/penalties")
+    assert not any("Минусы за неответы" in m.text for m in fake.sent(4))
+    await h.text(ADMIN, "/penalties")
+    assert "Руслан — 1 минус" in fake.sent(ADMIN)[-1].text
+    await h.click(ADMIN, f"pens:{ruslan.id}")
+    del_button = next(b for b in buttons(fake.last_markup(ADMIN)) if b.callback_data.startswith("pendel:"))
+    await h.click(ADMIN, del_button.callback_data)
+    assert "снял с тебя минус" in fake.sent(4)[-1].text
+    await h.click(ADMIN, del_button.callback_data)
+    assert "уже снят" in fake.alerts()[-1].text
+    async with h.sm() as s:
+        assert ruslan.id not in await svc.open_penalty_points(s)
+
+
+async def test_no_penalties_for_last_minute_game(h: Harness):
+    await h.register(ADMIN, "Даниял", car=True)
+    await h.register(2, "Арман", car=False)
+    async with h.sm() as s:
+        game = await svc.create_game(s, "game", config.now() + timedelta(hours=2), None, None)
+        await s.commit()
+        game_id = game.id
+    await _tick(h)
+    async with h.sm() as s:
+        g = await s.get(Game, game_id)
+        assert g.penalties_applied  # сбор фактически закрыт, но ответить было некогда
+        assert await svc.open_penalty_points(s) == {}

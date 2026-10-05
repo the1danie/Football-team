@@ -165,6 +165,89 @@ def group_reminder(game: Game, now: datetime, assignments: list[Assignment]) -> 
     return "\n".join(lines)
 
 
-def profile_text(user: User) -> str:
+def profile_text(user: User, minuses: int = 0) -> str:
     car = CAR_YES if user.has_car else CAR_NO
-    return f"<b>👤 Мой профиль</b>\n\nИмя: {h(user.name)}\nМашина: {car}"
+    text = f"<b>👤 Мой профиль</b>\n\nИмя: {h(user.name)}\nМашина: {car}"
+    if minuses:
+        text += (
+            f"\n\n⚠️ Минусы: {minuses} — за неответы на опросы. Пока они есть, обязанности "
+            "достаются тебе первым; каждая выполненная обязанность списывает один минус."
+        )
+    return text
+
+
+# ---------------------------------------------------------------- опросы и минусы
+
+
+def minus_word(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return "минус"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "минуса"
+    return "минусов"
+
+
+def until(deadline: datetime, now: datetime) -> str:
+    return f"{day_word(deadline, now).lower()} до {fmt_time(deadline)}"
+
+
+def game_lines(game: Game) -> list[str]:
+    lines = [f"<b>{kind_title(game)}</b>", f"📅 {fmt_date(game.starts_at, weekday=True)}", f"🕗 {fmt_time(game.starts_at)}"]
+    if game.location:
+        lines.append(f"📍 {h(game.location)}")
+    return lines
+
+
+def poll_invite(game: Game, deadline: datetime, now: datetime, penalty_points: int) -> str:
+    lines = ["📣 <b>Открыт сбор на игру — кто придёт?</b>", ""] + game_lines(game)
+    lines += ["", f"Отметься {until(deadline, now)} кнопками ниже."]
+    if penalty_points > 0:
+        lines.append(f"Кто не ответит — получит {penalty_points} {minus_word(penalty_points)} ⚠️")
+    return "\n".join(lines)
+
+
+def rsvp_nudge(game: Game, deadline: datetime, now: datetime, penalty_points: int) -> str:
+    lines = ["⏰ <b>Ты ещё не ответил, придёшь ли</b>", ""] + game_lines(game)
+    lines += ["", f"Сбор закрывается {until(deadline, now)}."]
+    if penalty_points > 0:
+        lines.append(f"Не ответишь — {penalty_points} {minus_word(penalty_points)}. Достаточно нажать «❌ Не буду».")
+    return "\n".join(lines)
+
+
+def group_nudge(game: Game, users: list[User], deadline: datetime, now: datetime) -> str:
+    names = ", ".join(mention(u) for u in users)
+    return (
+        f"⏰ <b>{game_header(game)}</b>\n\n"
+        f"Ещё не отметились ({len(users)}): {names}\n\n"
+        f"Сбор закрывается {until(deadline, now)} — потом минус. Кнопки — в сообщении об игре выше."
+    )
+
+
+def penalty_dm(game: Game, points: int, total: int, limit: int) -> str:
+    lines = [
+        f"⚠️ Ты не ответил на опрос: {game_header(game)}.",
+        f"Начислено: −{points}. Всего: {total} {minus_word(total)}.",
+        "",
+        "Пока есть минусы, обязанности достаются тебе в первую очередь. "
+        "Каждая выполненная обязанность списывает один минус.",
+    ]
+    if limit and total >= limit:
+        lines += ["", f"❗ У тебя {total} {minus_word(total)} — администраторы получили уведомление."]
+    return "\n".join(lines)
+
+
+def penalty_group(game: Game, users: list[User], points: int) -> str:
+    names = ", ".join(h(u.name) for u in users)
+    return f"🙈 Не ответили на опрос ({game_header(game)}): {names} — по −{points}."
+
+
+def penalty_limit_admin(rows: list[tuple[User, int]], limit: int) -> str:
+    lines = [f"❗ Игроки, у которых {limit} и больше минусов за неответы на опросы:", ""]
+    lines += [f"• {h(u.name)} — {n} {minus_word(n)}" for u, n in rows]
+    lines += ["", "Подробности и снятие минусов: /penalties"]
+    return "\n".join(lines)
+
+
+def penalty_redeemed(game: Game, count: int, left: int) -> str:
+    text = f"✅ Обязанность на «{game_header(game)}» выполнена — списано минусов: {count}."
+    return text + (f" Осталось: {left}." if left else " Минусов больше нет 👍")

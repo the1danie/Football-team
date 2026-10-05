@@ -1,7 +1,7 @@
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import Boolean, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -60,9 +60,31 @@ def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
+def _add_missing_columns(conn) -> None:
+    """Мини-миграция: create_all не добавляет новые колонки в уже существующие таблицы."""
+    inspector = inspect(conn)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        have = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in have:
+                continue
+            ddl = column.type.compile(dialect=conn.dialect)
+            default = column.server_default.arg if column.server_default is not None else None
+            if default is not None and isinstance(column.type, Boolean):
+                default = ("TRUE" if default == "1" else "FALSE") if conn.dialect.name == "postgresql" else default
+            sql = f'ALTER TABLE {table.name} ADD COLUMN "{column.name}" {ddl}'
+            if default is not None:
+                sql += f" DEFAULT {default}"
+            conn.execute(text(sql))
+
+
 async def init_db(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_add_missing_columns)
 
     async with make_sessionmaker(engine)() as session:
         existing = set((await session.scalars(select(Duty.code).where(Duty.code.is_not(None)))).all())

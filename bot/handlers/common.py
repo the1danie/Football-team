@@ -25,7 +25,9 @@ HELP = (
     "в первую очередь тем, кто делал это реже остальных.\n"
     "• Мячи достаются только игрокам с машиной — укажи её в профиле.\n"
     "• Не можешь выполнить обязанность — нажми «🔄 Поменяться».\n"
-    "• Передумал идти — нажми «❌ Не буду», обязанность перейдёт другому.\n\n"
+    "• Передумал идти — нажми «❌ Не буду», обязанность перейдёт другому.\n"
+    "• Не ответил на опрос до закрытия сбора — минус. Пока есть минусы, обязанности достаются "
+    "тебе первым; каждая выполненная обязанность списывает один минус.\n\n"
     "Команды: /menu, /profile, /stats, /help"
 )
 ADMIN_HELP = (
@@ -33,7 +35,9 @@ ADMIN_HELP = (
     "/bindchat — выполнить в чате команды, чтобы бот публиковал туда игры\n"
     "/duties — список обязанностей\n"
     "/add_duty 🩹 Аптечка — добавить обязанность (добавьте слово «машина», если нужна машина)\n"
-    "/toggle_duty &lt;id&gt; — включить/выключить обязанность"
+    "/toggle_duty &lt;id&gt; — включить/выключить обязанность\n"
+    "/players — состав команды (кто получает опросы и минусы)\n"
+    "/penalties — минусы за неответы, снятие минуса"
 )
 
 
@@ -129,7 +133,8 @@ async def profile_show(message: Message, session: AsyncSession, state: FSMContex
     await state.clear()
     user = await require_profile(message, session, state)
     if user:
-        await message.answer(texts.profile_text(user), reply_markup=keyboards.profile_actions())
+        minuses = (await svc.open_penalty_points(session, [user.id])).get(user.id, 0)
+        await message.answer(texts.profile_text(user, minuses), reply_markup=keyboards.profile_actions())
 
 
 @router.callback_query(F.data == "prof:name")

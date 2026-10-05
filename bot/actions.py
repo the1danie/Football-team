@@ -6,6 +6,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import keyboards, notifier, texts
+from bot.config import config
+from bot.deadlines import penalties_enabled, rsvp_deadline
 from bot.models import Game, GameStatus, Rsvp, User
 from bot.services import games as svc
 
@@ -28,6 +30,69 @@ async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game) -
         if game.chat_id and any(d.requires_car for d in result.unassigned):
             await bot.send_message(game.chat_id, texts.no_car_warning())
     return "\n".join(lines)
+
+
+async def send_poll_invites(bot: Bot, session: AsyncSession, game: Game, skip: User | None = None) -> str:
+    """Разослать игрокам в личку: открыт сбор, кнопки ответа прямо в сообщении."""
+    deadline = rsvp_deadline(game)
+    text = texts.poll_invite(game, deadline, config.now(), config.penalty_points)
+    sent, failed = 0, []
+    for user in await svc.roster(session):
+        if skip is not None and user.id == skip.id:
+            continue
+        if await notifier.send_dm(bot, user, text, keyboards.rsvp(game)):
+            sent += 1
+        else:
+            failed.append(user.name)
+    report = f"📣 Опрос отправлен в личку: {sent} {texts.people_word(sent)}."
+    if failed:
+        report += "\nНе доставлено (не писали боту или заблокировали): " + ", ".join(texts.h(n) for n in failed)
+    return report
+
+
+async def send_rsvp_nudge(bot: Bot, session: AsyncSession, game: Game) -> None:
+    """Напомнить тем, кто ещё не ответил: лично и списком в общем чате."""
+    users = await svc.non_responders(session, game)
+    game.rsvp_nudge_sent = True
+    if not users:
+        return
+    now, deadline = config.now(), rsvp_deadline(game)
+    for user in users:
+        await notifier.send_dm(bot, user, texts.rsvp_nudge(game, deadline, now, config.penalty_points), keyboards.rsvp(game))
+    if game.chat_id:
+        await bot.send_message(
+            game.chat_id, texts.group_nudge(game, users, deadline, now),
+            reply_to_message_id=game.announce_message_id, allow_sending_without_reply=True,
+        )
+
+
+async def apply_penalties_and_announce(bot: Bot, session: AsyncSession, game: Game) -> str:
+    """Закрытие сбора: минусы молчавшим. Возвращает строку для отчёта админам."""
+    if not penalties_enabled(game):  # игру создали впритык — ответить было некогда
+        game.penalties_applied = True
+        return ""
+    results = await svc.apply_no_response_penalties(session, game)
+    if not results:
+        return ""
+    points = results[0].points
+    for r in results:
+        await notifier.send_dm(bot, r.user, texts.penalty_dm(game, r.points, r.total, config.penalty_limit))
+    if config.penalty_announce and game.chat_id:
+        await bot.send_message(game.chat_id, texts.penalty_group(game, [r.user for r in results], points))
+    over = [(r.user, r.total) for r in results if config.penalty_limit and r.total >= config.penalty_limit]
+    if over:
+        await notifier.notify_admins(bot, texts.penalty_limit_admin(over, config.penalty_limit))
+    return f"🙈 Не ответили на опрос — по −{points}: " + ", ".join(texts.h(r.user.name) for r in results)
+
+
+async def redeem_and_announce(bot: Bot, session: AsyncSession, game: Game) -> None:
+    """Игра прошла — выполненные обязанности списывают минусы."""
+    redeemed = await svc.redeem_penalties(session, game)
+    if not redeemed:
+        return
+    left = await svc.open_penalty_points(session, [u.id for u, _ in redeemed])
+    for user, count in redeemed:
+        await notifier.send_dm(bot, user, texts.penalty_redeemed(game, count, left.get(user.id, 0)))
 
 
 async def game_card(

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import actions, keyboards, notifier, texts
 from bot.config import config
+from bot.deadlines import distribute_at, penalties_enabled, rsvp_deadline
 from bot.middlewares import IsAdmin
 from bot.models import Duty, Game, GameStatus, Rsvp, User
 from bot.services import games as svc
@@ -176,13 +177,17 @@ async def new_game_publish(cb: CallbackQuery, session: AsyncSession, state: FSMC
     await notifier.publish_game(bot, session, game, chat_id)
     await cb.message.edit_text(f"✅ Опубликовано в чат команды: {texts.game_header(game)}")
     await cb.answer()
-    hint = (
-        f"Обязанности распределятся автоматически за {config.auto_distribute_hours:g} ч до начала."
-        if config.auto_distribute_hours > 0
-        else "Когда сбор закончится, нажмите «🎯 Распределить обязанности»."
-    )
+    poll_report = await actions.send_poll_invites(bot, session, game, skip=creator)
+    now, deadline = config.now(), rsvp_deadline(game)
+    hint = [f"Сбор закрывается {texts.until(deadline, now)}."]
+    if distribute_at(game) is not None:
+        hint.append("Тогда же обязанности распределятся автоматически.")
+    else:
+        hint.append("Обязанности распределите кнопкой «🎯 Распределить обязанности».")
+    if penalties_enabled(game) and config.penalty_points > 0:
+        hint.append(f"Кто не ответит к этому времени — получит −{config.penalty_points}.")
     text, markup = await actions.game_card(session, game, creator, True)
-    await cb.message.answer(f"{text}\n\n<i>{hint}</i>", reply_markup=markup)
+    await cb.message.answer(f"{text}\n\n{poll_report}\n\n<i>{' '.join(hint)}</i>", reply_markup=markup)
 
 
 # ----------------------------------------------------------------- действия с игрой
@@ -378,3 +383,105 @@ async def toggle_duty(message: Message, command: CommandObject, session: AsyncSe
         return
     duty.is_active = not duty.is_active
     await message.answer(f"{duty.title}: {'включена' if duty.is_active else 'выключена'}.")
+
+
+# ----------------------------------------------------------------- состав и минусы
+
+
+async def roster_view(session: AsyncSession):
+    users = [u for u in await svc.all_users(session) if u.profile_completed]
+    points = await svc.open_penalty_points(session)
+    lines = [
+        "<b>🗂 Состав команды</b>", "",
+        "✅ — в составе: получает опросы и минусы за молчание.",
+        "🚫 — временно не в составе (травма, уехал): опросы не приходят, минусов нет.",
+        "Нажмите на игрока, чтобы переключить.",
+    ]
+    b = InlineKeyboardBuilder()
+    for u in users:
+        minus = f" · ⚠️{points[u.id]}" if points.get(u.id) else ""
+        b.button(text=f"{'✅' if u.is_active else '🚫'} {u.name}{minus}", callback_data=f"roster:{u.id}")
+    b.adjust(2)
+    return "\n".join(lines), b.as_markup()
+
+
+@router.message(Command("players"))
+async def players(message: Message, session: AsyncSession):
+    text, markup = await roster_view(session)
+    await message.answer(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("roster:"))
+async def roster_toggle(cb: CallbackQuery, session: AsyncSession):
+    user = await session.get(User, int(cb.data.split(":")[1]))
+    if user is not None:
+        user.is_active = not user.is_active
+        await session.flush()
+    text, markup = await roster_view(session)
+    await cb.message.edit_text(text, reply_markup=markup)
+    await cb.answer(f"{user.name}: {'в составе' if user.is_active else 'не в составе'}" if user else None)
+
+
+async def penalties_view(session: AsyncSession):
+    points = await svc.open_penalty_points(session)
+    if not points:
+        return "Ни у кого нет минусов 👍", None
+    users = {u.id: u for u in await svc.all_users(session)}
+    rows = sorted(points.items(), key=lambda kv: (-kv[1], users[kv[0]].name))
+    lines = ["<b>⚠️ Минусы за неответы на опросы</b>", ""]
+    lines += [f"{texts.h(users[uid].name)} — {n} {texts.minus_word(n)}" for uid, n in rows]
+    lines += ["", "Нажмите на игрока, чтобы снять минус (например, была уважительная причина)."]
+    b = InlineKeyboardBuilder()
+    for uid, n in rows:
+        b.button(text=f"{users[uid].name} ({n})", callback_data=f"pens:{uid}")
+    b.adjust(2)
+    return "\n".join(lines), b.as_markup()
+
+
+@router.message(Command("penalties"))
+async def penalties(message: Message, session: AsyncSession):
+    text, markup = await penalties_view(session)
+    await message.answer(text, reply_markup=markup)
+
+
+async def _user_penalties_view(session: AsyncSession, user: User):
+    items = await svc.user_penalties(session, user.id)
+    lines = [f"<b>{texts.h(user.name)}</b> — минусы", ""]
+    b = InlineKeyboardBuilder()
+    for p in items:
+        when = texts.game_header(p.game) if p.game else texts.fmt_date(p.created_at)
+        lines.append(f"• −{p.points}: не ответил — {when}")
+        b.button(text=f"❌ Снять: {texts.fmt_date(p.game.starts_at) if p.game else p.id}", callback_data=f"pendel:{p.id}")
+    if not items:
+        lines.append("Минусов нет.")
+    b.button(text="← Все", callback_data="pens:all")
+    b.adjust(1)
+    return "\n".join(lines), b.as_markup()
+
+
+@router.callback_query(F.data.startswith("pens:"))
+async def penalties_user(cb: CallbackQuery, session: AsyncSession):
+    await cb.answer()
+    arg = cb.data.split(":")[1]
+    if arg == "all":
+        text, markup = await penalties_view(session)
+    else:
+        user = await session.get(User, int(arg))
+        if user is None:
+            return
+        text, markup = await _user_penalties_view(session, user)
+    await cb.message.edit_text(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("pendel:"))
+async def penalty_cancel(cb: CallbackQuery, session: AsyncSession, bot: Bot):
+    penalty = await svc.cancel_penalty(session, int(cb.data.split(":")[1]))
+    if penalty is None:
+        await cb.answer("Минус уже снят или отработан.", show_alert=True)
+        return
+    user = await session.get(User, penalty.user_id)
+    left = (await svc.open_penalty_points(session, [user.id])).get(user.id, 0)
+    await notifier.send_dm(bot, user, f"✅ Администратор снял с тебя минус. Осталось: {left}.")
+    text, markup = await _user_penalties_view(session, user)
+    await cb.message.edit_text(text, reply_markup=markup)
+    await cb.answer("Минус снят")

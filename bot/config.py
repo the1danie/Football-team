@@ -38,6 +38,17 @@ class Config:
     personal_reminder_hours: float = field(default_factory=lambda: _float("PERSONAL_REMINDER_HOURS", 3))
     # Напоминание в общий чат.
     group_reminder_hours: float = field(default_factory=lambda: _float("GROUP_REMINDER_HOURS", 2))
+    # --- Опросы и минусы
+    # Напомнить не ответившим за столько часов до закрытия сбора (= распределения обязанностей).
+    rsvp_reminder_hours: float = field(default_factory=lambda: _float("RSVP_REMINDER_HOURS", 3))
+    # Сколько минусов за то, что не ответил на опрос (0 — не начислять).
+    penalty_points: int = field(default_factory=lambda: int(_float("PENALTY_POINTS", 1)))
+    # С какого количества минусов предупреждать админов и игрока.
+    penalty_limit: int = field(default_factory=lambda: int(_float("PENALTY_LIMIT", 3)))
+    # Насколько минус поднимает игрока в очереди на обязанности (в единицах score).
+    penalty_priority: float = field(default_factory=lambda: _float("PENALTY_PRIORITY", 10))
+    # Писать в общий чат, кто получил минус (0 — только лично).
+    penalty_announce: bool = field(default_factory=lambda: os.getenv("PENALTY_ANNOUNCE", "1") not in ("0", "false", ""))
     # --- Режим webhook (Vercel)
     # Секрет, который Telegram присылает в заголовке каждого запроса (A-Z, a-z, 0-9, _ и -).
     webhook_secret: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
