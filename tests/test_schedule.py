@@ -135,3 +135,71 @@ async def test_miniapp_repeat_and_manage_schedule(team):  # noqa: F811
     assert res["state"]["schedules"] == [] and len(res["state"]["games"]) == 1  # игра осталась
     status, _ = await api({"id": 77, "first_name": "Чужой"}, "schedule_update", id=sid, active=True)
     assert status == 403
+
+
+async def test_edit_game(team):  # noqa: F811
+    fake = team  # noqa: F811
+    from tests.test_miniapp import tg_user
+
+    arman = tg_user(2, "Арман")
+    await api(arman, "register", car=False)
+    _, pl = await api(ADMIN, "players")
+    await api(ADMIN, "player", user_id=next(p["id"] for p in pl["players"] if p["name"] == "Арман"), op="approve")
+
+    friday = config.now() + timedelta(days=4)
+    _, res = await api(ADMIN, "create_game", date=friday.date().isoformat(), minutes=23 * 60, kind="training",
+                       location="Жас Оркен")
+    gid = res["state"]["games"][0]["id"]
+    await api(arman, "rsvp", game_id=gid, status="yes")
+    async with webhook._sessionmaker() as s:  # будто напоминания уже ушли
+        g = await s.get(Game, gid)
+        g.personal_reminder_sent = g.group_reminder_sent = g.rsvp_nudge_sent = True
+        await s.commit()
+
+    thursday = friday - timedelta(days=1)
+    fake.reset()
+    status, res = await api(ADMIN, "update_game", game_id=gid, date=thursday.date().isoformat(), minutes=20 * 60,
+                            kind="training", location="Арена", min_players=6)
+    assert status == 200, res
+    g = res["state"]["games"][0]
+    assert g["time"] == "20:00" and g["date_iso"] == thursday.date().isoformat()
+    assert g["location"] == "Арена" and g["min_players"] == 6
+    dm = next(m for m in fake.sent(2) if "Изменения" in m.text)
+    assert "23:00 →" in dm.text and "20:00" in dm.text and "Арена" in dm.text and "Минимум игроков: 6" in dm.text
+    assert "*Изменения:" in res["whatsapp"]["text"] and res["whatsapp"]["url"].startswith("https://wa.me/")
+    async with webhook._sessionmaker() as s:
+        g = await s.get(Game, gid)
+        assert not g.personal_reminder_sent and not g.group_reminder_sent and not g.rsvp_nudge_sent
+
+    status, body = await api(ADMIN, "update_game", game_id=gid, date=thursday.date().isoformat(), minutes=20 * 60,
+                             kind="training", location="Арена", min_players=6)
+    assert status == 400 and "Ничего не изменилось" in body["error"]
+    yesterday = (config.now() - timedelta(days=1)).date().isoformat()
+    status, body = await api(ADMIN, "update_game", game_id=gid, date=yesterday, minutes=20 * 60, kind="training")
+    assert status == 400 and "прошло" in body["error"]
+    status, _ = await api(arman, "update_game", game_id=gid, date=thursday.date().isoformat(), minutes=19 * 60)
+    assert status == 403
+
+
+async def test_moved_scheduled_game_is_not_duplicated(session):
+    now = config.now()
+    slot = (now + timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
+    x = Schedule(kind="training", weekday=slot.weekday(), minutes=20 * 60, open_days_before=2)
+    session.add(x)
+    await session.flush()
+    (schedule, start), = await svc.due_schedule_games(session, now)
+    game = await svc.create_game(session, "training", start, None, None, schedule_id=schedule.id)
+    game.starts_at = start + timedelta(hours=1)  # перенесли на час
+    await session.flush()
+    assert await svc.due_schedule_games(session, now) == []
+
+
+async def test_schedule_edit_day_time_place(team):  # noqa: F811
+    tomorrow = config.now() + timedelta(days=1)
+    _, res = await api(ADMIN, "create_game", date=tomorrow.date().isoformat(), minutes=20 * 60, kind="training",
+                       repeat=True)
+    sid = res["state"]["schedules"][0]["id"]
+    _, res = await api(ADMIN, "schedule_update", id=sid, weekday=4, minutes=19 * 60 + 30, location="Жас Оркен")
+    x = res["state"]["schedules"][0]
+    assert x["weekday"] == 4 and x["time"] == "19:30" and x["location"] == "Жас Оркен"
+    assert x["every_label"] == "каждую пятницу" and "каждую пятницу в 19:30" in res["note"]

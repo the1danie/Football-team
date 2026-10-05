@@ -100,6 +100,8 @@ class Game(Base):
     schedule_id: Mapped[int | None] = mapped_column(
         ForeignKey("schedules.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Для какого слота расписания создана (не меняется при переносе — чтобы не создать дубль).
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Минимум «Буду» к закрытию сбора, иначе игра отменяется (None/0 — без минимума).
     min_players: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cancel_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)

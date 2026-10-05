@@ -132,6 +132,73 @@ async def create_game(
     return game, poll_report, " ".join(hint), announce
 
 
+async def update_game(
+    bot: Bot,
+    session: AsyncSession,
+    game: Game,
+    kind: str,
+    starts_at: datetime,
+    location: str | None,
+    min_players: int | None,
+) -> tuple[list[str], str]:
+    """Изменить игру. Возвращает (что поменялось, текст для WhatsApp).
+
+    Отметившимся и назначенным — личное сообщение с изменениями.
+    """
+    _require_active(game)
+    if kind not in texts.KIND_TITLES:
+        raise OpError("Выберите: игра или тренировка.")
+    if starts_at <= config.now():
+        raise OpError("Это время уже прошло.")
+    if min_players is not None and not 0 <= min_players <= 100:
+        raise OpError("Минимум игроков — от 0 до 100.")
+    location = (location or "").strip()[:255] or None
+
+    changes: list[str] = []
+    if starts_at != game.starts_at:
+        changes.append(
+            f"🕗 {texts.fmt_date(game.starts_at, weekday=True)}, {texts.fmt_time(game.starts_at)} → "
+            f"{texts.fmt_date(starts_at, weekday=True)}, {texts.fmt_time(starts_at)}"
+        )
+        game.starts_at = starts_at
+        # Напоминания — заново под новое время.
+        game.personal_reminder_sent = False
+        game.group_reminder_sent = False
+        if not game.penalties_applied:
+            game.rsvp_nudge_sent = False
+    if location != game.location:
+        changes.append(f"📍 {location or 'место не указано'}" + (f" (было: {game.location})" if game.location else ""))
+        game.location = location
+    if kind != game.kind:
+        changes.append(f"{texts.KIND_TITLES[kind]} (было: {texts.KIND_TITLES.get(game.kind, '')})")
+        game.kind = kind
+    if (min_players or None) != game.min_players:
+        changes.append(f"Минимум игроков: {min_players or 'без минимума'}")
+        game.min_players = min_players or None
+    if not changes:
+        raise OpError("Ничего не изменилось.")
+    await session.flush()
+    await notifier.refresh_game(bot, session, game)
+
+    by_status = await svc.participants_by_status(session, game.id)
+    notify = {u.id: u for u in by_status[Rsvp.YES] + by_status[Rsvp.MAYBE]}
+    notify.update({a.user.id: a.user for a in await svc.active_assignments(session, game.id)})
+    body = "\n".join(texts.h(c) for c in changes)
+    for user in notify.values():
+        await notifier.send_dm(
+            bot, user, f"✏️ <b>Изменения: {texts.game_header(game)}</b>\n\n{body}",
+            keyboards.with_app_button(keyboards.rsvp(game), game.id),
+        )
+    if game.chat_id:
+        await bot.send_message(
+            game.chat_id, f"✏️ <b>Изменения: {texts.game_header(game)}</b>\n\n{body}",
+            reply_to_message_id=game.announce_message_id,
+        )
+    link = await whatsapp.game_link(bot, game)
+    wa = "\n".join([f"✏️ *Изменения: {texts.game_header(game)}*", "", *changes, "", "Отметиться:", link])
+    return changes, wa
+
+
 def _require_active(game: Game) -> None:
     if game.status not in GameStatus.ACTIVE:
         word = "отменена" if game.status == GameStatus.CANCELLED else "завершена"

@@ -92,6 +92,8 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         "date_label": texts.fmt_date(game.starts_at, weekday=True),
         "day_word": texts.day_word(game.starts_at, now),
         "time": texts.fmt_time(game.starts_at),
+        "date_iso": game.starts_at.date().isoformat(),
+        "minutes": game.starts_at.hour * 60 + game.starts_at.minute,
         "location": game.location,
         "status": game.status,
         "my_rsvp": await svc.get_rsvp(session, game.id, me.id),
@@ -146,7 +148,7 @@ def schedule_view(x: Schedule) -> dict:
         "id": x.id, "kind": x.kind, "kind_title": texts.KIND_TITLES.get(x.kind, ""),
         "weekday": x.weekday, "weekday_label": WEEKDAYS_FULL[x.weekday], "every_label": EVERY_WEEKDAY[x.weekday],
         "time": x.time_label,
-        "location": x.location, "min_players": x.min_players or 0, "open_days_before": x.open_days_before,
+        "location": x.location, "min_players": x.min_players or 0, "minutes": x.minutes, "open_days_before": x.open_days_before,
         "active": x.is_active, "next_label": texts.fmt_date(nxt, weekday=True),
     }
 
@@ -208,7 +210,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel",
 }
 
@@ -325,6 +327,23 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 "whatsapp": {"text": announce, "url": whatsapp.share_url(announce)},
                 "state": await state_view(bot, session, tg, user),
             }
+        elif action == "update_game":
+            game = await _game(session, body)
+            day = date.fromisoformat(body.get("date", ""))
+            minutes = int(body.get("minutes", -1))
+            if not 0 <= minutes <= 24 * 60:
+                raise ApiError("Выберите время.")
+            starts_at = datetime.combine(day, datetime.min.time()) + timedelta(minutes=minutes)
+            changes, wa = await operations.update_game(
+                bot, session, game, body.get("kind", game.kind), starts_at, body.get("location"),
+                int(body.get("min_players") or 0),
+            )
+            await session.flush()
+            return {
+                "note": "Сохранено. Отметившимся отправлено сообщение об изменениях.",
+                "whatsapp": {"text": wa, "url": whatsapp.share_url(wa)},
+                "state": await state_view(bot, session, tg, user),
+            }
         elif action == "schedule_update":
             x = await session.get(Schedule, int(body.get("id", 0)))
             if x is None:
@@ -336,6 +355,18 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 x.min_players = max(0, min(100, int(body["min_players"]))) or None
             if "open_days_before" in body:
                 x.open_days_before = max(1, min(6, int(body["open_days_before"])))
+            if "weekday" in body:
+                x.weekday = max(0, min(6, int(body["weekday"])))
+            if "minutes" in body:
+                if not 0 <= int(body["minutes"]) <= 24 * 60:
+                    raise ApiError("Выберите время.")
+                x.minutes = int(body["minutes"])
+            if "location" in body:
+                x.location = (body["location"] or "").strip()[:255] or None
+            if "kind" in body and body["kind"] in texts.KIND_TITLES:
+                x.kind = body["kind"]
+            if {"weekday", "minutes", "location", "kind"} & body.keys():
+                note = f"Расписание: {EVERY_WEEKDAY[x.weekday]} в {x.time_label}. Уже созданные игры не меняются."
         elif action == "schedule_delete":
             x = await session.get(Schedule, int(body.get("id", 0)))
             if x is not None:

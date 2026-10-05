@@ -4,7 +4,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.config import config
@@ -119,6 +119,7 @@ async def create_game(
         created_by=created_by.id if created_by else None,
         min_players=min_players or None,
         schedule_id=schedule_id,
+        scheduled_for=starts_at if schedule_id else None,
     )
     session.add(game)
     await session.flush()
@@ -716,7 +717,12 @@ async def due_schedule_games(session: AsyncSession, now: datetime) -> list[tuple
         if now < start - timedelta(days=schedule.open_days_before):
             continue
         exists = await session.scalar(
-            select(func.count()).select_from(Game).where(Game.schedule_id == schedule.id, Game.starts_at == start)
+            select(func.count())
+            .select_from(Game)
+            .where(
+                Game.schedule_id == schedule.id,
+                or_(Game.scheduled_for == start, and_(Game.scheduled_for.is_(None), Game.starts_at == start)),
+            )
         )
         if not exists:
             result.append((schedule, start))

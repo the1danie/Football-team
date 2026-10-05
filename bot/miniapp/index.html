@@ -369,6 +369,7 @@ function gameCard(g) {
     add(card, h("div", { class: "admin-bar" },
       h("button", { class: "btn small secondary", onclick: () => adminDistribute(g) }, g.status === "distributed" ? "🔁 Пересчитать" : "🎯 Распределить"),
       h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp"),
+      h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "create", edit: g }) }, "✏️ Изменить"),
       g.status === "distributed" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "assign", game: g }) }, "✏️ Назначения") : null,
       h("button", { class: "btn small danger", onclick: () => adminCancel(g) }, "Отменить")));
   }
@@ -478,6 +479,30 @@ function everyWeekday(iso) {
 }
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 
+function scheduleEditSheet() {
+  const x = S.sheet.schedule;
+  const st = S.sheet.form || (S.sheet.form = { weekday: x.weekday, minutes: x.minutes, location: x.location || "", kind: x.kind });
+  const names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+  const label = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const times = [];
+  for (let m = 13 * 60; m <= 24 * 60; m += 30) times.push(m);
+  return h("div", {}, h("h3", {}, "Изменить расписание"),
+    h("div", { class: "seg" }, [["game", "⚽ Игра"], ["training", "🏃 Тренировка"]].map(([k, l]) =>
+      h("button", { class: st.kind === k ? "on" : "", onclick: () => { st.kind = k; render(); } }, l))),
+    h("div", { class: "label" }, "День недели"),
+    h("div", { class: "grid", style: "grid-template-columns:repeat(7,1fr)" }, names.map((n, i) =>
+      h("button", { class: st.weekday === i ? "on" : "", style: "padding:6px 0", onclick: () => { st.weekday = i; haptic(); render(); } }, n))),
+    h("div", { class: "label" }, "Время"),
+    h("div", { class: "grid" }, times.map((m) =>
+      h("button", { class: st.minutes === m ? "on" : "", onclick: () => { st.minutes = m; haptic(); render(); } }, label(m)))),
+    h("div", { class: "label" }, "Место"),
+    h("input", { class: "field", value: st.location, maxlength: 255, oninput: (e) => { st.location = e.target.value; } }),
+    h("button", { class: "btn", style: "margin-top:16px", onclick: async () => {
+      const r = await api("schedule_update", { id: x.id, weekday: st.weekday, minutes: st.minutes, location: st.location, kind: st.kind });
+      if (r) { haptic("ok"); openSheet({ type: "schedules" }); } } }, "Сохранить"),
+    h("p", { class: "muted small", style: "margin:8px 4px 0" }, "Уже созданные игры не меняются — их можно изменить в карточке игры."));
+}
+
 function schedulesSheet() {
   const list = S.data.schedules || [];
   const upd = async (x, body) => { const r = await api("schedule_update", { id: x.id, ...body }); if (r) render(); };
@@ -493,6 +518,7 @@ function schedulesSheet() {
         stepper(x.min_players, 0, 30, (v) => upd(x, { min_players: v }), (v) => (v ? v : "нет"))),
       h("div", { class: "switch-row" }, h("div", { class: "grow small" }, "Опрос за"),
         stepper(x.open_days_before, 1, 6, (v) => upd(x, { open_days_before: v }), (v) => `${v} ${plural(v, "день", "дня", "дней")}`)),
+      h("button", { class: "btn small secondary", style: "margin-top:6px", onclick: () => openSheet({ type: "scheduleEdit", schedule: x }) }, "✏️ Изменить день, время, место"),
       h("button", { class: "toggle-link", style: "color:var(--danger)", onclick: async () => {
         if (await confirmBox(`Удалить расписание «${x.every_label} ${x.time}»? Уже созданные игры останутся.`)) {
           const r = await api("schedule_delete", { id: x.id }); if (r) render(); } } }, "Удалить расписание")))
@@ -509,15 +535,20 @@ function renderSheet() {
   document.querySelectorAll(".sheet-bg").forEach((x) => x.remove());
   if (!S.sheet) return;
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
-    playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet }[S.sheet.type]();
+    playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
+    scheduleEdit: scheduleEditSheet }[S.sheet.type]();
   const bg = h("div", { class: "sheet-bg", onclick: (e) => { if (e.target === bg) closeSheet(); } },
     h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content));
   document.body.append(bg);
 }
 
 function createSheet() {
-  const st = S.sheet.form || (S.sheet.form = { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", custom: false,
-    min: 0, repeat: !!S.sheet.repeat, openDays: 2 });
+  const ed = S.sheet.edit;
+  const st = S.sheet.form || (S.sheet.form = ed
+    ? { date: ed.date_iso, minutes: ed.minutes, kind: ed.kind, location: ed.location || "", custom: ed.minutes < 13 * 60 || ed.minutes % 30 !== 0,
+        min: ed.min_players || 0, repeat: false, openDays: 2 }
+    : { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", custom: false,
+        min: 0, repeat: !!S.sheet.repeat, openDays: 2 });
   const days = [];
   const now = new Date();
   for (let i = 0; i < 14; i++) {
@@ -526,19 +557,28 @@ function createSheet() {
     const wd = d.toLocaleDateString("ru-RU", { weekday: "short" });
     days.push([iso, i === 0 ? "Сегодня" : i === 1 ? "Завтра" : wd.charAt(0).toUpperCase() + wd.slice(1), d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })]);
   }
+  if (st.date && !days.some((d) => d[0] === st.date)) {
+    const [y, m, dd] = st.date.split("-").map(Number);
+    const d = new Date(y, m - 1, dd);
+    const wd = d.toLocaleDateString("ru-RU", { weekday: "short" });
+    days.push([st.date, wd.charAt(0).toUpperCase() + wd.slice(1), d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })]);
+  }
   const times = [];
   for (let m = 13 * 60; m <= 24 * 60; m += 30) times.push(m);
   const label = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   const places = [...new Set(S.data.games.map((g) => g.location).filter(Boolean))];
   const ready = st.date && st.minutes !== null;
   return h("div", {},
-    h("h3", {}, "Новая игра"),
+    h("h3", {}, ed ? "Изменить игру" : "Новая игра"),
     h("div", { class: "label" }, "Что"),
     h("div", { class: "seg" }, [["game", "⚽ Игра"], ["training", "🏃 Тренировка"]].map(([k, l]) =>
       h("button", { class: st.kind === k ? "on" : "", onclick: () => { st.kind = k; render(); } }, l))),
     h("div", { class: "label" }, "День"),
     h("div", { class: "pick" }, days.map(([iso, top, bottom]) =>
       h("button", { class: st.date === iso ? "on" : "", onclick: () => { st.date = iso; haptic(); render(); } }, top, h("small", {}, bottom)))),
+    h("div", { class: "row", style: "margin-top:6px" }, h("span", { class: "small muted" }, "или другая дата:"),
+      h("input", { class: "field", type: "date", style: "max-width:180px", value: st.date && !days.slice(0, 14).some((d) => d[0] === st.date) ? st.date : "",
+        onchange: (e) => { if (e.target.value) { st.date = e.target.value; render(); } } })),
     h("div", { class: "label" }, "Время"),
     h("div", { class: "grid" }, times.map((m) =>
       h("button", { class: st.minutes === m && !st.custom ? "on" : "", onclick: () => { st.minutes = m; st.custom = false; haptic(); render(); } }, label(m)))),
@@ -552,29 +592,33 @@ function createSheet() {
       h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Минимум игроков"),
         h("div", { class: "small muted" }, st.min ? `Если «Буду» меньше ${st.min} к закрытию сбора — отменится автоматически.` : "Без минимума — состоится при любом количестве.")),
         stepper(st.min, 0, 30, (v) => { st.min = v; render(); }, (v) => (v ? v : "нет"))),
-      h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🔁 Повторять каждую неделю"),
+      ed ? null : h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🔁 Повторять каждую неделю"),
         h("div", { class: "small muted" }, st.repeat && st.date
           ? `${cap(everyWeekday(st.date))}${st.minutes !== null ? " в " + label(st.minutes) : ""} — бот сам создаст и разошлёт опрос.`
           : "Например, тренировки по понедельникам и пятницам.")),
         h("button", { class: "switch" + (st.repeat ? " on" : ""), role: "switch", "aria-checked": st.repeat ? "true" : "false", onclick: () => { st.repeat = !st.repeat; render(); } })),
-      st.repeat ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Опрос открывать за"),
+      st.repeat && !ed ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Опрос открывать за"),
         h("div", { class: "small muted" }, "Сколько дней до тренировки бот создаёт её и присылает опрос.")),
         stepper(st.openDays, 1, 6, (v) => { st.openDays = v; render(); }, (v) => `${v} ${plural(v, "день", "дня", "дней")}`)) : null),
     h("button", { class: "btn", style: "margin-top:18px", disabled: !ready,
       onclick: async (e) => {
         e.target.disabled = true;
-        const r = await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location,
-          min_players: st.min, repeat: st.repeat, open_days_before: st.openDays });
-        if (r) { haptic("ok"); S.sheet = { type: "created", note: r.note, wa: r.whatsapp }; render(); } else e.target.disabled = false;
-      } }, ready ? `Создать: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}` : "Выберите день и время"),
-    h("p", { class: "muted small", style: "margin:8px 4px 0" }, "Игрокам придёт опрос в Telegram. Анонс для WhatsApp — на следующем шаге."));
+        const r = ed
+          ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, min_players: st.min })
+          : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location,
+              min_players: st.min, repeat: st.repeat, open_days_before: st.openDays });
+        if (r) { haptic("ok"); S.sheet = { type: "created", edited: !!ed, note: r.note, wa: r.whatsapp }; render(); } else e.target.disabled = false;
+      } }, ready ? `${ed ? "Сохранить" : "Создать"}: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}` : "Выберите день и время"),
+    h("p", { class: "muted small", style: "margin:8px 4px 0" }, ed
+      ? "Всем, кто отметился, бот напишет, что изменилось. Текст для WhatsApp — на следующем шаге."
+      : "Игрокам придёт опрос в Telegram. Анонс для WhatsApp — на следующем шаге."));
 }
 
 function createdSheet() {
   const s = S.sheet;
-  return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, "✅"), h("h3", {}, "Игра создана")),
+  return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, "✅"), h("h3", {}, s.edited ? "Изменения сохранены" : "Игра создана")),
     h("div", { class: "card small", style: "white-space:pre-line" }, s.note || ""),
-    h("button", { class: "btn", onclick: () => openLink(s.wa.url) }, "📤 Отправить анонс в WhatsApp"),
+    h("button", { class: "btn", onclick: () => openLink(s.wa.url) }, s.edited ? "📤 Сообщить в WhatsApp" : "📤 Отправить анонс в WhatsApp"),
     h("p", { class: "muted small", style: "margin:8px 4px" }, "Откроется WhatsApp с готовым текстом и ссылкой на опрос — выберите группу команды."),
     h("button", { class: "btn secondary", style: "margin-top:8px", onclick: closeSheet }, "Готово"));
 }
