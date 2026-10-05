@@ -607,12 +607,16 @@ async def player_stats(session: AsyncSession, user_id: int) -> list[tuple[Duty, 
 async def non_responders(session: AsyncSession, game: Game) -> list[User]:
     """Игроки состава, которые не нажали ни одну кнопку опроса.
 
-    Тех, кто присоединился к боту уже после публикации игры, не считаем.
+    Пришедших в бота позже публикации тоже считаем (опрос им приходит при входе в команду),
+    но только если до конца сбора у них был хотя бы час.
     """
+    from bot.deadlines import MIN_RSVP_WINDOW, rsvp_deadline, to_utc
+
     answered = set(
         (await session.scalars(select(GameParticipant.user_id).where(GameParticipant.game_id == game.id))).all()
     )
-    return [u for u in await roster(session) if u.id not in answered and u.created_at <= game.created_at]
+    joined_by = max(game.created_at, to_utc(rsvp_deadline(game) - MIN_RSVP_WINDOW))
+    return [u for u in await roster(session) if u.id not in answered and u.created_at <= joined_by]
 
 
 async def open_penalty_points(session: AsyncSession, user_ids: list[int] | None = None) -> dict[int, int]:

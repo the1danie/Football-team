@@ -299,5 +299,7 @@ async def test_repeat_far_away_waits_for_poll_window(team):  # noqa: F811
     assert not any("Открыт сбор" in m.text for m in fake.sent(1)[before:])
     async with webhook._sessionmaker() as s:
         assert await svc.due_schedule_games(s, config.now()) == []
-        due = await svc.due_schedule_games(s, config.now() + timedelta(days=2, hours=1))
+        opens = datetime.combine(friday.date(), datetime.min.time()) + timedelta(hours=21, minutes=30, days=-2)
+        assert await svc.due_schedule_games(s, opens - timedelta(minutes=1)) == []
+        due = await svc.due_schedule_games(s, opens + timedelta(minutes=1))
         assert len(due) == 1 and due[0][1].weekday() == friday.weekday()

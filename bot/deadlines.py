@@ -10,6 +10,10 @@ def created_local(game: Game) -> datetime:
     return game.created_at.replace(tzinfo=timezone.utc).astimezone(config.tz).replace(tzinfo=None)
 
 
+def to_utc(local: datetime) -> datetime:
+    return local.replace(tzinfo=config.tz).astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def distribute_at(game: Game) -> datetime | None:
     """Когда автоматически распределять обязанности.
 

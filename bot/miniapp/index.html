@@ -425,13 +425,18 @@ function gameCard(g) {
     h("span", { class: "chip good" }, yes.length ? `✅ ${yes.length} ${plural(yes.length, "идёт", "идут", "идут")}` : "✅ пока никого"),
     maybe.length ? h("span", { class: "chip warn" }, `🤔 ${maybe.length}`) : null,
     no.length ? h("span", { class: "chip" }, `❌ ${no.length}`) : null,
-    g.no_answer && g.no_answer.length ? h("span", { class: "chip bad" }, `🙈 молчат: ${g.no_answer.length}`) : null);
+    g.no_answer && g.no_answer.length ? h("span", { class: "chip bad" }, `🙈 молчат: ${g.no_answer.length}`) : null,
+    g.no_answer && !g.no_answer.length ? h("span", { class: "chip good" }, "👍 ответили все") : null);
   add(card, counts, h("button", { class: "toggle-link", onclick: () => { S.open[g.id] = !open; render(); } }, open ? "Скрыть список ▲" : "Кто идёт ▼"));
   if (open) {
     const group = (title, list) => list && list.length ? h("div", { style: "margin-top:10px" },
       h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
     add(card, group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
-      g.no_answer ? group(`🙈 Не ответили (${g.no_answer.length})`, g.no_answer) : null);
+      g.no_answer ? group(`🙈 Не ответили (${g.no_answer.length})`, g.no_answer) : null,
+      g.no_answer ? h("div", { class: "small muted", style: "margin-top:10px" },
+        `Ответили ${yes.length + maybe.length + no.length} из ${g.team_count} в боте.` +
+        (g.no_answer.length ? "" : " Кого нет в боте — бот не видит: их нужно позвать (кнопка «Инструкция для команды» в профиле).") +
+        (g.no_penalty_reason ? " " + g.no_penalty_reason : "")) : null);
   }
 
   if (g.needs_decision) {
@@ -540,8 +545,9 @@ function statsTab() {
 
   return h("div", {}, head,
     h("p", { class: "muted small", style: "margin:0 4px 12px" }, BOARDS[board].hint),
-    podium || h("div", { class: "card empty muted" }, period === "month" ? "За последний месяц пока пусто." : "Пока пусто — сыграйте первую игру."),
-    h("div", { class: "list" }, rows.map((p) => h("button", { class: "item" + (p.id === me ? " me-row" : ""), onclick: () => openPlayerStats(p.id) },
+    podium || h("div", { class: "card empty muted" }, board === "minuses" ? "Минусов ни у кого нет 👍"
+      : period === "month" ? "За последний месяц пока пусто." : "Пока пусто — сыграйте первую игру."),
+    !top.length ? null : h("div", { class: "list" }, rows.map((p) => h("button", { class: "item" + (p.id === me ? " me-row" : ""), onclick: () => openPlayerStats(p.id) },
       h("div", { class: "rank" }, p[board] > 0 && p.rank <= 3 ? medal(p.rank) : p.rank),
       avatar(p.name, p.id),
       h("div", { class: "grow" }, h("div", { class: "row" },

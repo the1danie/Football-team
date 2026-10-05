@@ -15,12 +15,15 @@ async def test_non_responders(session):
     injured = await make_user(session, "Травма")
     injured.is_active = False
     game = await make_game(session)
-    late = await make_user(session, "Новичок")  # пришёл в бота после публикации
+    late = await make_user(session, "Новичок")  # пришёл после публикации, но опрос получил — тоже считается
     late.created_at = game.created_at + timedelta(minutes=1)
+    from bot.deadlines import rsvp_deadline, to_utc
+    too_late = await make_user(session, "Впритык")  # пришёл за 10 минут до конца сбора — не успел бы
+    too_late.created_at = to_utc(rsvp_deadline(game)) - timedelta(minutes=10)
     stranger = await svc.get_or_create_user(session, 777, "Без профиля")  # не заполнил профиль
     await svc.set_rsvp(session, game, a, Rsvp.NO)
     assert stranger.profile_completed is False
-    assert [u.name for u in await svc.non_responders(session, game)] == [b.name]
+    assert sorted(u.name for u in await svc.non_responders(session, game)) == sorted([b.name, "Новичок"])
 
 
 async def test_penalties_applied_once_and_counted(session):

@@ -145,6 +145,11 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
     }
     if is_admin or staff:
         view["no_answer"] = [_user_brief(u) for u in await svc.non_responders(session, game)]
+        view["team_count"] = len(await svc.roster(session))
+        if not penalties_enabled(game):
+            view["no_penalty_reason"] = "Минусов за молчание не будет: игру создали меньше чем за час до конца сбора."
+        elif config.penalty_points <= 0:
+            view["no_penalty_reason"] = "Минусы за молчание выключены (PENALTY_POINTS=0)."
     return view
 
 
