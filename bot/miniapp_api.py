@@ -146,6 +146,11 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
     if is_admin or staff:
         view["no_answer"] = [_user_brief(u) for u in await svc.non_responders(session, game)]
         view["team_count"] = len(await svc.roster(session))
+        if (
+            is_admin and now >= deadline and game.penalties_applied and penalties_enabled(game)
+            and config.penalty_points > 0
+        ):
+            view["silent_unpenalized"] = [_user_brief(u) for u in await svc.unpenalized_silent(session, game)]
         if not penalties_enabled(game):
             view["no_penalty_reason"] = "Минусов за молчание не будет: игру создали меньше чем за час до конца сбора."
         elif config.penalty_points <= 0:
@@ -271,7 +276,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel",
+    "penalty_cancel", "penalize_silent",
 }
 
 
@@ -424,6 +429,14 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 "whatsapp": {"text": announce, "url": whatsapp.share_url(announce)},
                 "state": await state_view(bot, session, tg, user),
             }
+        elif action == "penalize_silent":
+            game = await _game(session, body)
+            if not game.penalties_applied or not penalties_enabled(game) or config.penalty_points <= 0:
+                raise ApiError("Минусы ставятся после закрытия сбора.")
+            from bot.actions import penalize_late_silent
+
+            report = await penalize_late_silent(bot, session, game)
+            note = "Минусы поставлены" if report else "Некому ставить минус"
         elif action == "team_invite":
             text = whatsapp.team_invite((await bot.me()).username)
             return {"text": text, "url": whatsapp.share_url(text)}

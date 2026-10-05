@@ -645,7 +645,21 @@ async def apply_no_response_penalties(session: AsyncSession, game: Game) -> list
     if config.penalty_points <= 0:
         await session.flush()
         return []
-    users = await non_responders(session, game)
+    return await penalize_silent(session, game)
+
+
+async def unpenalized_silent(session: AsyncSession, game: Game) -> list[User]:
+    """Молчащие, которым минус за эту игру ещё не ставили (снятый админом минус повторно не ставим)."""
+    had = set(
+        (await session.scalars(
+            select(Penalty.user_id).where(Penalty.game_id == game.id, Penalty.reason == PenaltyReason.NO_RESPONSE)
+        )).all()
+    )
+    return [u for u in await non_responders(session, game) if u.id not in had]
+
+
+async def penalize_silent(session: AsyncSession, game: Game) -> list[PenaltyResult]:
+    users = await unpenalized_silent(session, game)
     for user in users:
         session.add(Penalty(user_id=user.id, game_id=game.id, points=config.penalty_points))
     await session.flush()

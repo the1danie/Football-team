@@ -433,6 +433,11 @@ function gameCard(g) {
       h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
     add(card, group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
       g.no_answer ? group(`🙈 Не ответили (${g.no_answer.length})`, g.no_answer) : null,
+      g.silent_unpenalized && g.silent_unpenalized.length ? h("button", { class: "btn small danger", style: "margin-top:10px", onclick: async () => {
+        const names = g.silent_unpenalized.map((u) => u.name).join(", ");
+        if (await confirmBox(`Сбор уже закрыт. Поставить −${S.data.penalty_points} за молчание: ${names}? Им придёт сообщение.`)) {
+          const r = await api("penalize_silent", { game_id: g.id }); if (r) { haptic("ok"); render(); } } } },
+        `⚠️ Дать −${S.data.penalty_points} молчащим: ${g.silent_unpenalized.map((u) => u.name).join(", ")}`) : null,
       g.no_answer ? h("div", { class: "small muted", style: "margin-top:10px" },
         `Ответили ${yes.length + maybe.length + no.length} из ${g.team_count} в боте.` +
         (g.no_answer.length ? "" : " Кого нет в боте — бот не видит: их нужно позвать (кнопка «Инструкция для команды» в профиле).") +

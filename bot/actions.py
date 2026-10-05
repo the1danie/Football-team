@@ -145,7 +145,15 @@ async def apply_penalties_and_announce(bot: Bot, session: AsyncSession, game: Ga
     if not penalties_enabled(game):  # игру создали впритык — ответить было некогда
         game.penalties_applied = True
         return ""
-    results = await svc.apply_no_response_penalties(session, game)
+    return await announce_penalties(bot, session, game, await svc.apply_no_response_penalties(session, game))
+
+
+async def penalize_late_silent(bot: Bot, session: AsyncSession, game: Game) -> str:
+    """Админ вручную: минус молчащим, которых не было в расчёте при закрытии сбора."""
+    return await announce_penalties(bot, session, game, await svc.penalize_silent(session, game))
+
+
+async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, results) -> str:
     if not results:
         return ""
     points = results[0].points

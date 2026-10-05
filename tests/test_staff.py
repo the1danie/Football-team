@@ -91,3 +91,37 @@ async def test_owner_view_as(team):  # noqa: F811
     # обычный игрок не может притвориться админом
     _, st = await api(ARMAN, "state", view_as="admin")
     assert st["state"]["is_admin"] is False and st["state"]["view_as"] is None
+
+
+async def test_late_silent_penalty_button(team):  # noqa: F811
+    """Сбор закрыли, а молчащий не попал в расчёт (как Нурик) — админ ставит минус кнопкой, один раз."""
+    from datetime import datetime
+
+    from bot.models import Game
+
+    fake = team  # noqa: F811
+    nurik_id = await _join(tg_user(6, "Нурик"))
+    tomorrow = (config.now() + timedelta(days=1)).date().isoformat()
+    _, res = await api(ADMIN, "create_game", date=tomorrow, minutes=20 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    await api(ADMIN, "rsvp", game_id=gid, status="yes")
+    async with webhook._sessionmaker() as s:
+        game = await s.get(Game, gid)
+        game.created_at = datetime.utcnow() - timedelta(days=2)
+        game.starts_at = config.now() + timedelta(hours=2)  # сбор закрылся (за 5 ч до начала)
+        game.penalties_applied = True  # закрыли без Нурика
+        (await svc.get_user_by_tg(s, 6)).created_at = datetime.utcnow() - timedelta(days=1)  # был в боте до закрытия
+        await s.commit()
+    _, st = await api(ADMIN, "state")
+    g = st["state"]["games"][0]
+    assert [u["name"] for u in g["silent_unpenalized"]] == ["Нурик"]
+    status, res = await api(ADMIN, "penalize_silent", game_id=gid)
+    assert status == 200 and res["note"] == "Минусы поставлены"
+    assert any("минус" in m.text.lower() for m in fake.sent(6))
+    assert res["state"]["games"][0]["silent_unpenalized"] == []
+    _, res = await api(ADMIN, "penalize_silent", game_id=gid)
+    assert res["note"] == "Некому ставить минус"
+    async with webhook._sessionmaker() as s:
+        assert (await svc.open_penalty_points(s, [nurik_id]))[nurik_id] == config.penalty_points
+    status, _ = await api(tg_user(6, "Нурик"), "penalize_silent", game_id=gid)
+    assert status == 403
