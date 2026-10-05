@@ -98,6 +98,7 @@ async def create_game(
     location: str | None,
     min_players: int | None = None,
     schedule_id: int | None = None,
+    location_url: str | None = None,
 ) -> tuple[Game, str, str, str]:
     """Создать игру, опубликовать в Telegram-группу (если есть), разослать опрос.
 
@@ -112,6 +113,8 @@ async def create_game(
     game = await svc.create_game(
         session, kind, starts_at, (location or "").strip()[:255] or None, creator, min_players, schedule_id
     )
+    # Ссылка на карту: вставленная или запомненная для этого места.
+    game.location_url = texts.normalize_map_url(location_url) or await svc.known_place_url(session, game.location)
     chat_id = await notifier.group_chat_id(session)
     if chat_id is not None:
         await notifier.publish_game(bot, session, game, chat_id)
@@ -143,6 +146,7 @@ async def update_game(
     starts_at: datetime,
     location: str | None,
     min_players: int | None,
+    location_url: str | None = None,
 ) -> tuple[list[str], str]:
     """Изменить игру. Возвращает (что поменялось, текст для WhatsApp).
 
@@ -169,9 +173,23 @@ async def update_game(
         game.group_reminder_sent = False
         if not game.penalties_applied:
             game.rsvp_nudge_sent = False
-    if location != game.location:
-        changes.append(f"📍 {location or 'место не указано'}" + (f" (было: {game.location})" if game.location else ""))
+    old_location, old_url = game.location, game.location_url
+    if location != old_location:
+        changes.append(f"📍 {location or 'место не указано'}" + (f" (было: {old_location})" if old_location else ""))
         game.location = location
+    # Ссылка на карту: вставленная; иначе — прежняя (если место то же) или запомненная для нового места.
+    pasted = texts.normalize_map_url(location_url)
+    if pasted:
+        new_url = pasted
+    elif location == old_location:
+        new_url = old_url
+    else:
+        game.location_url = None  # иначе сама игра «запомнит» старую ссылку для нового места
+        new_url = await svc.known_place_url(session, location)
+    if (new_url or None) != (old_url or None):
+        if location == old_location:
+            changes.append("📍 Обновлена ссылка на место (2ГИС)")
+        game.location_url = new_url
     if kind != game.kind:
         changes.append(f"{texts.KIND_TITLES[kind]} (было: {texts.KIND_TITLES.get(game.kind, '')})")
         game.kind = kind
@@ -347,7 +365,8 @@ def needs_min_decision(game: Game, yes: int) -> bool:
 async def create_from_schedule(bot: Bot, session: AsyncSession, schedule, starts_at: datetime) -> Game:
     """Игра по расписанию: создать, разослать опрос, админам — отчёт и анонс для WhatsApp."""
     game, poll_report, hint, announce = await create_game(
-        bot, session, None, schedule.kind, starts_at, schedule.location, schedule.min_players, schedule.id
+        bot, session, None, schedule.kind, starts_at, schedule.location, schedule.min_players, schedule.id,
+        schedule.location_url,
     )
     await notifier.notify_admins(
         bot, f"🔁 По расписанию создана: {texts.game_header(game)}\n\n{poll_report}\n\n<i>{hint}</i>"

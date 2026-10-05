@@ -59,6 +59,39 @@ def day_word(dt: datetime, now: datetime) -> str:
     return fmt_date(dt).capitalize()
 
 
+def normalize_map_url(raw: str | None) -> str | None:
+    """Ссылка на карту из того, что вставил админ (часто вместе с текстом «Место в 2ГИС: …»)."""
+    import re
+
+    m = re.search(r"https?://\S+", raw or "")
+    return m.group(0).rstrip(".,)»")[:500] if m else None
+
+
+def map_url(location: str | None, location_url: str | None = None) -> str | None:
+    """Ссылка на место: своя (2ГИС/карты) или поиск по названию в 2ГИС."""
+    from urllib.parse import quote
+
+    from bot.config import config
+
+    if location_url:
+        return location_url
+    if not location:
+        return None
+    return f"https://2gis.kz/{config.twogis_city}/search/{quote(location)}"
+
+
+def map_label(url: str | None) -> str:
+    return "2ГИС" if url and "2gis" in url else "Карта"
+
+
+def location_line(game: Game) -> str | None:
+    """«📍 Жас Оркен» со ссылкой на карту (HTML для Telegram)."""
+    if not game.location:
+        return None
+    url = map_url(game.location, getattr(game, "location_url", None))
+    return f'📍 <a href="{escape(url, quote=True)}">{h(game.location)}</a> ({map_label(url)})'
+
+
 def gather_time(game: Game) -> str | None:
     """Время сбора («22:30») или None, если не показываем."""
     from datetime import timedelta
@@ -98,7 +131,7 @@ def announce_text(game: Game, by_status: dict[str, list[User]]) -> str:
     lines.append(f"📅 {fmt_date(game.starts_at, weekday=True)}")
     lines.append(f"🕗 {fmt_time(game.starts_at)}" + (f" (сбор в {gather_time(game)})" if gather_time(game) else ""))
     if game.location:
-        lines.append(f"📍 {h(game.location)}")
+        lines.append(location_line(game))
 
     if game.status == GameStatus.CANCELLED:
         if game.cancel_reason:
@@ -135,7 +168,7 @@ def summary_text(
 ) -> str:
     lines = [f"<b>{game_header(game)}</b>"]
     if game.location:
-        lines.append(f"📍 {h(game.location)}")
+        lines.append(location_line(game))
     if game.status == GameStatus.CANCELLED:
         lines += ["", "❌ Игра отменена, обязанности сняты."]
         return "\n".join(lines)
@@ -173,7 +206,7 @@ def personal_reminder(game: Game, now: datetime, duties: list[Duty]) -> str:
     word = KIND_WORDS.get(game.kind, "игра")
     lines = [f"{day_word(game.starts_at, now)} {word} в {fmt_time(game.starts_at)}{gather_suffix(game)}."]
     if game.location:
-        lines.append(f"📍 {h(game.location)}")
+        lines.append(location_line(game))
     lines += ["", "Твоя обязанность:" if len(duties) == 1 else "Твои обязанности:"]
     lines += [f"{d.emoji} {h(d.action)}." for d in duties]
     return "\n".join(lines)
@@ -184,7 +217,7 @@ def group_reminder(game: Game, now: datetime, assignments: list[Assignment]) -> 
     emoji = kind_title(game).split()[0]
     lines = [f"{emoji} <b>{day_word(game.starts_at, now)} {word} в {fmt_time(game.starts_at)}{gather_suffix(game)}.</b>"]
     if game.location:
-        lines.append(f"📍 {h(game.location)}")
+        lines.append(location_line(game))
     lines += ["", "Ответственные:"]
     lines += [f"{a.duty.emoji} {mention(a.user)} — {h(a.duty.name.lower())}" for a in assignments]
     return "\n".join(lines)
@@ -225,7 +258,7 @@ def game_lines(game: Game) -> list[str]:
         f"🕗 {fmt_time(game.starts_at)}" + (f" (сбор в {gather_time(game)})" if gather_time(game) else ""),
     ]
     if game.location:
-        lines.append(f"📍 {h(game.location)}")
+        lines.append(location_line(game))
     return lines
 
 

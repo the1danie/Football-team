@@ -36,6 +36,8 @@ class Config:
         default_factory=lambda: int(os.getenv("GROUP_CHAT_ID")) if os.getenv("GROUP_CHAT_ID") else None
     )
     timezone: str = field(default_factory=lambda: os.getenv("TZ_NAME", "Asia/Almaty"))
+    # Город в 2ГИС для ссылки-поиска по названию места (если своей ссылки нет): almaty, astana, …
+    twogis_city: str = field(default_factory=lambda: os.getenv("TWOGIS_CITY", "almaty"))
     # За сколько часов до начала автоматически распределить обязанности (0 — только вручную).
     auto_distribute_hours: float = field(default_factory=lambda: _float("AUTO_DISTRIBUTE_HOURS", 5))
     # Личное напоминание ответственным.

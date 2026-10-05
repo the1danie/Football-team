@@ -71,6 +71,8 @@
   .game-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .game-when { font-size: 20px; font-weight: 700; line-height: 1.2; }
   .game-sub { color: var(--hint); margin-top: 2px; }
+  .place-link { display: block; margin-top: 4px; color: var(--text); font-size: 16px; text-align: left; }
+  .place-link span { color: var(--link); font-weight: 600; }
   .gather { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; font-size: 14px;
     font-weight: 600; background: var(--accent-soft); color: var(--link); }
   .banner { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--maybe-soft); font-size: 14px; }
@@ -383,7 +385,8 @@ function gameCard(g) {
     h("div", { class: "game-top" },
       h("div", { class: "grow" },
         h("div", { class: "game-when" }, `${relative ? g.day_word : g.date_label} · ${g.time}`),
-        h("div", { class: "game-sub" }, [relative ? g.date_label : null, g.location].filter(Boolean).join(" · ") || null),
+        h("div", { class: "game-sub" }, relative ? g.date_label : null),
+        g.location ? h("button", { class: "place-link", onclick: () => openLink(g.map_url) }, `📍 ${g.location}`, h("span", {}, ` · открыть в ${g.map_label} ›`)) : null,
         g.gather_time ? h("div", { class: "gather" }, `🕢 Сбор в ${g.gather_time}`) : null),
       h("span", { class: "chip" }, (g.from_schedule ? "🔁 " : "") + g.kind_title)));
 
@@ -671,7 +674,7 @@ function dutiesSheet() {
 
 function scheduleEditSheet() {
   const x = S.sheet.schedule;
-  const st = S.sheet.form || (S.sheet.form = { weekday: x.weekday, minutes: x.minutes, location: x.location || "", kind: x.kind });
+  const st = S.sheet.form || (S.sheet.form = { weekday: x.weekday, minutes: x.minutes, location: x.location || "", url: x.location_url || "", kind: x.kind });
   const names = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
   const label = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   const times = [];
@@ -687,8 +690,10 @@ function scheduleEditSheet() {
       h("button", { class: st.minutes === m ? "on" : "", onclick: () => { st.minutes = m; haptic(); render(); } }, label(m)))),
     h("div", { class: "label" }, "Место"),
     h("input", { class: "field", value: st.location, maxlength: 255, oninput: (e) => { st.location = e.target.value; } }),
+    h("div", { class: "label" }, "Ссылка 2ГИС"),
+    h("input", { class: "field", value: st.url, placeholder: "https://2gis.kz/…", inputmode: "url", oninput: (e) => { st.url = e.target.value; } }),
     h("button", { class: "btn", style: "margin-top:16px", onclick: async () => {
-      const r = await api("schedule_update", { id: x.id, weekday: st.weekday, minutes: st.minutes, location: st.location, kind: st.kind });
+      const r = await api("schedule_update", { id: x.id, weekday: st.weekday, minutes: st.minutes, location: st.location, location_url: st.url, kind: st.kind });
       if (r) { haptic("ok"); openSheet({ type: "schedules" }); } } }, "Сохранить"),
     h("p", { class: "muted small", style: "margin:8px 4px 0" }, "Уже созданные игры не меняются — их можно изменить в карточке игры."));
 }
@@ -746,9 +751,9 @@ function renderSheet() {
 function createSheet() {
   const ed = S.sheet.edit;
   const st = S.sheet.form || (S.sheet.form = ed
-    ? { date: ed.date_iso, minutes: ed.minutes, kind: ed.kind, location: ed.location || "", custom: ed.minutes < 13 * 60 || ed.minutes % 30 !== 0,
+    ? { date: ed.date_iso, minutes: ed.minutes, kind: ed.kind, location: ed.location || "", url: ed.location_url || "", custom: ed.minutes < 13 * 60 || ed.minutes % 30 !== 0,
         min: ed.min_players || 0, repeat: false, openDays: 2 }
-    : { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", custom: false,
+    : { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", url: "", custom: false,
         min: 0, repeat: !!S.sheet.repeat, openDays: 2 });
   const days = [];
   const now = new Date();
@@ -767,7 +772,7 @@ function createSheet() {
   const times = [];
   for (let m = 13 * 60; m <= 24 * 60; m += 30) times.push(m);
   const label = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-  const places = [...new Set(S.data.games.map((g) => g.location).filter(Boolean))];
+  const places = S.data.places || [...new Set(S.data.games.map((g) => g.location).filter(Boolean))].map((name) => ({ name, url: null }));
   const ready = st.date && st.minutes !== null;
   return h("div", {},
     h("h3", {}, ed ? "Изменить игру" : "Новая игра"),
@@ -788,7 +793,12 @@ function createSheet() {
         onchange: (e) => { const [hh, mm] = e.target.value.split(":").map(Number); if (!isNaN(hh)) { st.minutes = hh * 60 + mm; st.custom = true; render(); } } })),
     h("div", { class: "label" }, "Место (необязательно)"),
     h("input", { class: "field", placeholder: "Например: Стадион Динамо", value: st.location, maxlength: 255, oninput: (e) => { st.location = e.target.value; } }),
-    places.length ? h("div", { class: "people" }, places.map((p) => h("button", { class: "chip", onclick: () => { st.location = p; render(); } }, p))) : null,
+    places.length ? h("div", { class: "people" }, places.map((p) => h("button", { class: "chip" + (st.location === p.name ? " accent" : ""),
+      onclick: () => { st.location = p.name; st.url = p.url || ""; render(); } }, p.name + (p.url ? " 📍" : "")))) : null,
+    h("div", { class: "label" }, "Ссылка 2ГИС (необязательно)"),
+    h("input", { class: "field", placeholder: "https://2gis.kz/… или go.2gis.com/…", value: st.url, inputmode: "url",
+      oninput: (e) => { st.url = e.target.value; } }),
+    h("div", { class: "small muted", style: "margin:6px 2px 0" }, "В 2ГИС: откройте место → «Поделиться» → «Скопировать ссылку». Без ссылки бот сделает поиск по названию; ссылка запомнится для этого места."),
     h("div", { class: "card", style: "margin-top:16px" },
       h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Минимум игроков"),
         h("div", { class: "small muted" }, st.min ? `Если к закрытию сбора «Буду» меньше ${st.min} — бот спросит вас: провести, подождать или отменить.` : "Без минимума — состоится при любом количестве.")),
@@ -805,8 +815,8 @@ function createSheet() {
       onclick: async (e) => {
         e.target.disabled = true;
         const r = ed
-          ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, min_players: st.min })
-          : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location,
+          ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, min_players: st.min })
+          : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url,
               min_players: st.min, repeat: st.repeat, open_days_before: st.openDays });
         if (r) { haptic("ok"); S.sheet = { type: "created", edited: !!ed, note: r.note, wa: r.whatsapp }; render(); } else e.target.disabled = false;
       } }, ready ? `${ed ? "Сохранить" : "Создать"}: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}` : "Выберите день и время"),

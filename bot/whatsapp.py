@@ -76,6 +76,8 @@ def _header(game: Game) -> list[str]:
         lines.append(f"Сбор в {texts.gather_time(game)}")
     if game.location:
         lines.append(f"Место: {game.location}")
+        url = texts.map_url(game.location, game.location_url)
+        lines.append(f"{texts.map_label(url)}: {url}")
     return lines
 
 
@@ -134,6 +136,8 @@ def reminder(game: Game, now: datetime, assignments: list[Assignment]) -> str:
     lines = [f"*{texts.day_word(game.starts_at, now)} {word} в {texts.fmt_time(game.starts_at)}{texts.gather_suffix(game)}*"]
     if game.location:
         lines.append(f"Место: {game.location}")
+        url = texts.map_url(game.location, game.location_url)
+        lines.append(f"{texts.map_label(url)}: {url}")
     lines += ["", "Ответственные:"]
     lines += [f"{a.user.name} — {a.duty.name.lower()}" for a in assignments]
     return "\n".join(lines)

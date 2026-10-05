@@ -91,6 +91,8 @@ class Game(Base):
     # Локальное время команды (см. config.timezone).
     starts_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Ссылка на место в 2ГИС (или другой карте); нет — строится поиск по названию.
+    location_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default=GameStatus.OPEN, index=True)
 
     chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -143,6 +145,7 @@ class Schedule(Base):
     weekday: Mapped[int] = mapped_column(Integer)  # 0 — понедельник
     minutes: Mapped[int] = mapped_column(Integer)  # время начала в минутах от полуночи (до 1440)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    location_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     min_players: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # За сколько дней до начала создать игру и разослать опрос.
     open_days_before: Mapped[int] = mapped_column(Integer, default=2)

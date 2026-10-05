@@ -915,3 +915,29 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
         }
         for u in users
     ]
+
+
+# ---------------------------------------------------------------- места
+
+
+async def places(session: AsyncSession, limit: int = 12) -> list[dict]:
+    """Места из прошлых игр и расписания — для подсказок (с запомненной ссылкой на карту)."""
+    seen: dict[str, str | None] = {}
+    rows = await session.execute(
+        select(Game.location, Game.location_url).where(Game.location.is_not(None)).order_by(Game.starts_at.desc())
+    )
+    for name, url in [*rows.all(), *(await session.execute(select(Schedule.location, Schedule.location_url))).all()]:
+        if not name:
+            continue
+        if name not in seen or (url and not seen[name]):
+            seen[name] = url
+    return [{"name": n, "url": u} for n, u in list(seen.items())[:limit]]
+
+
+async def known_place_url(session: AsyncSession, location: str | None) -> str | None:
+    if not location:
+        return None
+    for p in await places(session, limit=100):
+        if p["name"] == location:
+            return p["url"]
+    return None

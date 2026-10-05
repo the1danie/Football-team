@@ -107,6 +107,9 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         "date_iso": game.starts_at.date().isoformat(),
         "minutes": game.starts_at.hour * 60 + game.starts_at.minute,
         "location": game.location,
+        "location_url": game.location_url,
+        "map_url": texts.map_url(game.location, game.location_url),
+        "map_label": texts.map_label(texts.map_url(game.location, game.location_url)),
         "status": game.status,
         "my_rsvp": await svc.get_rsvp(session, game.id, me.id),
         "deadline_label": texts.until(deadline, now),
@@ -158,6 +161,7 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
             players = await svc.players_for_admin(session)
             data["pending_count"] = sum(p.status == UserStatus.PENDING for p in players)
             data["schedules"] = [schedule_view(x) for x in await svc.schedules(session)]
+            data["places"] = await svc.places(session)
     return data
 
 
@@ -174,7 +178,7 @@ def schedule_view(x: Schedule) -> dict:
         "id": x.id, "kind": x.kind, "kind_title": texts.KIND_TITLES.get(x.kind, ""),
         "weekday": x.weekday, "weekday_label": WEEKDAYS_FULL[x.weekday], "every_label": EVERY_WEEKDAY[x.weekday],
         "time": x.time_label,
-        "location": x.location, "min_players": x.min_players or 0, "minutes": x.minutes, "open_days_before": x.open_days_before,
+        "location": x.location, "location_url": x.location_url, "min_players": x.min_players or 0, "minutes": x.minutes, "open_days_before": x.open_days_before,
         "active": x.is_active, "next_label": texts.fmt_date(nxt, weekday=True),
     }
 
@@ -352,14 +356,17 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 schedule = Schedule(
                     kind=body.get("kind", "training"), weekday=day.weekday(), minutes=minutes,
                     location=(body.get("location") or "").strip()[:255] or None, min_players=min_players or None,
+                    location_url=texts.normalize_map_url(body.get("location_url")),
                     open_days_before=max(1, min(6, int(body.get("open_days_before") or 2))),
                 )
                 session.add(schedule)
                 await session.flush()
             game, poll_report, hint, announce = await operations.create_game(
                 bot, session, user, body.get("kind", "game"), starts_at, body.get("location"),
-                min_players, schedule.id if schedule else None,
+                min_players, schedule.id if schedule else None, body.get("location_url"),
             )
+            if schedule and not schedule.location_url:
+                schedule.location_url = game.location_url
             if schedule:
                 hint += (
                     f" 🔁 Дальше — {EVERY_WEEKDAY[schedule.weekday]} в {schedule.time_label}, "
@@ -404,7 +411,7 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             starts_at = datetime.combine(day, datetime.min.time()) + timedelta(minutes=minutes)
             changes, wa = await operations.update_game(
                 bot, session, game, body.get("kind", game.kind), starts_at, body.get("location"),
-                int(body.get("min_players") or 0),
+                int(body.get("min_players") or 0), body.get("location_url"),
             )
             await session.flush()
             return {
@@ -431,6 +438,8 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 x.minutes = int(body["minutes"])
             if "location" in body:
                 x.location = (body["location"] or "").strip()[:255] or None
+            if "location_url" in body:
+                x.location_url = texts.normalize_map_url(body["location_url"])
             if "kind" in body and body["kind"] in texts.KIND_TITLES:
                 x.kind = body["kind"]
             if {"weekday", "minutes", "location", "kind"} & body.keys():
