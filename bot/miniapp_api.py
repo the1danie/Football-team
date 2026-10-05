@@ -395,7 +395,7 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             user.web_version = (user.web_version or 0) + 1
             note = "Все личные ссылки отключены. Новую можно получить в боте: /web."
         elif action == "audit":
-            if not config.is_owner(tg_id):
+            if not config.is_owner(tg_id) or tg.get("view_as"):
                 raise ApiError("Журнал видит только главный админ.", 403)
             offset = max(0, int(body.get("offset") or 0))
             actor = int(body.get("actor_id") or 0) or None

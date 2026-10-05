@@ -758,6 +758,10 @@ async function playerOp(p, op, extra = {}) {
 function profileTab() {
   const u = S.data.user;
   return h("div", {}, h("h1", {}, "Профиль"),
+    S.data.view_as ? h("div", { class: "banner", style: "margin-bottom:12px;background:#7b5cff;color:#fff" },
+      h("b", {}, `👁 Вы смотрите как ${VIEW_TITLES[S.data.view_as]}`),
+      h("div", { class: "small", style: "margin:4px 0 10px" }, "Так приложение видят они. Журнал и переключатель ролей скрыты — как у них."),
+      h("button", { class: "btn", style: "background:#fff;color:#5b3fd9", onclick: () => setViewAs(null) }, "Вернуться к себе")) : null,
     h("div", { class: "card row" }, avatar(u.name, u.id),
       h("div", { class: "grow" }, h("div", { style: "font-weight:700;font-size:18px" }, u.name),
         h("div", { class: "muted small" }, [u.staff, S.data.is_owner ? "Главный админ" : S.data.is_admin ? "Админ" : u.staff ? null : "Игрок команды"].filter(Boolean).join(" · "))),
@@ -769,8 +773,8 @@ function profileTab() {
           onclick: async () => { haptic(); const r = await api("profile", { car: !u.car }); if (r) render(); } }))),
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
       h("div", { class: "small muted", style: "margin-top:4px" }, "За неответ на опрос или неявку после «Буду». Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
-    S.data.real_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openAudit() }, "📜 Журнал действий админов") : null,
-    S.data.real_owner ? h("div", { class: "card" },
+    S.data.is_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openAudit() }, "📜 Журнал действий админов") : null,
+    S.data.real_owner && !S.data.view_as ? h("div", { class: "card" },
       h("div", { style: "font-weight:600" }, "👁 Посмотреть как…"),
       h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Приложение глазами другой роли — данные настоящие, меняются только права. Ваши ответы «Буду/Не буду» сохраняются как обычно."),
       h("div", { class: "seg" }, [[null, "Я"], ["admin", "Админ"], ["player", "Игрок"], ["staff", "Тренер"]].map(([id, label]) =>

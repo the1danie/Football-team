@@ -70,3 +70,10 @@ async def test_log_command_and_scheduler_not_logged(h):  # noqa: F811
     assert "Паша: принял в команду" in msg and "Распределил" not in msg
     await h.text(2, "/log")
     assert "Журнал" not in (h.fake.sent(2)[-1].text if h.fake.sent(2) else "")
+
+
+async def test_audit_hidden_in_view_as_preview(team):  # noqa: F811
+    _, st = await api(OWNER, "state", view_as="player")
+    assert st["state"]["is_owner"] is False and st["state"]["real_owner"] is True
+    assert (await api(OWNER, "audit", view_as="player"))[0] == 403
+    assert (await api(OWNER, "audit"))[0] == 200
