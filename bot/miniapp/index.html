@@ -380,6 +380,7 @@ function gameCard(g) {
   const yes = g.participants.yes, maybe = g.participants.maybe, no = g.participants.no;
   const mine = g.duties.filter((x) => x.mine);
   const relative = g.day_word === "Сегодня" || g.day_word === "Завтра";
+  const staff = d.user && d.user.staff;
   const card = h("div", { class: "card", id: "game-" + g.id });
   add(card, 
     h("div", { class: "game-top" },
@@ -391,28 +392,30 @@ function gameCard(g) {
       h("span", { class: "chip" }, (g.from_schedule ? "🔁 " : "") + g.kind_title)));
 
   // Подсказка: что от меня нужно
-  if (g.status === "open" && !g.my_rsvp && !g.deadline_passed)
+  if (staff)
+    add(card, h("div", { class: "banner info" }, `📋 Вы — ${staff.toLowerCase()}: отмечаться не нужно. Ниже — кто идёт, кто нет и кто молчит.`));
+  else if (g.status === "open" && !g.my_rsvp && !g.deadline_passed)
     add(card, h("div", { class: "banner" }, `⏰ Ответь ${g.deadline_label}` + (g.penalty ? ` — иначе −${g.penalty}` : "")));
   if (mine.length)
     add(card, h("div", { class: "banner info" }, h("b", {}, "Твоя обязанность: "), mine.map((m) => `${m.emoji} ${m.action}`).join(", ")));
 
-  add(card, h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
+  if (!staff) add(card, h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
     h("button", { class: `${key}${g.my_rsvp === key ? " on" : ""}`, "aria-pressed": g.my_rsvp === key ? "true" : "false",
       onclick: async () => { if (g.my_rsvp === key) return; haptic(); const r = await api("rsvp", { game_id: g.id, status: key }); if (r) { haptic("ok"); render(); } } },
       h("span", { class: "e" }, e), label))));
 
-  const open = S.open[g.id];
+  const open = S.open[g.id] ?? !!staff;
   const counts = h("div", { class: "counts" },
     h("span", { class: "chip good" }, yes.length ? `✅ ${yes.length} ${plural(yes.length, "идёт", "идут", "идут")}` : "✅ пока никого"),
     maybe.length ? h("span", { class: "chip warn" }, `🤔 ${maybe.length}`) : null,
     no.length ? h("span", { class: "chip" }, `❌ ${no.length}`) : null,
-    d.is_admin && g.no_answer && g.no_answer.length ? h("span", { class: "chip bad" }, `🙈 молчат: ${g.no_answer.length}`) : null);
+    g.no_answer && g.no_answer.length ? h("span", { class: "chip bad" }, `🙈 молчат: ${g.no_answer.length}`) : null);
   add(card, counts, h("button", { class: "toggle-link", onclick: () => { S.open[g.id] = !open; render(); } }, open ? "Скрыть список ▲" : "Кто идёт ▼"));
   if (open) {
     const group = (title, list) => list && list.length ? h("div", { style: "margin-top:10px" },
       h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
     add(card, group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
-      d.is_admin ? group(`🙈 Не ответили (${(g.no_answer || []).length})`, g.no_answer) : null);
+      g.no_answer ? group(`🙈 Не ответили (${g.no_answer.length})`, g.no_answer) : null);
   }
 
   if (g.needs_decision) {
@@ -554,7 +557,7 @@ function playersTab() {
       h("div", { class: "grow" },
         h("div", { class: "ellipsis", style: "font-weight:600" }, p.name + (p.admin ? " 👑" : "")),
         h("div", { class: "small muted ellipsis" }, [p.username ? "@" + p.username : null,
-          p.car ? "🚗 есть машина" + (p.car_locked ? " 🔒" : "") : "🚶 нет машины",
+          p.staff ? "📋 " + p.staff : p.car ? "🚗 есть машина" + (p.car_locked ? " 🔒" : "") : "🚶 нет машины",
           p.status === "approved" && !p.active ? "🚫 не в составе" : null].filter(Boolean).join(" · "))),
       p.minuses ? h("span", { class: "chip bad" }, `−${p.minuses}`) : null,
       p.status === "pending" ? h("span", { class: "chip warn" }, "ждёт") : h("span", { class: "muted" }, "›"))))
@@ -576,7 +579,7 @@ function profileTab() {
   return h("div", {}, h("h1", {}, "Профиль"),
     h("div", { class: "card row" }, avatar(u.name, u.id),
       h("div", { class: "grow" }, h("div", { style: "font-weight:700;font-size:18px" }, u.name),
-        h("div", { class: "muted small" }, S.data.is_owner ? "Главный админ" : S.data.is_admin ? "Админ" : "Игрок команды")),
+        h("div", { class: "muted small" }, [u.staff, S.data.is_owner ? "Главный админ" : S.data.is_admin ? "Админ" : u.staff ? null : "Игрок команды"].filter(Boolean).join(" · "))),
       h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "rename", value: u.name }) }, "Изменить")),
     h("div", { class: "card" },
       h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🚗 Есть машина"),
@@ -891,13 +894,22 @@ function playerSheet() {
         h("div", { class: "small muted" }, p.car_locked ? "Закреплено вами — игрок не может изменить." : "Указал сам. Нажмите, чтобы исправить и закрепить.")),
         h("button", { class: "switch" + (p.car ? " on" : ""), role: "switch", "aria-checked": p.car ? "true" : "false", onclick: () => playerOp(p, p.car ? "car_off" : "car_on") })),
       p.car_locked ? h("button", { class: "toggle-link", style: "margin:0 0 6px", onclick: () => playerOp(p, "unlock") }, "🔓 Разрешить игроку менять самому") : null,
-      p.status === "approved" ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "В составе"),
+      p.status === "approved" && !p.staff ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "В составе"),
         h("div", { class: "small muted" }, "Выключите на время травмы или отъезда — не будет опросов и минусов.")),
         h("button", { class: "switch" + (p.active ? " on" : ""), role: "switch", "aria-checked": p.active ? "true" : "false", onclick: () => playerOp(p, "active") })) : null,
       canGrant ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "👑 Админ"),
         h("div", { class: "small muted" }, "Может создавать игры, распределять обязанности, принимать игроков. Выдавать права может только главный админ.")),
         h("button", { class: "switch" + (p.is_admin ? " on" : ""), role: "switch", "aria-checked": p.is_admin ? "true" : "false",
           onclick: async () => { if (p.is_admin || await confirmBox(`Сделать ${p.name} админом команды?`)) playerOp(p, p.is_admin ? "admin_off" : "admin_on"); } })) : null),
+    p.status === "approved" ? h("div", { class: "card" },
+      h("div", {}, p.staff ? `📋 Штаб: ${p.staff}` : "📋 Штаб команды"),
+      h("div", { class: "small muted", style: "margin:4px 0 10px" }, p.staff
+        ? "Не отмечается на игры, без опросов, минусов и обязанностей. Видит, кто идёт, и получает сводку перед игрой."
+        : "Тренер или директор не играет: не отмечается, но видит, кто идёт, кто нет и кто молчит."),
+      p.staff
+        ? h("button", { class: "btn secondary", onclick: () => playerOp(p, "staff_off") }, "⚽ Вернуть в игроки")
+        : h("div", { class: "people" }, ["Тренер", "Директор", "Менеджер"].map((t) => h("button", { class: "chip",
+            onclick: async () => { if (await confirmBox(`${p.name} — ${t.toLowerCase()}? Отметки на будущие игры снимутся, опросов и минусов больше не будет.`)) playerOp(p, "staff", { name: t }); } }, t)))) : null,
     h("div", { class: "label" }, "Имя"),
     h("div", { class: "row" }, h("input", { class: "field grow", id: "pname", value: p.name, maxlength: 64 }),
       h("button", { class: "btn small", onclick: () => playerOp(p, "rename", { name: document.getElementById("pname").value }) }, "Сохранить")),

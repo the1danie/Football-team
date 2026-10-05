@@ -74,6 +74,9 @@ class User(Base):
     # Права админа, выданные главным админом в боте (главные — в ADMIN_IDS).
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Штаб команды (тренер, директор…): не играет — не отмечается, без опросов, минусов и обязанностей,
+    # но видит, кто идёт. None — обычный игрок.
+    staff_title: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Версия личных веб-ссылок: увеличение делает все выданные ссылки недействительными.
     web_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -81,6 +84,10 @@ class User(Base):
     @property
     def is_approved(self) -> bool:
         return self.status == UserStatus.APPROVED
+
+    @property
+    def is_staff(self) -> bool:
+        return bool(self.staff_title)
 
 
 class Game(Base):

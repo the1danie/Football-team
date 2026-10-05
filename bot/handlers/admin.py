@@ -395,6 +395,9 @@ async def players(message: Message, session: AsyncSession, state: FSMContext):
     await message.answer(text, reply_markup=markup)
 
 
+STAFF_TITLES = {"coach": "Тренер", "director": "Директор"}
+
+
 @router.callback_query(F.data.startswith("pl:"))
 async def player_action(cb: CallbackQuery, session: AsyncSession, bot: Bot, state: FSMContext):
     _, action, raw_id = cb.data.split(":")
@@ -416,7 +419,10 @@ async def player_action(cb: CallbackQuery, session: AsyncSession, bot: Bot, stat
     note = None
     if action != "show":
         try:
-            note = await operations.player_action(bot, session, user, action, actor_tg=cb.from_user.id)
+            title = STAFF_TITLES.get(action)
+            note = await operations.player_action(
+                bot, session, user, "staff" if title else action, title, actor_tg=cb.from_user.id
+            )
         except operations.OpError as e:
             await cb.answer(str(e), show_alert=True)
             return

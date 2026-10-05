@@ -79,7 +79,10 @@ async def roster(session: AsyncSession) -> list[User]:
     """Состав команды: заполнили профиль и не исключены админом."""
     rows = await session.scalars(
         select(User)
-        .where(User.profile_completed.is_(True), User.is_active.is_(True), User.status == UserStatus.APPROVED)
+        .where(
+            User.profile_completed.is_(True), User.is_active.is_(True), User.status == UserStatus.APPROVED,
+            User.staff_title.is_(None),
+        )
         .order_by(User.name)
     )
     return list(rows.all())
@@ -582,7 +585,7 @@ async def team_stats(session: AsyncSession) -> list[tuple[User, int]]:
     rows = [
         (u, totals.get(u.id, 0))
         for u in users
-        if (u.profile_completed and u.status == UserStatus.APPROVED) or u.id in totals
+        if (u.profile_completed and u.status == UserStatus.APPROVED and not u.is_staff) or u.id in totals
     ]
     rows.sort(key=lambda r: (-r[1], r[0].name))
     return rows
@@ -710,6 +713,34 @@ async def set_user_status(
     if status == UserStatus.BLOCKED:
         return await _leave_upcoming_games(session, user, now)
     return []
+
+
+async def staff(session: AsyncSession) -> list[User]:
+    """Штаб команды (тренер, директор): видят состав, сами не играют."""
+    rows = await session.scalars(
+        select(User).where(User.staff_title.is_not(None), User.status == UserStatus.APPROVED).order_by(User.name)
+    )
+    return list(rows.all())
+
+
+async def set_staff(
+    session: AsyncSession, user: User, title: str | None, now: datetime
+) -> list[tuple[Game, list[Reassignment]]]:
+    """Перевести в штаб (title) или вернуть в игроки (None).
+
+    В штабе: снимается со всех будущих игр (обязанности уходят другим) и пропадает из списков ответов.
+    """
+    user.staff_title = title
+    await session.flush()
+    if not title:
+        return []
+    moves = await _leave_upcoming_games(session, user, now)
+    for game in await upcoming_games(session, now, grace_hours=0):
+        p = await session.get(GameParticipant, (game.id, user.id))
+        if p is not None:
+            await session.delete(p)
+    await session.flush()
+    return moves
 
 
 async def set_car(
@@ -905,7 +936,7 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
 
     users = [
         u for u in await all_users(session)
-        if u.profile_completed and (u.status == UserStatus.APPROVED or u.id in duties or u.id in games)
+        if u.profile_completed and not u.is_staff and (u.status == UserStatus.APPROVED or u.id in duties or u.id in games)
     ]
     return [
         {

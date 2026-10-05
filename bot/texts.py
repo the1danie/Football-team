@@ -272,6 +272,35 @@ def poll_invite(game: Game, deadline: datetime, now: datetime, penalty_points: i
     return "\n".join(lines)
 
 
+def staff_new_game(game: Game, deadline: datetime, now: datetime) -> str:
+    lines = ["📋 <b>Открыт сбор</b> (тебе отмечаться не нужно)", ""] + game_lines(game)
+    lines += ["", f"Игроки отвечают {until(deadline, now)}. Кто идёт — в приложении, перед игрой пришлю сводку."]
+    return "\n".join(lines)
+
+
+def names(users) -> str:
+    return ", ".join(h(u.name) for u in users) if users else "—"
+
+
+def staff_summary(game: Game, by_status: dict, silent: list) -> str:
+    yes = by_status["yes"]
+    lines = [f"📋 <b>Состав: {game_header(game)}</b>"]
+    loc = location_line(game)
+    if loc:
+        lines.append(loc)
+    lines += [
+        "",
+        f"✅ Идут — {len(yes)}: {names(yes)}",
+        f"🤔 Не знают — {len(by_status['maybe'])}: {names(by_status['maybe'])}",
+        f"❌ Не будут — {len(by_status['no'])}: {names(by_status['no'])}",
+    ]
+    if silent:
+        lines.append(f"🔇 Не ответили — {len(silent)}: {names(silent)}")
+    if game.min_players and len(yes) < game.min_players:
+        lines += ["", f"⚠️ Меньше минимума ({game.min_players})."]
+    return "\n".join(lines)
+
+
 def min_players_line(game: Game, yes: int) -> str:
     if yes >= game.min_players:
         return f"✅ Минимум {game.min_players} набран."

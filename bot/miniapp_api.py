@@ -126,7 +126,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         "from_schedule": game.schedule_id is not None,
         "duties": duties,
     }
-    if is_admin:
+    if is_admin or me.is_staff:
         view["no_answer"] = [_user_brief(u) for u in await svc.non_responders(session, game)]
     return view
 
@@ -150,7 +150,7 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         return data
     data["user"] = {
         "id": user.id, "name": user.name, "car": user.has_car, "car_locked": user.car_locked,
-        "status": user.status, "active": user.is_active,
+        "status": user.status, "active": user.is_active, "staff": user.staff_title,
         "minuses": (await svc.open_penalty_points(session, [user.id])).get(user.id, 0),
     }
     data["access"] = "ok" if (user.is_approved or is_admin) else user.status
@@ -215,6 +215,7 @@ async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict
     if is_admin:
         view.update(
             username=user.username, status=user.status, active=user.is_active, car_locked=user.car_locked,
+            staff=user.staff_title,
             telegram_id=user.telegram_id, is_admin=bool(user.is_admin), is_owner=config.is_owner(user.telegram_id),
         )
     return view
@@ -226,7 +227,7 @@ async def players_view(session: AsyncSession) -> dict:
         "players": [
             {
                 "id": u.id, "name": u.name, "username": u.username, "car": u.has_car, "car_locked": u.car_locked,
-                "status": u.status, "active": u.is_active, "minuses": minuses.get(u.id, 0),
+                "status": u.status, "active": u.is_active, "minuses": minuses.get(u.id, 0), "staff": u.staff_title,
                 "admin": bool(u.is_admin) or config.is_owner(u.telegram_id),
             }
             for u in await svc.players_for_admin(session)

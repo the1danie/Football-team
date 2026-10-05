@@ -21,7 +21,9 @@ async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game) -
     await notifier.refresh_game(bot, session, game)
     await notifier.announce_new_assignments(bot, game, result.assignments)
 
-    yes = len((await svc.participants_by_status(session, game.id))[Rsvp.YES])
+    by_status = await svc.participants_by_status(session, game.id)
+    yes = len(by_status[Rsvp.YES])
+    await notify_staff(bot, session, game, by_status)
     lines = [f"🎯 Обязанности распределены: {texts.game_header(game)}", f"Участников: {yes}", ""]
     lines += texts.duties_block(result.assignments, result.unassigned)
     pending = await svc.pending_after_duties(session, game)
@@ -39,6 +41,17 @@ async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game) -
             note="🎯 Обязанности для группы WhatsApp 👇",
         )
     return "\n".join(lines)
+
+
+async def notify_staff(bot: Bot, session: AsyncSession, game: Game, by_status: dict | None = None) -> None:
+    """Сводка для штаба (тренер, директор): кто идёт, кто нет, кто молчит."""
+    staff = await svc.staff(session)
+    if not staff:
+        return
+    by_status = by_status or await svc.participants_by_status(session, game.id)
+    text = texts.staff_summary(game, by_status, await svc.non_responders(session, game))
+    for user in staff:
+        await notifier.send_dm(bot, user, text, keyboards.with_app_button(None, game.id))
 
 
 def after_at(game: Game):
@@ -85,6 +98,10 @@ async def send_poll_invites(bot: Bot, session: AsyncSession, game: Game, skip: U
             sent += 1
         else:
             failed.append(user.name)
+    for user in await svc.staff(session):
+        await notifier.send_dm(
+            bot, user, texts.staff_new_game(game, deadline, config.now()), keyboards.with_app_button(None, game.id)
+        )
     report = f"📣 Опрос отправлен в личку: {sent} {texts.people_word(sent)}."
     if failed:
         report += "\nНе доставлено (не писали боту или заблокировали): " + ", ".join(texts.h(n) for n in failed)
@@ -163,8 +180,12 @@ async def game_card(
     """Карточка игры в личке: статус игрока, его обязанность, кнопки."""
     by_status = await svc.participants_by_status(session, game.id)
     lines = [f"<b>{texts.game_header(game)}</b>"]
-    if game.location:
-        lines.append(f"📍 {texts.h(game.location)}")
+    loc = texts.location_line(game)
+    if loc:
+        lines.append(loc)
+    if user is not None and user.is_staff:
+        text = texts.staff_summary(game, by_status, await svc.non_responders(session, game))
+        return text, keyboards.with_app_button(None, game.id)
     lines.append(f"Подтвердили: {len(by_status[Rsvp.YES])}")
 
     my_duties = []

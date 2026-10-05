@@ -78,6 +78,8 @@ async def change_rsvp(bot: Bot, session: AsyncSession, game: Game, user: User, s
         raise OpError("Сбор по этой игре закрыт.")
     if config.now() >= game.starts_at:
         raise OpError("Игра уже началась.")
+    if user.is_staff:
+        raise OpError(f"Ты в штабе команды ({user.staff_title.lower()}) — отмечаться не нужно, список виден в приложении.")
     result = await svc.set_rsvp(session, game, user, status)
     if result.changed:
         await notifier.refresh_game(bot, session, game)
@@ -258,6 +260,7 @@ async def cancel_game(
             chat_ids=[admin_chat_id] if admin_chat_id else None,
             note="Сообщите команде в WhatsApp 👇",
         )
+    notify.update({u.id: u for u in await svc.staff(session)})
     for user in notify.values():
         await notifier.send_dm(bot, user, f"❌ {texts.game_header(game)} отменена{texts.h(why)}.")
 
@@ -525,6 +528,25 @@ async def player_action(
     elif action == "active":
         user.is_active = not user.is_active
         note = f"{user.name}: {'в составе' if user.is_active else 'временно не в составе'}"
+    elif action == "staff":
+        title = (name or "").strip()[:32]
+        if not title:
+            raise OpError("Укажите роль: тренер, директор…")
+        if not user.is_approved:
+            raise OpError("Сначала примите человека в команду.")
+        await _announce_moves(bot, session, await svc.set_staff(session, user, title, now))
+        await notifier.send_dm(
+            bot, user,
+            f"📋 Администратор отметил тебя в штабе команды: <b>{texts.h(title)}</b>.\n"
+            "Отмечаться на игры не нужно — опросов и минусов не будет. Кто идёт, кто нет и кто молчит — "
+            "видно в приложении, а перед каждой игрой пришлю сводку.",
+            keyboards.with_app_button(None),
+        )
+        note = f"📋 {user.name}: {title}"
+    elif action == "staff_off":
+        await svc.set_staff(session, user, None, now)
+        await notifier.send_dm(bot, user, "⚽ Ты снова в составе игроков — можно отмечаться на игры.")
+        note = f"{user.name} снова игрок"
     elif action == "rename":
         name = (name or "").strip()
         if not (1 <= len(name) <= 64):

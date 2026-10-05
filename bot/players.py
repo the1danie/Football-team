@@ -43,7 +43,9 @@ async def player_card(
         f"Статус: {STATUS_TITLES.get(user.status, user.status)}" + (f" · {role_title(user)}" if role_title(user) else ""),
         f"Машина: {car}" + (" — <i>закреплено админом</i>" if user.car_locked else " — <i>указал сам</i>"),
     ]
-    if user.status == UserStatus.APPROVED:
+    if user.is_staff:
+        lines.append(f"📋 Штаб: {texts.h(user.staff_title)} — не отмечается, без опросов и минусов, видит состав")
+    elif user.status == UserStatus.APPROVED:
         lines.append("В составе: " + ("да — получает опросы" if user.is_active else "🚫 нет (травма/уехал) — опросов и минусов нет"))
         lines.append(f"Обязанностей выполнено: {duties}" + (f" · ⚠️ минусов: {minuses}" if minuses else ""))
 
@@ -66,6 +68,11 @@ async def player_card(
             callback_data=f"pl:{'admin_off' if user.is_admin else 'admin_on'}:{uid}",
         )
     if user.status == UserStatus.APPROVED:
+        if user.is_staff:
+            b.button(text="⚽ Вернуть в игроки", callback_data=f"pl:staff_off:{uid}")
+        else:
+            b.button(text="📋 Сделать тренером", callback_data=f"pl:coach:{uid}")
+            b.button(text="📋 Сделать директором", callback_data=f"pl:director:{uid}")
         b.button(
             text="🚫 Убрать из состава (временно)" if user.is_active else "✅ Вернуть в состав",
             callback_data=f"pl:active:{uid}",
@@ -87,13 +94,15 @@ async def players_list(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup
     if pending:
         lines.append(f"⏳ Ждут подтверждения: {pending} — нажмите, чтобы принять или отклонить.")
     lines += [
-        "✅ в команде · 🚫 временно не в составе · ⛔ заблокирован · 👑 админ · 🚗 есть машина",
+        "✅ в команде · 📋 штаб (тренер, директор) · 🚫 временно не в составе · ⛔ заблокирован · 👑 админ · 🚗 есть машина",
         "",
         "Нажмите на игрока, чтобы изменить машину, имя или статус.",
     ]
     b = InlineKeyboardBuilder()
     for u in users:
         icon = "🚫" if u.status == UserStatus.APPROVED and not u.is_active else STATUS_ICONS.get(u.status, "")
+        if u.status == UserStatus.APPROVED and u.is_staff:
+            icon = "📋"
         crown = " 👑" if config.is_owner(u.telegram_id) or u.is_admin else ""
         b.button(text=f"{icon} {u.name}{crown}{' 🚗' if u.has_car else ''}", callback_data=f"pl:show:{u.id}")
     b.adjust(2)
