@@ -76,6 +76,12 @@
   .view-as button { background: rgba(255,255,255,.22); color: #fff; border-radius: 10px; padding: 6px 12px; font-weight: 700; }
   .place-link { display: block; margin-top: 4px; color: var(--text); font-size: 16px; text-align: left; }
   .place-link span { color: var(--link); font-weight: 600; }
+  .countdown { margin-top: 12px; padding: 10px 14px; border-radius: 14px; background: var(--soft); font-weight: 600;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .countdown .small { font-weight: 400; }
+  .countdown .cd-num { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .countdown.urgent { background: var(--no-soft); }
+  .countdown.urgent .cd-num { color: var(--no); }
   .gather { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; font-size: 14px;
     font-weight: 600; background: var(--accent-soft); color: var(--link); }
   .banner { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--maybe-soft); font-size: 14px; }
@@ -238,6 +244,28 @@ const COLORS = ["#e17076", "#7bc862", "#65aadd", "#a695e7", "#ee7aae", "#6ec9cb"
 const params = new URLSearchParams(location.search);
 const startGame = Number(params.get("game") || (tg && tg.initDataUnsafe && (tg.initDataUnsafe.start_param || "").replace("game_", "")) || 0);
 
+// ---------------------------------------------------------------- таймер закрытия сбора
+function countdownText(ms) {
+  if (ms <= 0) return "закрывается…";
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), hh = Math.floor((s % 86400) / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return (d ? `${d} д ` : "") + `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
+}
+let countdownReloading = false;
+function tickCountdowns() {
+  const now = Date.now() + (S.skew || 0);
+  document.querySelectorAll("[data-deadline]").forEach((el) => {
+    const ms = Number(el.getAttribute("data-deadline")) - now;
+    el.textContent = countdownText(ms);
+    el.closest(".countdown").classList.toggle("urgent", ms < 3600 * 1000);
+    if (ms <= 0 && !countdownReloading) {
+      countdownReloading = true;  // сбор закрылся — через минуту подтянуть распределение
+      setTimeout(async () => { await api("state", {}, { quiet: true }); countdownReloading = false; if (!S.sheet) render(); }, 60000);
+    }
+  });
+}
+setInterval(tickCountdowns, 1000);
+
 // ---------------------------------------------------------------- утилиты
 function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
@@ -295,7 +323,7 @@ async function api(action, body = {}, { quiet } = {}) {
       if (!quiet) { haptic("err"); toast(json.error || "Ошибка"); }
       return null;
     }
-    if (json.state) S.data = json.state;
+    if (json.state) { S.data = json.state; const g0 = (json.state.games || [])[0]; if (g0 && g0.server_ts) S.skew = g0.server_ts - Date.now(); }
     if (json.note) toast(json.note);
     return json;
   } catch (e) { haptic("err"); toast("Нет связи с сервером"); return null; }
@@ -412,6 +440,10 @@ function gameCard(g) {
     add(card, h("div", { class: "banner info" }, `📋 Вы — ${staff.toLowerCase()}: отмечаться не нужно. Ниже — кто идёт, кто нет и кто молчит.`));
   else if (g.status === "open" && !g.my_rsvp && !g.deadline_passed)
     add(card, h("div", { class: "banner" }, `⏰ Ответь ${g.deadline_label}` + (g.penalty ? ` — иначе −${g.penalty}` : "")));
+  if (g.status === "open" && !g.deadline_passed && g.deadline_ts)
+    add(card, h("div", { class: "countdown" },
+      h("div", {}, h("div", {}, "⏳ Сбор закроется"), h("div", { class: "small muted" }, g.deadline_at_label)),
+      h("div", { class: "cd-num", "data-deadline": g.deadline_ts }, countdownText(g.deadline_ts - Date.now() - (S.skew || 0)))));
   if (mine.length)
     add(card, h("div", { class: "banner info" }, h("b", {}, "Твоя обязанность: "), mine.map((m) => `${m.emoji} ${m.action}`).join(", ")));
 

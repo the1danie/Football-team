@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qsl
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import actions, operations, texts, whatsapp
 from bot.config import config
-from bot.deadlines import penalties_enabled, rsvp_deadline
+from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
 from bot.services import games as svc
 
@@ -131,6 +131,9 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "deadline_label": texts.until(deadline, now),
         "deadline_at_label": f"{texts.day_word(deadline, now).lower()} в {texts.fmt_time(deadline)}",
         "deadline_passed": now >= deadline,
+        # Для живого таймера: момент закрытия сбора в мс (UTC) и «сейчас» сервера — на случай неверных часов телефона.
+        "deadline_ts": int(to_utc(deadline).replace(tzinfo=timezone.utc).timestamp() * 1000),
+        "server_ts": int(datetime.now(timezone.utc).timestamp() * 1000),
         "silence_penalized": bool(game.penalties_applied) and config.penalty_points > 0,
         "penalty": config.penalty_points if penalties_enabled(game) and not game.penalties_applied else 0,
         "participants": {

@@ -125,3 +125,18 @@ async def test_late_silent_penalty_button(team):  # noqa: F811
         assert (await svc.open_penalty_points(s, [nurik_id]))[nurik_id] == config.penalty_points
     status, _ = await api(tg_user(6, "Нурик"), "penalize_silent", game_id=gid)
     assert status == 403
+
+
+async def test_deadline_timestamp_for_timer(team):  # noqa: F811
+    import time
+
+    from bot.deadlines import rsvp_deadline
+
+    tomorrow = (config.now() + timedelta(days=1)).date().isoformat()
+    _, res = await api(ADMIN, "create_game", date=tomorrow, minutes=20 * 60, kind="game")
+    g = res["state"]["games"][0]
+    async with webhook._sessionmaker() as s:
+        deadline = rsvp_deadline(await svc.get_game(s, g["id"]))
+    left_ms = g["deadline_ts"] - g["server_ts"]
+    assert abs(left_ms / 1000 - (deadline - config.now()).total_seconds()) < 5
+    assert abs(g["server_ts"] / 1000 - time.time()) < 5
