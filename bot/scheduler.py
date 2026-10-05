@@ -23,6 +23,7 @@ TICK_SECONDS = 60
 
 
 async def tick(bot: Bot, session: AsyncSession) -> None:
+    await svc.refresh_admins(session)
     now = config.now()
     # Повторяющиеся тренировки: создать очередную, когда открылось окно опроса.
     for schedule, starts_at in await svc.due_schedule_games(session, now):

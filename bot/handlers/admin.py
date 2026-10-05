@@ -397,11 +397,11 @@ async def player_action(cb: CallbackQuery, session: AsyncSession, bot: Bot, stat
     note = None
     if action != "show":
         try:
-            note = await operations.player_action(bot, session, user, action)
+            note = await operations.player_action(bot, session, user, action, actor_tg=cb.from_user.id)
         except operations.OpError as e:
             await cb.answer(str(e), show_alert=True)
             return
-    text, markup = await player_card(session, user)
+    text, markup = await player_card(session, user, cb.from_user.id)
     await cb.message.edit_text(text, reply_markup=markup)
     await cb.answer(note)
 
@@ -417,7 +417,7 @@ async def player_rename(message: Message, session: AsyncSession, state: FSMConte
     if user is None:
         return
     user.name = name
-    text, markup = await player_card(session, user)
+    text, markup = await player_card(session, user, message.from_user.id)
     await message.answer(text + "\n\n✅ Имя изменено.", reply_markup=markup)
 
 

@@ -180,3 +180,32 @@ def test_app_buttons_only_with_public_url(monkeypatch):
     assert button.web_app.url == "https://fb.vercel.app/app?game=5"
     markup = keyboards.with_app_button(keyboards.rsvp(svc.Game(id=5, status="open")), 5)
     assert [len(r) for r in markup.inline_keyboard] == [3, 1]
+
+
+async def test_miniapp_admin_delegation(team):
+    arman = tg_user(2, "Арман")
+    await api(arman, "register", car=False)
+    _, pl = await api(ADMIN, "players")
+    arman_id = next(p["id"] for p in pl["players"] if p["name"] == "Арман")
+    await api(ADMIN, "player", user_id=arman_id, op="approve")
+
+    _, st = await api(ADMIN, "state")
+    assert st["state"]["is_owner"] is True
+    _, res = await api(ADMIN, "player", user_id=arman_id, op="admin_on")
+    assert res["player"]["is_admin"] is True and next(p for p in res["players"] if p["id"] == arman_id)["admin"]
+
+    _, st = await api(arman, "state")
+    assert st["state"]["is_admin"] is True and st["state"]["is_owner"] is False
+    status, _ = await api(arman, "players")
+    assert status == 200
+    owner_id = next(p["id"] for p in pl["players"] if p["name"] == "Даниял")
+    status, body = await api(arman, "player", user_id=owner_id, op="block")
+    assert status == 400
+    status, body = await api(arman, "player", user_id=arman_id, op="admin_off")
+    assert status == 400 and "только главный" in body["error"]
+    status, body = await api(ADMIN, "player", user_id=owner_id, op="admin_off")
+    assert status == 400 and "Главного админа" in body["error"]
+
+    await api(ADMIN, "player", user_id=arman_id, op="admin_off")
+    status, _ = await api(arman, "players")
+    assert status == 403

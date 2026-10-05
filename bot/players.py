@@ -5,6 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import texts
+from bot.config import config
 from bot.models import User, UserStatus
 from bot.services import games as svc
 
@@ -20,7 +21,18 @@ def _who(user: User) -> str:
     return texts.h(user.name) + (f" (@{texts.h(user.username)})" if user.username else "")
 
 
-async def player_card(session: AsyncSession, user: User) -> tuple[str, InlineKeyboardMarkup]:
+def role_title(user: User) -> str | None:
+    if config.is_owner(user.telegram_id):
+        return "👑 главный админ"
+    if user.is_admin:
+        return "👑 админ"
+    return None
+
+
+async def player_card(
+    session: AsyncSession, user: User, viewer_tg: int | None = None
+) -> tuple[str, InlineKeyboardMarkup]:
+    """viewer_tg — кто смотрит: главному админу видна кнопка выдачи прав."""
     minuses = (await svc.open_penalty_points(session, [user.id])).get(user.id, 0)
     duties = sum(n for _, n in await svc.player_stats(session, user.id))
     car = texts.CAR_YES if user.has_car else texts.CAR_NO
@@ -28,7 +40,7 @@ async def player_card(session: AsyncSession, user: User) -> tuple[str, InlineKey
         f"<b>👤 {_who(user)}</b>",
         f'<a href="tg://user?id={user.telegram_id}">написать в Telegram</a>',
         "",
-        f"Статус: {STATUS_TITLES.get(user.status, user.status)}",
+        f"Статус: {STATUS_TITLES.get(user.status, user.status)}" + (f" · {role_title(user)}" if role_title(user) else ""),
         f"Машина: {car}" + (" — <i>закреплено админом</i>" if user.car_locked else " — <i>указал сам</i>"),
     ]
     if user.status == UserStatus.APPROVED:
@@ -47,6 +59,12 @@ async def player_card(session: AsyncSession, user: User) -> tuple[str, InlineKey
     if user.car_locked:
         b.button(text="🔓 Разрешить игроку менять машину", callback_data=f"pl:unlock:{uid}")
     b.button(text="✏️ Переименовать", callback_data=f"pl:name:{uid}")
+    viewer_is_owner = viewer_tg is not None and config.is_owner(viewer_tg)
+    if viewer_is_owner and user.status == UserStatus.APPROVED and not config.is_owner(user.telegram_id):
+        b.button(
+            text="Снять права админа" if user.is_admin else "👑 Сделать админом",
+            callback_data=f"pl:{'admin_off' if user.is_admin else 'admin_on'}:{uid}",
+        )
     if user.status == UserStatus.APPROVED:
         b.button(
             text="🚫 Убрать из состава (временно)" if user.is_active else "✅ Вернуть в состав",
@@ -69,13 +87,14 @@ async def players_list(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup
     if pending:
         lines.append(f"⏳ Ждут подтверждения: {pending} — нажмите, чтобы принять или отклонить.")
     lines += [
-        "✅ в команде · 🚫 временно не в составе · ⛔ заблокирован · 🚗 есть машина",
+        "✅ в команде · 🚫 временно не в составе · ⛔ заблокирован · 👑 админ · 🚗 есть машина",
         "",
         "Нажмите на игрока, чтобы изменить машину, имя или статус.",
     ]
     b = InlineKeyboardBuilder()
     for u in users:
         icon = "🚫" if u.status == UserStatus.APPROVED and not u.is_active else STATUS_ICONS.get(u.status, "")
-        b.button(text=f"{icon} {u.name}{' 🚗' if u.has_car else ''}", callback_data=f"pl:show:{u.id}")
+        crown = " 👑" if config.is_owner(u.telegram_id) or u.is_admin else ""
+        b.button(text=f"{icon} {u.name}{crown}{' 🚗' if u.has_car else ''}", callback_data=f"pl:show:{u.id}")
     b.adjust(2)
     return "\n".join(lines), b.as_markup()

@@ -108,7 +108,7 @@ async def send_draft(bot: Bot, text: str, chat_ids: list[int] | None = None, not
     Текст — отдельным сообщением без лишнего, чтобы его можно было и скопировать целиком.
     """
     markup = share_markup(text)
-    for chat_id in chat_ids if chat_ids is not None else config.admin_ids:
+    for chat_id in chat_ids if chat_ids is not None else config.all_admin_ids:
         try:
             if note:
                 await bot.send_message(chat_id, note)

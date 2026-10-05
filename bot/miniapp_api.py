@@ -115,6 +115,7 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
     data: dict[str, Any] = {
         "bot_username": me.username,
         "is_admin": is_admin,
+        "is_owner": config.is_owner(int(tg["id"])),
         "tg_name": await svc.name_from_telegram(session, _tg_ns(tg)),
         "user": None,
         "games": [],
@@ -177,7 +178,7 @@ async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict
     if is_admin:
         view.update(
             username=user.username, status=user.status, active=user.is_active, car_locked=user.car_locked,
-            telegram_id=user.telegram_id,
+            telegram_id=user.telegram_id, is_admin=bool(user.is_admin), is_owner=config.is_owner(user.telegram_id),
         )
     return view
 
@@ -189,6 +190,7 @@ async def players_view(session: AsyncSession) -> dict:
             {
                 "id": u.id, "name": u.name, "username": u.username, "car": u.has_car, "car_locked": u.car_locked,
                 "status": u.status, "active": u.is_active, "minuses": minuses.get(u.id, 0),
+                "admin": bool(u.is_admin) or config.is_owner(u.telegram_id),
             }
             for u in await svc.players_for_admin(session)
         ]
@@ -229,6 +231,7 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
     """Выполнить действие из Mini App. Возвращает данные для ответа."""
     action = body.get("action", "state")
     tg_id = int(tg["id"])
+    await svc.refresh_admins(session)
     is_admin = config.is_admin(tg_id)
     user = await svc.get_user_by_tg(session, tg_id)
     if user is not None:
@@ -361,7 +364,9 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             return await player_view(session, await _user(session, body.get("user_id")), True)
         elif action == "player":
             target = await _user(session, body.get("user_id"))
-            note = await operations.player_action(bot, session, target, body.get("op", ""), body.get("name"))
+            note = await operations.player_action(
+                bot, session, target, body.get("op", ""), body.get("name"), actor_tg=tg_id
+            )
             await session.flush()
             return {"note": note, "player": await player_view(session, target, True), **await players_view(session)}
         elif action == "penalty_cancel":

@@ -424,7 +424,7 @@ function playersTab() {
     list.length ? h("div", { class: "list" }, list.map((p) => h("button", { class: "item", onclick: () => openPlayer(p.id) },
       avatar(p.name, p.id),
       h("div", { class: "grow" },
-        h("div", { class: "ellipsis", style: "font-weight:600" }, p.name),
+        h("div", { class: "ellipsis", style: "font-weight:600" }, p.name + (p.admin ? " 👑" : "")),
         h("div", { class: "small muted ellipsis" }, [p.username ? "@" + p.username : null,
           p.car ? "🚗 есть машина" + (p.car_locked ? " 🔒" : "") : "🚶 нет машины",
           p.status === "approved" && !p.active ? "🚫 не в составе" : null].filter(Boolean).join(" · "))),
@@ -448,7 +448,7 @@ function profileTab() {
   return h("div", {}, h("h1", {}, "Профиль"),
     h("div", { class: "card row" }, avatar(u.name, u.id),
       h("div", { class: "grow" }, h("div", { style: "font-weight:700;font-size:18px" }, u.name),
-        h("div", { class: "muted small" }, S.data.is_admin ? "Администратор" : "Игрок команды")),
+        h("div", { class: "muted small" }, S.data.is_owner ? "Главный админ" : S.data.is_admin ? "Админ" : "Игрок команды")),
       h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "rename", value: u.name }) }, "Изменить")),
     h("div", { class: "card" },
       h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🚗 Есть машина"),
@@ -621,7 +621,9 @@ function assignSheet() {
 
 function playerSheet() {
   const p = S.sheet.player;
-  const statusLabel = { pending: "⏳ ждёт подтверждения", approved: "✅ в команде", blocked: "⛔ удалён" }[p.status];
+  const statusLabel = { pending: "⏳ ждёт подтверждения", approved: "✅ в команде", blocked: "⛔ удалён" }[p.status]
+    + (p.is_owner ? " · 👑 главный админ" : p.is_admin ? " · 👑 админ" : "");
+  const canGrant = S.data.is_owner && p.status === "approved" && !p.is_owner;
   return h("div", {},
     h("div", { class: "row", style: "margin-bottom:12px" }, avatar(p.name, p.id),
       h("div", { class: "grow" }, h("h3", { style: "margin:0" }, p.name),
@@ -636,7 +638,11 @@ function playerSheet() {
       p.car_locked ? h("button", { class: "toggle-link", style: "margin:0 0 6px", onclick: () => playerOp(p, "unlock") }, "🔓 Разрешить игроку менять самому") : null,
       p.status === "approved" ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "В составе"),
         h("div", { class: "small muted" }, "Выключите на время травмы или отъезда — не будет опросов и минусов.")),
-        h("button", { class: "switch" + (p.active ? " on" : ""), role: "switch", "aria-checked": p.active ? "true" : "false", onclick: () => playerOp(p, "active") })) : null),
+        h("button", { class: "switch" + (p.active ? " on" : ""), role: "switch", "aria-checked": p.active ? "true" : "false", onclick: () => playerOp(p, "active") })) : null,
+      canGrant ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "👑 Админ"),
+        h("div", { class: "small muted" }, "Может создавать игры, распределять обязанности, принимать игроков. Выдавать права может только главный админ.")),
+        h("button", { class: "switch" + (p.is_admin ? " on" : ""), role: "switch", "aria-checked": p.is_admin ? "true" : "false",
+          onclick: async () => { if (p.is_admin || await confirmBox(`Сделать ${p.name} админом команды?`)) playerOp(p, p.is_admin ? "admin_off" : "admin_on"); } })) : null),
     h("div", { class: "label" }, "Имя"),
     h("div", { class: "row" }, h("input", { class: "field grow", id: "pname", value: p.name, maxlength: 64 }),
       h("button", { class: "btn small", onclick: () => playerOp(p, "rename", { name: document.getElementById("pname").value }) }, "Сохранить")),
@@ -646,7 +652,7 @@ function playerSheet() {
       h("div", { class: "list" }, p.minuses.map((m) => h("div", { class: "item" }, h("div", { class: "grow small" }, `−${m.points} · не ответил: ${m.game}`),
         h("button", { class: "btn small secondary", onclick: async () => { const r = await api("penalty_cancel", { penalty_id: m.id }); if (r) { S.sheet.player = r.player; render(); } } }, "Снять"))))) : null,
     h("div", { style: "margin-top:16px" },
-      p.status === "approved" ? h("button", { class: "btn danger", onclick: () => playerOp(p, "block") }, "Удалить из команды") : null,
+      p.status === "approved" && !p.is_owner ? h("button", { class: "btn danger", onclick: () => playerOp(p, "block") }, "Удалить из команды") : null,
       p.status === "blocked" ? h("button", { class: "btn secondary", onclick: () => playerOp(p, "approve") }, "♻️ Вернуть в команду") : null),
     h("a", { class: "toggle-link", href: `tg://user?id=${p.telegram_id}` }, "Написать в Telegram"));
 }

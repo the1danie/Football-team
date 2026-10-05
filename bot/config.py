@@ -27,7 +27,10 @@ class Config:
         or os.getenv("POSTGRES_URL")
         or "sqlite+aiosqlite:///football.db"
     )
+    # Главные админы (владельцы): только они выдают и снимают права админа другим.
     admin_ids: list[int] = field(default_factory=lambda: _int_list(os.getenv("ADMIN_IDS", "")))
+    # Админы, которым права выдали в боте (обновляется из БД на каждый запрос — refresh_admins).
+    extra_admin_ids: set[int] = field(default_factory=set)
     # Чат команды можно задать здесь или командой /bindchat в самом чате.
     group_chat_id: int | None = field(
         default_factory=lambda: int(os.getenv("GROUP_CHAT_ID")) if os.getenv("GROUP_CHAT_ID") else None
@@ -81,7 +84,15 @@ class Config:
         return datetime.now(self.tz).replace(tzinfo=None)
 
     def is_admin(self, telegram_id: int) -> bool:
+        return telegram_id in self.admin_ids or telegram_id in self.extra_admin_ids
+
+    def is_owner(self, telegram_id: int) -> bool:
         return telegram_id in self.admin_ids
+
+    @property
+    def all_admin_ids(self) -> list[int]:
+        """Кому слать заявки и тексты для WhatsApp: главные админы и назначенные."""
+        return list(dict.fromkeys([*self.admin_ids, *sorted(self.extra_admin_ids)]))
 
 
 config = Config()

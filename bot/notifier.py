@@ -44,7 +44,7 @@ async def send_raw(bot: Bot, chat_id: int, text: str, reply_markup=None) -> bool
 
 
 async def notify_admins(bot: Bot, text: str) -> None:
-    for admin_id in config.admin_ids:
+    for admin_id in config.all_admin_ids:
         try:
             await bot.send_message(admin_id, text)
         except (TelegramForbiddenError, TelegramBadRequest) as e:

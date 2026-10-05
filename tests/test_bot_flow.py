@@ -756,3 +756,57 @@ async def test_blocking_player_frees_duties(h: Harness):
         assert {a.user_id for a in await svc.active_assignments(s, game_id)} == {
             (await svc.get_user_by_tg(s, ADMIN)).id
         }
+
+
+async def test_owner_delegates_admin_rights(h: Harness):
+    fake = h.fake
+    await h.register(ADMIN, "Даниял", car=True)  # главный админ (ADMIN_IDS)
+    await h.register(2, "Арман", car=False)
+    await h.register(3, "Тимур", car=False)
+    async with h.sm() as s:
+        arman = await svc.get_user_by_tg(s, 2)
+        timur = await svc.get_user_by_tg(s, 3)
+        owner = await svc.get_user_by_tg(s, ADMIN)
+
+    # до выдачи прав Арман — обычный игрок
+    fake.reset()
+    await h.text(2, "/players")
+    assert not any("Игроки" in m.text for m in fake.sent(2))
+
+    # главный видит кнопку и выдаёт права
+    await h.click(ADMIN, f"pl:show:{arman.id}")
+    labels = [b.text for b in buttons(fake.last_markup(ADMIN))]
+    assert "👑 Сделать админом" in labels
+    await h.click(ADMIN, f"pl:admin_on:{arman.id}")
+    assert "👑 админ" in fake.edits(ADMIN)[-1].text
+    assert any("выдали права администратора" in m.text for m in fake.sent(2))
+
+    # теперь Арман — админ: меню, игроки, создание игры
+    fake.reset()
+    await h.text(2, "/players")
+    assert "Игроки" in fake.sent(2)[-1].text
+    await h.click(2, f"pl:show:{timur.id}")
+    assert "👑 Сделать админом" not in [b.text for b in buttons(fake.last_markup(2))]  # раздаёт только главный
+    await h.click(2, f"pl:admin_on:{timur.id}")
+    assert "только главный админ" in fake.alerts()[-1].text
+    await h.click(2, f"pl:block:{owner.id}")
+    assert "Главного админа нельзя" in fake.alerts()[-1].text or "только главный" in fake.alerts()[-1].text
+    await h.text(2, texts.BTN_CREATE)
+    assert "Выберите дату" in fake.sent(2)[-1].text
+
+    # новые заявки приходят и ему
+    fake.reset()
+    h.names[9] = "Новичок"
+    await h.text(9, "/start")
+    await h.click(9, "car:0")
+    assert any("Новый игрок" in m.text for m in fake.sent(2)) and any("Новый игрок" in m.text for m in fake.sent(ADMIN))
+
+    # обычный админ не может удалить другого админа; главный снимает права
+    await h.click(ADMIN, f"pl:admin_on:{timur.id}")
+    await h.click(2, f"pl:block:{timur.id}")
+    assert "только главный админ" in fake.alerts()[-1].text
+    await h.click(ADMIN, f"pl:admin_off:{arman.id}")
+    assert any("Права администратора сняты" in m.text for m in fake.sent(2))
+    fake.reset()
+    await h.text(2, "/players")
+    assert not any("Игроки" in m.text for m in fake.sent(2))

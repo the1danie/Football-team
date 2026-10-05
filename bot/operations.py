@@ -38,7 +38,7 @@ async def complete_registration(
         from bot.players import player_card  # избегаем циклического импорта
 
         text, markup = await player_card(session, user)
-        for admin_id in config.admin_ids:
+        for admin_id in config.all_admin_ids:
             await notifier.send_raw(bot, admin_id, "🆕 Новый игрок просится в команду:\n\n" + text, markup)
     return user
 
@@ -266,9 +266,43 @@ async def _announce_moves(bot: Bot, session: AsyncSession, moves) -> None:
         await notifier.announce_reassignments(bot, game, reassigned)
 
 
-async def player_action(bot: Bot, session: AsyncSession, user: User, action: str, name: str | None = None) -> str:
-    """Действие админа над игроком. Возвращает короткий итог для показа."""
+async def player_action(
+    bot: Bot, session: AsyncSession, user: User, action: str, name: str | None = None, actor_tg: int | None = None
+) -> str:
+    """Действие админа над игроком. Возвращает короткий итог для показа.
+
+    actor_tg — кто делает: выдавать/снимать права и удалять админов может только главный админ.
+    """
     now = config.now()
+    actor_is_owner = actor_tg is None or config.is_owner(actor_tg)
+    target_is_admin = config.is_owner(user.telegram_id) or user.is_admin
+    if action in ("admin_on", "admin_off") and not actor_is_owner:
+        raise OpError("Выдавать и снимать права админа может только главный админ.")
+    if action == "block" and target_is_admin and not actor_is_owner:
+        raise OpError("Удалить админа может только главный админ.")
+    if config.is_owner(user.telegram_id) and action in ("block", "admin_off"):
+        raise OpError("Главного админа нельзя удалить или лишить прав (он задан в настройках ADMIN_IDS).")
+
+    if action == "admin_on":
+        if not user.is_approved:
+            raise OpError("Сначала примите игрока в команду.")
+        user.is_admin = True
+        await session.flush()
+        await svc.refresh_admins(session)
+        await notifier.send_dm(
+            bot, user,
+            "👑 Тебе выдали права администратора команды: создание игр, распределение обязанностей, "
+            "заявки игроков. Меню обновлено — кнопки внизу, а в приложении появилась вкладка «Игроки».",
+            keyboards.main_menu(True),
+        )
+        return f"👑 {user.name} теперь админ"
+    if action == "admin_off":
+        user.is_admin = False
+        await session.flush()
+        await svc.refresh_admins(session)
+        await notifier.send_dm(bot, user, "Права администратора сняты.", keyboards.main_menu(False))
+        return f"{user.name} больше не админ"
+
     if action == "approve":
         was = user.status
         await svc.set_user_status(session, user, UserStatus.APPROVED, now)
@@ -285,6 +319,7 @@ async def player_action(bot: Bot, session: AsyncSession, user: User, action: str
         note = f"✅ {user.name} в команде"
     elif action == "block":
         was = user.status
+        user.is_admin = False
         await _announce_moves(bot, session, await svc.set_user_status(session, user, UserStatus.BLOCKED, now))
         if was == UserStatus.PENDING:
             await notifier.send_dm(bot, user, "Заявка отклонена администратором.")

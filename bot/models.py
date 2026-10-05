@@ -66,6 +66,8 @@ class User(Base):
     )
     # Машину выставил админ — игрок сам изменить не может.
     car_locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Права админа, выданные главным админом в боте (главные — в ADMIN_IDS).
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 

@@ -23,6 +23,9 @@ class DbSessionMiddleware(BaseMiddleware):
     ) -> Any:
         async with self.sessionmaker() as session:
             data["session"] = session
+            from bot.services.games import refresh_admins  # noqa: PLC0415 — избегаем циклических импортов
+
+            await refresh_admins(session)
             token = current_session.set(session)
             try:
                 result = await handler(event, data)

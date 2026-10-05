@@ -732,3 +732,14 @@ async def yes_count(session: AsyncSession, game_id: int) -> int:
         )
         or 0
     )
+
+
+# ---------------------------------------------------------------- админы
+
+
+async def refresh_admins(session: AsyncSession) -> None:
+    """Подтянуть из БД админов, назначенных в боте (вызывается на каждый запрос)."""
+    rows = await session.scalars(
+        select(User.telegram_id).where(User.is_admin.is_(True), User.status == UserStatus.APPROVED)
+    )
+    config.extra_admin_ids = set(rows.all())
