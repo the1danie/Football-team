@@ -40,6 +40,9 @@ async def on_rsvp(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     had_duties = await svc.user_assignments(session, game.id, user.id)
     try:
         result = await operations.change_rsvp(bot, session, game, user, status)
+    except operations.RsvpLocked:
+        await cb.answer(await operations.request_rsvp_change(bot, session, game, user, status), show_alert=True)
+        return
     except operations.OpError as e:
         await cb.answer(str(e), show_alert=True)
         return

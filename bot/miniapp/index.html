@@ -100,6 +100,7 @@
   .rsvp button.on.yes { background: var(--yes-soft); border-color: var(--yes); }
   .rsvp button.on.maybe { background: var(--maybe-soft); border-color: var(--maybe); }
   .rsvp button.on.no { background: var(--no-soft); border-color: var(--no); }
+  .rsvp.locked button:not(.on) { opacity: .55; }
   .counts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
   .people { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
   .toggle-link { color: var(--link); font-size: 14px; margin-top: 10px; display: inline-block; }
@@ -486,7 +487,10 @@ function gameCard(g) {
   if (mine.length)
     add(card, h("div", { class: "banner info" }, h("b", {}, "Твоя обязанность: "), mine.map((m) => `${m.emoji} ${m.action}`).join(", ")));
 
-  if (!staff && !g.past) add(card, h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
+  const locked = !d.is_admin && g.deadline_passed && !g.past;
+  if (locked && !staff)
+    add(card, h("div", { class: "small muted", style: "margin-top:12px" }, "🔒 Сбор закрыт — свой ответ меняет только админ. Нажмите другой вариант — админу уйдёт запрос."));
+  if (!staff && !g.past) add(card, h("div", { class: "rsvp" + (locked ? " locked" : "") }, Object.entries(RSVP).map(([key, [e, label]]) =>
     h("button", { class: `${key}${g.my_rsvp === key ? " on" : ""}`, "aria-pressed": g.my_rsvp === key ? "true" : "false",
       onclick: async () => { if (g.my_rsvp === key) return; haptic(); const r = await api("rsvp", { game_id: g.id, status: key }); if (r) { haptic("ok"); render(); } } },
       h("span", { class: "e" }, e), label))));

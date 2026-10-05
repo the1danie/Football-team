@@ -349,7 +349,11 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             if staff_view and not user.is_staff:
                 raise ApiError("Тренер не отмечается — это просмотр глазами штаба.")
             game = await _game(session, body)
-            result = await operations.change_rsvp(bot, session, game, user, body.get("status", ""))
+            try:
+                result = await operations.change_rsvp(bot, session, game, user, body.get("status", ""))
+            except operations.RsvpLocked:
+                note = await operations.request_rsvp_change(bot, session, game, user, body.get("status", ""))
+                return {"note": note, "state": await state_view(bot, session, tg, user)}
             if result.reassigned:
                 note = "Обязанность передана другому игроку."
         elif action == "profile":
@@ -569,7 +573,7 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
         elif action == "rsvp_for":
             target = await _user(session, body.get("user_id"))
             game = await _game(session, body)
-            await operations.change_rsvp(bot, session, game, target, body.get("status", ""))
+            await operations.change_rsvp(bot, session, game, target, body.get("status", ""), by_admin=True)
             note = f"{target.name}: {texts.RSVP_LABELS.get(body.get('status'), '')}"
         elif action == "player" and body.get("op") == "link_to":
             pending = await _user(session, body.get("user_id"))

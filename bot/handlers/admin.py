@@ -564,3 +564,33 @@ async def team_invite(message: Message, bot: Bot):
         bot, whatsapp.team_invite(me.username), chat_ids=[message.chat.id],
         note="📤 Инструкция для команды — отправьте в группу WhatsApp 👇",
     )
+
+
+# ----------------------------------------------------------------- просьба изменить ответ после закрытия сбора
+
+
+@router.callback_query(F.data.startswith("rq:") | F.data.startswith("rqno:"))
+async def rsvp_request_decision(cb: CallbackQuery, session: AsyncSession, bot: Bot):
+    kind, game_id, user_id, status = cb.data.split(":")
+    game = await svc.get_game(session, int(game_id))
+    user = await session.get(User, int(user_id))
+    if game is None or user is None or status not in Rsvp.ALL:
+        await cb.answer("Игра или игрок не найдены.", show_alert=True)
+        return
+    label = texts.RSVP_LABELS[status]
+    if kind == "rqno":
+        await notifier.send_dm(bot, user, f"✖️ Админ не стал менять твой ответ на «{label}» ({texts.game_header(game)}).")
+        await cb.message.edit_text(cb.message.html_text + f"\n\n✖️ Отклонено ({texts.h(cb.from_user.first_name)})")
+        await cb.answer("Отклонено")
+        return
+    try:
+        result = await operations.change_rsvp(bot, session, game, user, status, by_admin=True)
+    except operations.OpError as e:
+        await cb.answer(str(e), show_alert=True)
+        return
+    note = f"✅ Админ изменил твой ответ: {label} ({texts.game_header(game)})."
+    if result.reassigned:
+        note += "\nТвоя обязанность передана другому игроку."
+    await notifier.send_dm(bot, user, note)
+    await cb.message.edit_text(cb.message.html_text + f"\n\n✅ Подтверждено ({texts.h(cb.from_user.first_name)})")
+    await cb.answer("Готово")

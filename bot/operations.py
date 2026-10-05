@@ -20,6 +20,10 @@ class OpError(Exception):
     """Ошибка, текст которой можно показать пользователю."""
 
 
+class RsvpLocked(OpError):
+    """Сбор закрыт — игрок сам ответ не меняет, только через админа."""
+
+
 # ----------------------------------------------------------------- регистрация и профиль
 
 
@@ -75,6 +79,28 @@ async def link_account(bot: Bot, session: AsyncSession, manual: User, telegram_i
             await notifier.send_dm(bot, manual, text, markup)
 
 
+async def request_rsvp_change(bot: Bot, session: AsyncSession, game: Game, user: User, status: str) -> str:
+    """Сбор закрыт: отправить админам просьбу игрока изменить ответ (кнопки «Подтвердить / Отклонить»)."""
+    current = await svc.get_rsvp(session, game.id, user.id)
+    if current == status:
+        return f"Ты уже отметил: {texts.RSVP_LABELS[status]}"
+    duties = await svc.user_assignments(session, game.id, user.id)
+    lines = [
+        f"✋ <b>{texts.h(user.name)}</b> просит изменить ответ: "
+        f"{texts.RSVP_LABELS[current] if current else 'не отвечал'} → <b>{texts.RSVP_LABELS[status]}</b>",
+        texts.game_header(game) + " (сбор уже закрыт)",
+    ]
+    if duties:
+        lines.append("Обязанности у него: " + ", ".join(a.duty.title for a in duties))
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"rq:{game.id}:{user.id}:{status}"),
+        InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"rqno:{game.id}:{user.id}:{status}"),
+    ]])
+    for admin_id in config.all_admin_ids:
+        await notifier.send_raw(bot, admin_id, "\n".join(lines), markup)
+    return f"🔒 Сбор закрыт — сам изменить ответ уже нельзя. Запрос «{texts.RSVP_LABELS[status]}» отправлен админу."
+
+
 async def rename_self(session: AsyncSession, user: User, name: str) -> None:
     name = name.strip()
     if not (1 <= len(name) <= 64) or name.startswith("/"):
@@ -103,13 +129,17 @@ async def set_own_car(bot: Bot, session: AsyncSession, user: User, has_car: bool
 # ----------------------------------------------------------------- отметки
 
 
-async def change_rsvp(bot: Bot, session: AsyncSession, game: Game, user: User, status: str) -> svc.RsvpResult:
+async def change_rsvp(
+    bot: Bot, session: AsyncSession, game: Game, user: User, status: str, by_admin: bool = False
+) -> svc.RsvpResult:
     if status not in Rsvp.ALL:
         raise OpError("Неизвестный ответ.")
     if game.status not in GameStatus.ACTIVE:
         raise OpError("Сбор по этой игре закрыт.")
     if config.now() >= game.starts_at:
         raise OpError("Игра уже началась.")
+    if not by_admin and not config.is_admin(user.telegram_id) and config.now() >= rsvp_deadline(game):
+        raise RsvpLocked("🔒 Сбор закрыт — изменить ответ может только админ.")
     if user.is_staff:
         raise OpError(f"Ты в штабе команды ({user.staff_title.lower()}) — отмечаться не нужно, список виден в приложении.")
     result = await svc.set_rsvp(session, game, user, status)
