@@ -98,6 +98,9 @@ async def test_migration_adds_new_columns_to_old_db(tmp_path):
         await conn.execute(text("INSERT INTO users (telegram_id, name, has_car, profile_completed, created_at) "
                                 "VALUES (1, 'Старичок', false, true, CURRENT_TIMESTAMP)"))
         await conn.execute(text("ALTER TABLE users DROP COLUMN is_active"))
+        await conn.execute(text("DROP INDEX ix_users_status"))
+        for col in ("status", "car_locked", "username"):
+            await conn.execute(text(f"ALTER TABLE users DROP COLUMN {col}"))
         await conn.execute(text("ALTER TABLE games DROP COLUMN rsvp_nudge_sent"))
         await conn.execute(text("ALTER TABLE games DROP COLUMN penalties_applied"))
         await conn.execute(text("DROP TABLE penalties"))
@@ -105,6 +108,8 @@ async def test_migration_adds_new_columns_to_old_db(tmp_path):
     async with make_sessionmaker(engine)() as s:
         user = await s.scalar(select(User))
         assert user.is_active is True  # существующие игроки — в составе
+        assert user.status == "approved"  # и уже подтверждены — доступ не теряют
+        assert user.car_locked is False
         game = await svc.create_game(s, "game", config.now() + timedelta(days=1), None, None)
         await s.commit()
         assert (await s.get(Game, game.id)).penalties_applied is False

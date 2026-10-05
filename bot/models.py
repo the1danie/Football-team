@@ -42,6 +42,12 @@ class SwapStatus:
     EXPIRED = "expired"
 
 
+class UserStatus:
+    PENDING = "pending"  # ждёт подтверждения админом
+    APPROVED = "approved"  # в команде
+    BLOCKED = "blocked"  # отклонён / удалён админом
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -53,7 +59,19 @@ class User(Base):
     # В составе команды: получает опросы, за молчание получает минусы.
     # Админ может временно исключить (травма, уехал).
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # Новые игроки ждут подтверждения админом. server_default — для тех, кто был в базе
+    # до появления подтверждений: они остаются в команде.
+    status: Mapped[str] = mapped_column(
+        String(16), default=UserStatus.PENDING, server_default=UserStatus.APPROVED, index=True
+    )
+    # Машину выставил админ — игрок сам изменить не может.
+    car_locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    @property
+    def is_approved(self) -> bool:
+        return self.status == UserStatus.APPROVED
 
 
 class Game(Base):

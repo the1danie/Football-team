@@ -45,6 +45,7 @@ async def make_user(session, name: str, has_car: bool = False) -> User:
     user = await svc.get_or_create_user(session, next(_tg), name)
     user.has_car = has_car
     user.profile_completed = True
+    user.status = "approved"
     await session.flush()
     return user
 

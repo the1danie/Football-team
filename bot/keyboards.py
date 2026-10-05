@@ -13,7 +13,8 @@ def main_menu(is_admin: bool) -> ReplyKeyboardMarkup:
             [texts.BTN_CREATE, texts.BTN_CURRENT],
             [texts.BTN_PARTICIPANTS, texts.BTN_DISTRIBUTE],
             [texts.BTN_EDIT, texts.BTN_CANCEL],
-            [texts.BTN_STATS, texts.BTN_PROFILE],
+            [texts.BTN_PLAYERS, texts.BTN_STATS],
+            [texts.BTN_PROFILE],
         ]
     else:
         rows = [[texts.BTN_CURRENT, texts.BTN_SWAP], [texts.BTN_STATS, texts.BTN_PROFILE]]
@@ -108,10 +109,12 @@ def date_choice(now: datetime, days: int = 8) -> InlineKeyboardMarkup:
 
 
 def time_choice() -> InlineKeyboardMarkup:
+    """С 13:00 до 24:00 каждые полчаса (24:00 — полночь, конец выбранного дня)."""
     b = InlineKeyboardBuilder()
-    for t in ("18:00", "19:00", "20:00", "21:00", "22:00"):
-        b.button(text=t, callback_data=f"newtime:{t.replace(':', '')}")
-    b.adjust(5)
+    for minutes in range(13 * 60, 24 * 60 + 1, 30):
+        label = f"{minutes // 60:02d}:{minutes % 60:02d}"
+        b.button(text=label, callback_data=f"newtime:{minutes}")
+    b.adjust(4)
     return b.as_markup()
 
 

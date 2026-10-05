@@ -15,7 +15,7 @@ router.message.filter(F.chat.type == "private")
 
 MENU_BUTTONS = {
     texts.BTN_CREATE, texts.BTN_CURRENT, texts.BTN_PARTICIPANTS, texts.BTN_DISTRIBUTE,
-    texts.BTN_EDIT, texts.BTN_CANCEL, texts.BTN_STATS, texts.BTN_PROFILE, texts.BTN_SWAP,
+    texts.BTN_EDIT, texts.BTN_CANCEL, texts.BTN_STATS, texts.BTN_PROFILE, texts.BTN_SWAP, texts.BTN_PLAYERS,
 }
 
 HELP = (
@@ -37,7 +37,7 @@ ADMIN_HELP = (
     "/duties — список обязанностей\n"
     "/add_duty 🩹 Аптечка — добавить обязанность (добавьте слово «машина», если нужна машина)\n"
     "/toggle_duty &lt;id&gt; — включить/выключить обязанность\n"
-    "/players — состав команды (кто получает опросы и минусы)\n"
+    "🗂 Игроки (/players) — заявки новых игроков, машина, имя, состав, удаление\n"
     "/penalties — минусы за неответы, снятие минуса"
 )
 
@@ -141,15 +141,32 @@ async def profile_name(message: Message, state: FSMContext):
 
 
 @router.callback_query(ProfileStates.car, F.data.startswith("car:"))
-async def profile_car(cb: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def profile_car(cb: CallbackQuery, session: AsyncSession, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    user = await svc.get_or_create_user(session, cb.from_user.id, data["name"])
+    user = await svc.get_or_create_user(session, cb.from_user.id, data["name"], cb.from_user.username)
+    first_time = not user.profile_completed
     user.name = data["name"]
-    user.has_car = cb.data == "car:1"
+    if not user.car_locked:
+        user.has_car = cb.data == "car:1"
     user.profile_completed = True
     await state.clear()
-    await cb.message.edit_text(texts.profile_text(user) + "\n\n✅ Профиль сохранён.")
     await cb.answer()
+
+    if not user.is_approved:
+        await cb.message.edit_text(
+            texts.profile_text(user) + "\n\n✅ Профиль сохранён.\n\n"
+            "⏳ Заявка отправлена администратору. Как только он подтвердит, что ты из команды, "
+            "придёт сообщение — и можно будет отмечаться на игры."
+        )
+        if first_time:
+            from bot.players import player_card  # избегаем циклического импорта
+
+            text, markup = await player_card(session, user)
+            for admin_id in config.admin_ids:
+                await notifier.send_raw(bot, admin_id, "🆕 Новый игрок просится в команду:\n\n" + text, markup)
+        return
+
+    await cb.message.edit_text(texts.profile_text(user) + "\n\n✅ Профиль сохранён.")
 
     if await open_payload(cb.message, session, user, data.get("after_profile", "")):
         return
@@ -190,7 +207,11 @@ async def profile_edit_name_save(message: Message, session: AsyncSession, state:
 
 
 @router.callback_query(F.data == "prof:car")
-async def profile_edit_car(cb: CallbackQuery):
+async def profile_edit_car(cb: CallbackQuery, session: AsyncSession):
+    user = await svc.get_user_by_tg(session, cb.from_user.id)
+    if user is not None and user.car_locked and not config.is_admin(cb.from_user.id):
+        await cb.answer("Наличие машины отметил администратор — изменить может только он.", show_alert=True)
+        return
     await cb.message.answer("Есть ли у тебя машина?", reply_markup=keyboards.car_choice("pcar"))
     await cb.answer()
 
@@ -201,16 +222,23 @@ async def profile_edit_car_save(cb: CallbackQuery, session: AsyncSession, bot: B
     if user is None:
         await cb.answer("Сначала нажми /start", show_alert=True)
         return
+    if user.car_locked and not config.is_admin(cb.from_user.id):
+        await cb.answer("Наличие машины отметил администратор — изменить может только он.", show_alert=True)
+        return
     had_car = user.has_car
-    user.has_car = cb.data == "pcar:1"
+    moved = await svc.set_car(session, user, cb.data == "pcar:1", config.now(), by_admin=False)
     await cb.message.edit_text(texts.profile_text(user) + "\n\n✅ Сохранено.")
     await cb.answer()
-
-    if had_car and not user.has_car:
-        moved = await svc.drop_car_duties(session, user, config.now())
-        for game, reassigned in moved:
-            await notifier.refresh_game(bot, session, game)
-            await notifier.announce_reassignments(bot, game, reassigned)
+    for game, reassigned in moved:
+        await notifier.refresh_game(bot, session, game)
+        await notifier.announce_reassignments(bot, game, reassigned)
+    if had_car != user.has_car and not config.is_admin(cb.from_user.id):
+        await notifier.notify_admins(
+            bot,
+            f"🚗 {texts.h(user.name)} изменил в профиле: "
+            f"{texts.CAR_YES if user.has_car else texts.CAR_NO} (было: {texts.CAR_YES if had_car else texts.CAR_NO}).\n"
+            "Если это неправда — исправьте и закрепите: 🗂 Игроки.",
+        )
 
 
 # ----------------------------------------------------------------- текущая игра

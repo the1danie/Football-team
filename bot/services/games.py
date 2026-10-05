@@ -22,6 +22,7 @@ from bot.models import (
     SwapRequest,
     SwapStatus,
     User,
+    UserStatus,
 )
 from bot.services.distribution import Candidate, DutySpec, distribute, pick
 
@@ -32,10 +33,21 @@ async def get_user_by_tg(session: AsyncSession, telegram_id: int) -> User | None
     return await session.scalar(select(User).where(User.telegram_id == telegram_id))
 
 
-async def get_or_create_user(session: AsyncSession, telegram_id: int, default_name: str) -> User:
+async def get_or_create_user(
+    session: AsyncSession, telegram_id: int, default_name: str, username: str | None = None
+) -> User:
     user = await get_user_by_tg(session, telegram_id)
     if user is None:
-        user = User(telegram_id=telegram_id, name=(default_name or "Игрок")[:64], has_car=False)
+        user = User(
+            telegram_id=telegram_id,
+            name=(default_name or "Игрок")[:64],
+            has_car=False,
+            username=username,
+            # Админов и (если подтверждение выключено) всех — сразу в команду.
+            status=UserStatus.APPROVED
+            if config.is_admin(telegram_id) or not config.require_approval
+            else UserStatus.PENDING,
+        )
         session.add(user)
         await session.flush()
     return user
@@ -63,7 +75,9 @@ async def all_users(session: AsyncSession) -> list[User]:
 async def roster(session: AsyncSession) -> list[User]:
     """Состав команды: заполнили профиль и не исключены админом."""
     rows = await session.scalars(
-        select(User).where(User.profile_completed.is_(True), User.is_active.is_(True)).order_by(User.name)
+        select(User)
+        .where(User.profile_completed.is_(True), User.is_active.is_(True), User.status == UserStatus.APPROVED)
+        .order_by(User.name)
     )
     return list(rows.all())
 
@@ -523,7 +537,11 @@ async def team_stats(session: AsyncSession) -> list[tuple[User, int]]:
     for user_id, _duty_id, cnt in (await session.execute(_counted())).all():
         totals[user_id] = totals.get(user_id, 0) + cnt
     users = await all_users(session)
-    rows = [(u, totals.get(u.id, 0)) for u in users if u.profile_completed or u.id in totals]
+    rows = [
+        (u, totals.get(u.id, 0))
+        for u in users
+        if (u.profile_completed and u.status == UserStatus.APPROVED) or u.id in totals
+    ]
     rows.sort(key=lambda r: (-r[1], r[0].name))
     return rows
 
@@ -620,3 +638,47 @@ async def cancel_penalty(session: AsyncSession, penalty_id: int) -> Penalty | No
     penalty.status = PenaltyStatus.CANCELLED
     await session.flush()
     return penalty
+
+
+# ---------------------------------------------------------------- управление игроками (админ)
+
+
+async def players_for_admin(session: AsyncSession) -> list[User]:
+    """Все, кто заходил в бота: сначала ждущие подтверждения, потом команда, потом заблокированные."""
+    order = {UserStatus.PENDING: 0, UserStatus.APPROVED: 1, UserStatus.BLOCKED: 2}
+    users = [u for u in await all_users(session) if u.profile_completed or u.status == UserStatus.PENDING]
+    return sorted(users, key=lambda u: (order.get(u.status, 3), u.name.lower()))
+
+
+async def _leave_upcoming_games(session: AsyncSession, user: User, now: datetime) -> list[tuple[Game, list[Reassignment]]]:
+    """Снять игрока со всех будущих игр (его обязанности перейдут другим)."""
+    result = []
+    for game in await upcoming_games(session, now, grace_hours=0):
+        if await get_rsvp(session, game.id, user.id) == Rsvp.YES:
+            r = await set_rsvp(session, game, user, Rsvp.NO)
+            result.append((game, r.reassigned))
+    return result
+
+
+async def set_user_status(
+    session: AsyncSession, user: User, status: str, now: datetime
+) -> list[tuple[Game, list[Reassignment]]]:
+    user.status = status
+    await session.flush()
+    if status == UserStatus.BLOCKED:
+        return await _leave_upcoming_games(session, user, now)
+    return []
+
+
+async def set_car(
+    session: AsyncSession, user: User, has_car: bool, now: datetime, by_admin: bool
+) -> list[tuple[Game, list[Reassignment]]]:
+    """Изменить наличие машины. Если машины больше нет — «машинные» обязанности уходят другим."""
+    had_car = user.has_car
+    user.has_car = has_car
+    if by_admin:
+        user.car_locked = True
+    await session.flush()
+    if had_car and not has_car:
+        return await drop_car_duties(session, user, now)
+    return []

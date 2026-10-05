@@ -75,6 +75,8 @@ def _add_missing_columns(conn) -> None:
             default = column.server_default.arg if column.server_default is not None else None
             if default is not None and isinstance(column.type, Boolean):
                 default = ("TRUE" if default == "1" else "FALSE") if conn.dialect.name == "postgresql" else default
+            elif isinstance(default, str):
+                default = "'" + default.replace("'", "''") + "'"
             sql = f'ALTER TABLE {table.name} ADD COLUMN "{column.name}" {ddl}'
             if default is not None:
                 sql += f" DEFAULT {default}"

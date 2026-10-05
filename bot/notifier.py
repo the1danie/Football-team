@@ -34,6 +34,15 @@ async def send_dm(bot: Bot, user: User, text: str, reply_markup: InlineKeyboardM
         return False
 
 
+async def send_raw(bot: Bot, chat_id: int, text: str, reply_markup=None) -> bool:
+    try:
+        await bot.send_message(chat_id, text, reply_markup=reply_markup)
+        return True
+    except (TelegramForbiddenError, TelegramBadRequest) as e:
+        log.info("Send to %s failed: %s", chat_id, e)
+        return False
+
+
 async def notify_admins(bot: Bot, text: str) -> None:
     for admin_id in config.admin_ids:
         try:

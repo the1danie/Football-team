@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
@@ -14,7 +14,8 @@ from bot import actions, keyboards, notifier, texts, whatsapp
 from bot.config import config
 from bot.deadlines import distribute_at, penalties_enabled, rsvp_deadline
 from bot.middlewares import IsAdmin
-from bot.models import Duty, Game, GameStatus, Rsvp, User
+from bot.models import Duty, Game, GameStatus, Rsvp, User, UserStatus
+from bot.players import player_card, players_list
 from bot.services import games as svc
 
 router = Router()
@@ -59,14 +60,15 @@ def parse_date(raw: str, today: date) -> date | None:
         return None
 
 
-def parse_time(raw: str) -> time | None:
+def parse_time(raw: str) -> int | None:
+    """Время в минутах от начала дня; «24:00» — полночь в конце дня (1440)."""
     m = re.fullmatch(r"\s*(\d{1,2})[:.\s]?(\d{2})\s*", raw)
     if not m:
         return None
-    try:
-        return time(int(m[1]), int(m[2]))
-    except ValueError:
+    hours, minutes = int(m[1]), int(m[2])
+    if minutes > 59 or hours > 24 or (hours == 24 and minutes):
         return None
+    return hours * 60 + minutes
 
 
 async def _ask_time(message: Message, state: FSMContext, d: date) -> None:
@@ -94,9 +96,9 @@ async def new_game_date_text(message: Message, state: FSMContext):
     await _ask_time(message, state, d)
 
 
-async def _ask_kind(message: Message, state: FSMContext, t: time) -> None:
+async def _ask_kind(message: Message, state: FSMContext, minutes: int) -> None:
     data = await state.get_data()
-    starts_at = datetime.combine(date.fromisoformat(data["date"]), t)
+    starts_at = datetime.combine(date.fromisoformat(data["date"]), time()) + timedelta(minutes=minutes)
     if starts_at <= config.now():
         await message.answer("Это время уже прошло. Укажите время в будущем.")
         return
@@ -108,8 +110,7 @@ async def _ask_kind(message: Message, state: FSMContext, t: time) -> None:
 @router.callback_query(NewGame.time, F.data.startswith("newtime:"))
 async def new_game_time_cb(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    raw = cb.data.split(":", 1)[1]
-    await _ask_kind(cb.message, state, time(int(raw[:2]), int(raw[2:])))
+    await _ask_kind(cb.message, state, int(cb.data.split(":", 1)[1]))
 
 
 @router.message(NewGame.time, F.text)
@@ -394,38 +395,98 @@ async def toggle_duty(message: Message, command: CommandObject, session: AsyncSe
 # ----------------------------------------------------------------- состав и минусы
 
 
-async def roster_view(session: AsyncSession):
-    users = [u for u in await svc.all_users(session) if u.profile_completed]
-    points = await svc.open_penalty_points(session)
-    lines = [
-        "<b>🗂 Состав команды</b>", "",
-        "✅ — в составе: получает опросы и минусы за молчание.",
-        "🚫 — временно не в составе (травма, уехал): опросы не приходят, минусов нет.",
-        "Нажмите на игрока, чтобы переключить.",
-    ]
-    b = InlineKeyboardBuilder()
-    for u in users:
-        minus = f" · ⚠️{points[u.id]}" if points.get(u.id) else ""
-        b.button(text=f"{'✅' if u.is_active else '🚫'} {u.name}{minus}", callback_data=f"roster:{u.id}")
-    b.adjust(2)
-    return "\n".join(lines), b.as_markup()
+class AdminStates(StatesGroup):
+    rename = State()
 
 
 @router.message(Command("players"))
-async def players(message: Message, session: AsyncSession):
-    text, markup = await roster_view(session)
+@router.message(F.text == texts.BTN_PLAYERS)
+async def players(message: Message, session: AsyncSession, state: FSMContext):
+    await state.clear()
+    text, markup = await players_list(session)
     await message.answer(text, reply_markup=markup)
 
 
-@router.callback_query(F.data.startswith("roster:"))
-async def roster_toggle(cb: CallbackQuery, session: AsyncSession):
-    user = await session.get(User, int(cb.data.split(":")[1]))
-    if user is not None:
+async def _announce_moves(bot: Bot, session: AsyncSession, moves) -> None:
+    for game, reassigned in moves:
+        await notifier.refresh_game(bot, session, game)
+        await notifier.announce_reassignments(bot, game, reassigned)
+
+
+@router.callback_query(F.data.startswith("pl:"))
+async def player_action(cb: CallbackQuery, session: AsyncSession, bot: Bot, state: FSMContext):
+    _, action, raw_id = cb.data.split(":")
+    if action == "list":
+        text, markup = await players_list(session)
+        await cb.message.edit_text(text, reply_markup=markup)
+        await cb.answer()
+        return
+    user = await session.get(User, int(raw_id))
+    if user is None:
+        await cb.answer("Игрок не найден.", show_alert=True)
+        return
+    now = config.now()
+    note = None
+
+    if action == "approve":
+        was = user.status
+        await svc.set_user_status(session, user, UserStatus.APPROVED, now)
+        user.is_active = True
+        note = f"✅ {user.name} в команде"
+        if was != UserStatus.APPROVED:
+            await notifier.send_dm(
+                bot, user, "✅ Администратор добавил тебя в команду! Теперь можно отмечаться на игры.",
+                keyboards.main_menu(False),
+            )
+            for game in await svc.upcoming_games(session, now):
+                if game.status in GameStatus.ACTIVE:
+                    text, markup = await actions.game_card(session, game, user, False)
+                    await notifier.send_dm(bot, user, text, markup)
+    elif action == "block":
+        was = user.status
+        await _announce_moves(bot, session, await svc.set_user_status(session, user, UserStatus.BLOCKED, now))
+        note = f"⛔ {user.name} заблокирован"
+        if was == UserStatus.PENDING:
+            await notifier.send_dm(bot, user, "Заявка отклонена администратором.")
+    elif action == "car":
+        await _announce_moves(bot, session, await svc.set_car(session, user, not user.has_car, now, by_admin=True))
+        note = f"{user.name}: {'есть машина' if user.has_car else 'нет машины'} (закреплено)"
+        await notifier.send_dm(
+            bot, user,
+            f"Администратор отметил в профиле: {texts.CAR_YES if user.has_car else texts.CAR_NO}.",
+        )
+    elif action == "unlock":
+        user.car_locked = False
+        note = "Игрок снова может сам менять машину"
+    elif action == "active":
         user.is_active = not user.is_active
-        await session.flush()
-    text, markup = await roster_view(session)
+        note = f"{user.name}: {'в составе' if user.is_active else 'временно не в составе'}"
+    elif action == "name":
+        await state.set_state(AdminStates.rename)
+        await state.update_data(rename_user_id=user.id)
+        await cb.message.answer(f"Новое имя для «{texts.h(user.name)}»:")
+        await cb.answer()
+        return
+
+    await session.flush()
+    text, markup = await player_card(session, user)
     await cb.message.edit_text(text, reply_markup=markup)
-    await cb.answer(f"{user.name}: {'в составе' if user.is_active else 'не в составе'}" if user else None)
+    await cb.answer(note)
+
+
+@router.message(AdminStates.rename, F.text)
+async def player_rename(message: Message, session: AsyncSession, state: FSMContext):
+    name = message.text.strip()
+    if name.startswith("/") or not (1 <= len(name) <= 64):
+        await message.answer("Напишите имя текстом (до 64 символов).")
+        return
+    user = await session.get(User, (await state.get_data()).get("rename_user_id", 0))
+    await state.clear()
+    if user is None:
+        return
+    user.name = name
+    text, markup = await player_card(session, user)
+    await message.answer(text + "\n\n✅ Имя изменено.", reply_markup=markup)
 
 
 async def penalties_view(session: AsyncSession):

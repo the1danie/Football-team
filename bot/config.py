@@ -39,6 +39,8 @@ class Config:
     personal_reminder_hours: float = field(default_factory=lambda: _float("PERSONAL_REMINDER_HOURS", 3))
     # Напоминание в общий чат.
     group_reminder_hours: float = field(default_factory=lambda: _float("GROUP_REMINDER_HOURS", 2))
+    # Новые игроки попадают в команду только после подтверждения админом (0 — сразу).
+    require_approval: bool = field(default_factory=lambda: os.getenv("REQUIRE_APPROVAL", "1") not in ("0", "false"))
     # --- Опросы и минусы
     # Напомнить не ответившим за столько часов до закрытия сбора (= распределения обязанностей).
     rsvp_reminder_hours: float = field(default_factory=lambda: _float("RSVP_REMINDER_HOURS", 3))

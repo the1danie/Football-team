@@ -25,6 +25,7 @@ BTN_EDIT = "✏️ Изменить назначение"
 BTN_CANCEL = "❌ Отменить игру"
 BTN_STATS = "📊 Статистика"
 BTN_PROFILE = "👤 Мой профиль"
+BTN_PLAYERS = "🗂 Игроки"
 BTN_SWAP = "🔄 Поменяться"
 
 CAR_YES = "🚗 Есть машина"
@@ -168,6 +169,8 @@ def group_reminder(game: Game, now: datetime, assignments: list[Assignment]) -> 
 def profile_text(user: User, minuses: int = 0) -> str:
     car = CAR_YES if user.has_car else CAR_NO
     text = f"<b>👤 Мой профиль</b>\n\nИмя: {h(user.name)}\nМашина: {car}"
+    if getattr(user, "car_locked", False):
+        text += " <i>(отметил администратор)</i>"
     if minuses:
         text += (
             f"\n\n⚠️ Минусы: {minuses} — за неответы на опросы. Пока они есть, обязанности "

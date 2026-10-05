@@ -122,10 +122,14 @@ class Harness:
         }
         await self.dp.feed_update(self.bot, Update.model_validate(upd, context={"bot": self.bot}))
 
-    async def register(self, uid, name, car):
+    async def register(self, uid, name, car, approve=True):
         self.names[uid] = name  # имя бот берёт из профиля Telegram
         await self.text(uid, "/start")
         await self.click(uid, f"car:{1 if car else 0}")
+        if approve and uid != ADMIN:  # админ принимает заявку
+            async with self.sm() as s:
+                user = await svc.get_user_by_tg(s, uid)
+            await self.click(ADMIN, f"pl:approve:{user.id}")
 
 
 def buttons(markup):
@@ -181,15 +185,15 @@ async def test_full_flow(h: Harness):
     assert [b.text for b in buttons(announce.reply_markup)] == ["✅ Буду", "❌ Не буду", "🤔 Пока не знаю"]
     game_id = int(buttons(announce.reply_markup)[0].callback_data.split(":")[1])
 
-    # --- отметки в группе (6 — незнакомый игрок, профиль создаётся автоматически)
+    # --- отметки в группе (6 — посторонний: не зарегистрирован и не подтверждён — не пускаем)
     fake.reset()
     for uid in (ADMIN, 2, 3, 4, 5):
         await h.click(uid, f"rsvp:{game_id}:yes", chat_id=GROUP)
     await h.click(6, f"rsvp:{game_id}:maybe", chat_id=GROUP)
-    assert "Заполни профиль" in fake.alerts()[-1].text
+    assert "нажми /start" in fake.alerts()[-1].text
     last_edit = fake.edits(GROUP)[-1]
     assert "Подтвердили: 5 человек" in last_edit.text
-    assert "🤔 Пока не знаю (1): U6" in last_edit.text
+    assert "🤔 Пока не знаю (0)" in last_edit.text
 
     # повторное нажатие
     await h.click(2, f"rsvp:{game_id}:yes", chat_id=GROUP)
@@ -390,8 +394,9 @@ async def test_poll_nudge_and_penalties(h: Harness, monkeypatch):
         timur = await svc.get_user_by_tg(s, 3)
         ruslan = await svc.get_user_by_tg(s, 4)
     await h.text(ADMIN, "/players")
-    assert "Состав команды" in fake.sent(ADMIN)[-1].text
-    await h.click(ADMIN, f"roster:{timur.id}")
+    assert "Игроки" in fake.sent(ADMIN)[-1].text
+    await h.click(ADMIN, f"pl:active:{timur.id}")
+    await h.click(ADMIN, "pl:list:0")
     assert "🚫 Тимур" in [b.text for b in buttons(fake.last_markup(ADMIN))]
 
     # --- публикация: опрос приходит в личку всем из состава, кроме автора
@@ -399,7 +404,7 @@ async def test_poll_nudge_and_penalties(h: Harness, monkeypatch):
     await h.text(ADMIN, texts.BTN_CREATE)
     tomorrow = config.now() + timedelta(days=1)
     await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
-    await h.click(ADMIN, "newtime:2000")
+    await h.click(ADMIN, "newtime:1200")
     await h.click(ADMIN, "newkind:game")
     await h.click(ADMIN, "newloc:skip")
     await h.click(ADMIN, "newgame:publish")
@@ -492,6 +497,8 @@ async def test_name_from_telegram(h: Harness):
     await h.text(3, "/start")
     assert "Привет, Арман Сейткали" in h.fake.sent(3)[-1].text
     await h.click(3, "car:0")
+    async with h.sm() as s:
+        await h.click(ADMIN, f"pl:approve:{(await svc.get_user_by_tg(s, 3)).id}")
     # имя можно поменять в профиле
     await h.click(3, "prof:name")
     await h.text(3, "Арман С.")
@@ -520,7 +527,7 @@ async def test_whatsapp_team_without_telegram_group(h: Harness):
     await h.text(ADMIN, texts.BTN_CREATE)
     tomorrow = config.now() + timedelta(days=1)
     await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
-    await h.click(ADMIN, "newtime:2000")
+    await h.click(ADMIN, "newtime:1200")
     await h.click(ADMIN, "newkind:game")
     await h.text(ADMIN, "Стадион Динамо")
     await h.click(ADMIN, "newgame:publish")
@@ -535,12 +542,15 @@ async def test_whatsapp_team_without_telegram_group(h: Harness):
     assert link == f"https://t.me/duty_bot?start=game_{game_id}"
     assert any(m.chat_id == 2 and "Открыт сбор" in m.text for m in fake.sent())  # опрос в личку
 
-    # --- новый игрок пришёл по ссылке из WhatsApp: регистрация и сразу опрос
+    # --- новый игрок пришёл по ссылке из WhatsApp: регистрация → админ принимает → сразу опрос
     fake.reset()
     h.names[5] = "Максим"
     await h.text(5, f"/start game_{game_id}")
     assert "Есть ли у тебя машина" in fake.sent(5)[-1].text
     await h.click(5, "car:0")
+    assert "Заявка отправлена" in fake.edits(5)[-1].text
+    async with h.sm() as s:
+        await h.click(ADMIN, f"pl:approve:{(await svc.get_user_by_tg(s, 5)).id}")
     card = fake.sent(5)[-1]
     assert "Игра —" in card.text and "Твой статус: не отмечен" in card.text
     assert [b.text for b in buttons(card.reply_markup)][:3] == ["✅ Буду", "❌ Не буду", "🤔 Пока не знаю"]
@@ -617,3 +627,132 @@ async def test_whatsapp_draft_falls_back_to_plain_text(monkeypatch):
     bot = Bot("42:TEST", session=session)
     await whatsapp.send_draft(bot, "Текст", chat_ids=[1])
     assert [m.text for m in session.sent(1)] == ["Текст"]
+
+
+
+def test_time_choice_and_parsing():
+    from bot.handlers.admin import parse_time
+    from bot.keyboards import time_choice
+
+    labels = [b.text for row in time_choice().inline_keyboard for b in row]
+    assert labels[0] == "13:00" and labels[1] == "13:30" and labels[-2] == "23:30" and labels[-1] == "24:00"
+    assert len(labels) == 23
+    assert parse_time("20:30") == 20 * 60 + 30
+    assert parse_time("24:00") == 24 * 60
+    assert parse_time("24:30") is None and parse_time("19:75") is None
+
+
+
+async def test_new_players_need_admin_approval(h: Harness):
+    fake = h.fake
+    await h.register(ADMIN, "Даниял", car=True)
+
+    # --- незнакомец регистрируется: заявка админу, доступа пока нет
+    fake.reset()
+    h.names[7] = "Незнакомец"
+    await h.text(7, "/start")
+    await h.click(7, "car:0")
+    assert "Заявка отправлена администратору" in fake.edits(7)[-1].text
+    request = next(m for m in fake.sent(ADMIN) if "Новый игрок" in m.text)
+    assert "Незнакомец" in request.text
+    labels = [b.text for b in buttons(request.reply_markup)]
+    assert "✅ Принять в команду" in labels and "⛔ Отклонить" in labels
+
+    await h.text(7, texts.BTN_STATS)
+    assert "Заявка у администратора" in fake.sent(7)[-1].text
+    async with h.sm() as s:
+        game = await svc.create_game(s, "game", config.now() + timedelta(days=1), None, None)
+        await s.commit()
+        game_id = game.id
+        stranger = await svc.get_user_by_tg(s, 7)
+    await h.click(7, f"rsvp:{game_id}:yes")
+    assert "Заявка у администратора" in fake.alerts()[-1].text
+    async with h.sm() as s:
+        assert await svc.get_rsvp(s, game_id, stranger.id) is None
+        assert stranger.id not in {u.id for u in await svc.roster(s)}
+
+    # --- незарегистрированный вообще
+    await h.click(8, f"rsvp:{game_id}:yes", chat_id=GROUP)
+    assert "нажми /start" in fake.alerts()[-1].text
+
+    # --- админ отклоняет: доступ закрыт
+    fake.reset()
+    await h.click(ADMIN, f"pl:block:{stranger.id}")
+    assert "Заявка отклонена" in fake.sent(7)[-1].text
+    await h.text(7, "/start")
+    assert "Доступ к боту закрыт" in fake.sent(7)[-1].text
+
+    # --- передумал и принял: игроку приходит приветствие и открытая игра
+    fake.reset()
+    await h.click(ADMIN, f"pl:approve:{stranger.id}")
+    assert any("добавил тебя в команду" in m.text for m in fake.sent(7))
+    assert any("Игра —" in m.text and m.reply_markup for m in fake.sent(7))
+    await h.click(7, f"rsvp:{game_id}:yes")
+    async with h.sm() as s:
+        assert await svc.get_rsvp(s, game_id, stranger.id) == "yes"
+
+
+async def test_admin_controls_car(h: Harness):
+    fake = h.fake
+    await h.register(ADMIN, "Даниял", car=False)
+    await h.register(2, "Арман", car=False)  # «забыл» указать машину
+    async with h.sm() as s:
+        arman = await svc.get_user_by_tg(s, 2)
+
+    # игрок сам меняет машину — админ получает уведомление
+    fake.reset()
+    await h.click(2, "pcar:1")
+    assert any("Арман изменил в профиле" in m.text for m in fake.sent(ADMIN))
+    await h.click(2, "pcar:0")
+
+    # админ ставит машину — закреплено, игрок изменить не может
+    fake.reset()
+    await h.text(ADMIN, texts.BTN_PLAYERS)
+    assert any(b.callback_data == f"pl:show:{arman.id}" for b in buttons(fake.sent(ADMIN)[-1].reply_markup))
+    await h.click(ADMIN, f"pl:show:{arman.id}")
+    await h.click(ADMIN, f"pl:car:{arman.id}")
+    assert "закреплено админом" in fake.edits(ADMIN)[-1].text
+    assert "есть машина" in fake.sent(2)[-1].text.lower()
+    await h.click(2, "prof:car")
+    assert "изменить может только он" in fake.alerts()[-1].text
+    await h.click(2, "pcar:0")
+    assert "изменить может только он" in fake.alerts()[-1].text
+    async with h.sm() as s:
+        assert (await svc.get_user_by_tg(s, 2)).has_car is True
+
+    # при повторной регистрации машина тоже не меняется
+    await h.text(2, "/start")
+
+    # разблокировать и переименовать
+    await h.click(ADMIN, f"pl:unlock:{arman.id}")
+    await h.click(ADMIN, f"pl:name:{arman.id}")
+    await h.text(ADMIN, "Арман К.")
+    async with h.sm() as s:
+        u = await svc.get_user_by_tg(s, 2)
+        assert u.name == "Арман К." and u.car_locked is False
+
+    # временно убрать из состава и вернуть
+    await h.click(ADMIN, f"pl:active:{arman.id}")
+    async with h.sm() as s:
+        assert arman.id not in {u.id for u in await svc.roster(s)}
+    await h.click(ADMIN, f"pl:active:{arman.id}")
+    async with h.sm() as s:
+        assert arman.id in {u.id for u in await svc.roster(s)}
+
+
+async def test_blocking_player_frees_duties(h: Harness):
+    await h.register(ADMIN, "Даниял", car=True)
+    await h.register(2, "Арман", car=True)
+    async with h.sm() as s:
+        game = await svc.create_game(s, "game", config.now() + timedelta(days=1), None, None)
+        for tg in (ADMIN, 2):
+            await svc.set_rsvp(s, game, await svc.get_user_by_tg(s, tg), "yes")
+        await svc.distribute_game(s, game)
+        await s.commit()
+        game_id, arman = game.id, await svc.get_user_by_tg(s, 2)
+    await h.click(ADMIN, f"pl:block:{arman.id}")
+    async with h.sm() as s:
+        assert await svc.get_rsvp(s, game_id, arman.id) == "no"
+        assert {a.user_id for a in await svc.active_assignments(s, game_id)} == {
+            (await svc.get_user_by_tg(s, ADMIN)).id
+        }

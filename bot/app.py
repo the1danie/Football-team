@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from bot.config import config
 from bot.fsm_storage import SqlStorage
 from bot.handlers import build_router
-from bot.middlewares import DbSessionMiddleware
+from bot.middlewares import AccessMiddleware, DbSessionMiddleware
 
 COMMANDS = [
     BotCommand(command="menu", description="Главное меню"),
@@ -34,6 +34,8 @@ def make_dispatcher(sessionmaker: async_sessionmaker[AsyncSession]) -> Dispatche
     _router._parent_router = None
     dp = Dispatcher(storage=SqlStorage(sessionmaker))
     dp.update.outer_middleware(DbSessionMiddleware(sessionmaker))
+    dp.message.outer_middleware(AccessMiddleware())
+    dp.callback_query.outer_middleware(AccessMiddleware())
     dp.include_router(_router)
     return dp
 
