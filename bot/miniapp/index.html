@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>Футбол — команда</title>
+<meta name="referrer" content="no-referrer">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#f1f2f6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
@@ -23,6 +28,11 @@
     --no-soft: color-mix(in srgb, var(--no) 14%, transparent);
     --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
     --radius: 16px;
+  }
+  /* Браузер (не Telegram): тёмная тема по настройкам устройства */
+  @media (prefers-color-scheme: dark) {
+    html:not(.tg) { --bg: #0f1115; --card: #1a1d23; --text: #e8eaed; --hint: #8b93a1; --link: #5aa9ff;
+      --accent: #3b82f6; --accent-text: #ffffff; --danger: #ff6b6b; }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden; max-width: 100%;
@@ -173,7 +183,23 @@
 <script>
 "use strict";
 const tg = window.Telegram && window.Telegram.WebApp;
-if (tg) { tg.ready(); tg.expand(); }
+const inTg = !!(tg && tg.initData);
+if (inTg) { document.documentElement.classList.add("tg"); tg.ready(); tg.expand(); }
+// Браузер: вход по личной ссылке из бота (?key=…). Запоминаем и убираем ключ из адреса.
+const WEB_KEY = "fb_web_key";
+let webKey = null;
+if (!inTg) {
+  const q = new URLSearchParams(location.search);
+  if (q.get("key")) {
+    try { localStorage.setItem(WEB_KEY, q.get("key")); } catch (e) {}
+    webKey = q.get("key");
+    q.delete("key");
+    history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : ""));
+  } else {
+    try { webKey = localStorage.getItem(WEB_KEY); } catch (e) {}
+  }
+}
+function webLogoutLocal() { try { localStorage.removeItem(WEB_KEY); } catch (e) {} location.reload(); }
 
 const S = { data: null, tab: "games", stats: null, players: null, playerFilter: null, sheet: null, open: {} };
 const RSVP = { yes: ["✅", "Буду"], maybe: ["🤔", "Не знаю"], no: ["❌", "Не буду"] };
@@ -227,11 +253,17 @@ async function api(action, body = {}, { quiet } = {}) {
   try {
     const res = await fetch("/api/miniapp", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": (tg && tg.initData) || "" },
+      headers: inTg
+        ? { "Content-Type": "application/json", "X-Telegram-Init-Data": tg.initData }
+        : { "Content-Type": "application/json", "X-Web-Token": webKey || "" },
       body: JSON.stringify({ action, ...body }),
     });
     const json = await res.json().catch(() => ({ ok: false, error: "Сервер не ответил" }));
-    if (!json.ok) { if (!quiet) { haptic("err"); toast(json.error || "Ошибка"); } return null; }
+    if (!json.ok) {
+      if (res.status === 401 && !inTg) { try { localStorage.removeItem(WEB_KEY); } catch (e) {} webKey = null; S.authError = json.error; }
+      if (!quiet) { haptic("err"); toast(json.error || "Ошибка"); }
+      return null;
+    }
     if (json.state) S.data = json.state;
     if (json.note) toast(json.note);
     return json;
@@ -481,6 +513,14 @@ function profileTab() {
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
       h("div", { class: "small muted", style: "margin-top:4px" }, "За неответ на опрос или неявку после «Буду». Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
     S.data.is_admin ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: openDuties }, "⚙️ Обязанности: что, когда, нужна ли машина") : null,
+    S.data.web
+      ? h("div", { class: "btns", style: "margin:0 0 12px" },
+          h("button", { class: "btn secondary", onclick: webLogoutLocal }, "Выйти"),
+          h("button", { class: "btn danger", onclick: async () => {
+            if (await confirmBox("Отключить все личные ссылки (на всех устройствах)? Новую можно получить в боте: /web.")) {
+              const r = await api("web_logout"); if (r) webLogoutLocal(); } } }, "Выйти везде"))
+      : h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
+          const r = await api("web_link"); if (r) openSheet({ type: "weblink", url: r.url }); } }, "🌐 Открыть в браузере"),
     h("h2", {}, "Как это работает"),
     h("div", { class: "card" }, h("ul", { class: "rules" },
       h("li", {}, "Когда админ создаёт игру, бот присылает опрос. Отметься: Буду / Не знаю / Не буду."),
@@ -507,6 +547,16 @@ function afterLabel(m) {
   if (m % 60 === 0) return `${m / 60} ${plural(m / 60, "час", "часа", "часов")}`;
   return `${m} мин`;
 }
+function webLinkSheet() {
+  const url = S.sheet.url;
+  return h("div", {}, h("h3", {}, "🌐 Открыть в браузере"),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Личная ссылка: по ней входят от твоего имени в Chrome или Safari — без Telegram. Не пересылай её."),
+    h("div", { class: "card small", style: "word-break:break-all" }, url),
+    h("button", { class: "btn", onclick: () => openLink(url) }, "Открыть в браузере"),
+    h("button", { class: "btn secondary", style: "margin-top:8px", onclick: async () => {
+      try { await navigator.clipboard.writeText(url); toast("Скопировано"); } catch (e) { toast("Не удалось скопировать"); } } }, "Скопировать ссылку"));
+}
+
 function attendanceSheet() {
   const g = S.data.games.find((x) => x.id === S.sheet.game.id) || S.sheet.game;
   const mark = async (u, present) => {
@@ -603,7 +653,7 @@ function renderSheet() {
   if (!S.sheet) return;
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
-    scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet }[S.sheet.type]();
+    scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet }[S.sheet.type]();
   const bg = h("div", { class: "sheet-bg", onclick: (e) => { if (e.target === bg) closeSheet(); } },
     h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content));
   document.body.append(bg);
@@ -785,12 +835,14 @@ function renameSheet() {
 
 // ---------------------------------------------------------------- старт
 (async function start() {
-  if (!tg || !tg.initData) {
-    document.getElementById("app").replaceChildren(info("📱", "Откройте из Telegram", "Это приложение команды открывается кнопкой «Открыть» в чате с ботом."));
+  const loginHelp = () => info("⚽", "Вход по личной ссылке",
+    (S.authError ? S.authError + " " : "") + "Откройте чат с ботом команды в Telegram и отправьте /web — бот пришлёт личную ссылку. Откройте её в этом браузере, и он запомнит вход.");
+  if (!inTg && !webKey) { document.getElementById("app").replaceChildren(loginHelp()); return; }
+  const r = await api("state", {}, { quiet: !inTg });
+  if (!r) {
+    document.getElementById("app").replaceChildren(!inTg && !webKey ? loginHelp() : info("😕", "Не получилось загрузить", "Проверьте интернет и откройте ещё раз."));
     return;
   }
-  const r = await api("state");
-  if (!r) { document.getElementById("app").replaceChildren(info("😕", "Не получилось загрузить", "Закройте и откройте приложение ещё раз.")); return; }
   render();
   if (startGame) { const el = document.getElementById("game-" + startGame); if (el) { S.open[startGame] = true; render(); document.getElementById("game-" + startGame).scrollIntoView({ block: "start" }); } }
 })();

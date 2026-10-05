@@ -316,8 +316,10 @@ async def handle_miniapp_api(request: Request) -> tuple[int, Any]:
     if request.method != "POST":
         return 405, {"ok": False, "error": "POST only"}
     tg = verify_init_data(request.headers.get("x-telegram-init-data", ""), config.bot_token)
+    if tg is None:  # браузер: вход по личной ссылке из бота
+        tg = miniapp_api.verify_web_token(request.headers.get("x-web-token", ""), config.bot_token)
     if tg is None:
-        return 401, {"ok": False, "error": "Откройте приложение из Telegram."}
+        return 401, {"ok": False, "error": "Откройте приложение из Telegram или по личной ссылке из бота (/web)."}
     try:
         body = json.loads(request.body or b"{}")
     except ValueError:

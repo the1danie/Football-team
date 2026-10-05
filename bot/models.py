@@ -74,6 +74,8 @@ class User(Base):
     # Права админа, выданные главным админом в боте (главные — в ADMIN_IDS).
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Версия личных веб-ссылок: увеличение делает все выданные ссылки недействительными.
+    web_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     @property

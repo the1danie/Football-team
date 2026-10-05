@@ -28,7 +28,8 @@ HELP = (
     "• Передумал идти — нажми «❌ Не буду», обязанность перейдёт другому.\n"
     "• Не ответил на опрос до закрытия сбора — минус. Пока есть минусы, обязанности достаются "
     "тебе первым; каждая выполненная обязанность списывает один минус.\n\n"
-    "Команды: /menu, /profile, /stats, /help"
+    "Нет Telegram-приложения под рукой или оно не открывается? /web — личная ссылка для браузера.\n\n"
+    "Команды: /menu, /profile, /stats, /web, /help"
 )
 ADMIN_HELP = (
     "\n\n<b>Администратору</b>\n"
@@ -253,3 +254,42 @@ async def current_game(message: Message, session: AsyncSession, state: FSMContex
 async def noop(cb: CallbackQuery):
     await cb.message.edit_reply_markup(reply_markup=None)
     await cb.answer("Ок")
+
+
+# ----------------------------------------------------------------- веб-версия
+
+
+async def send_web_link(message: Message, session: AsyncSession, user: User) -> None:
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from bot.miniapp_api import web_link
+
+    link = web_link(user)
+    if link is None:
+        await message.answer("Веб-версия доступна, когда бот работает на Vercel (нужен публичный адрес).")
+        return
+    await message.answer(
+        "🌐 <b>Твоя личная ссылка для браузера</b> (Chrome, Safari — без Telegram):\n\n"
+        f"<code>{texts.h(link)}</code>\n\n"
+        "Открой её — и ты в приложении команды: игры, «Буду / Не буду», обязанности, статистика. "
+        "Браузер запомнит вход; можно добавить на главный экран.\n\n"
+        "⚠️ Не пересылай ссылку: по ней входят от твоего имени. Если она попала не тому — "
+        "в приложении: Профиль → «Выйти на всех устройствах».",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🌐 Открыть", url=link)]]),
+    )
+
+
+@router.message(Command("web"))
+async def web_cmd(message: Message, session: AsyncSession, state: FSMContext):
+    await state.clear()
+    user = await require_profile(message, session, state)
+    if user is not None:
+        await send_web_link(message, session, user)
+
+
+@router.callback_query(F.data == "prof:web")
+async def web_from_profile(cb: CallbackQuery, session: AsyncSession):
+    await cb.answer()
+    user = await svc.get_user_by_tg(session, cb.from_user.id)
+    if user is not None:
+        await send_web_link(cb.message, session, user)

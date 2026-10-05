@@ -58,6 +58,41 @@ def sign_init_data(user: dict, bot_token: str, auth_date: int | None = None) -> 
     return urlencode(fields)
 
 
+# ----------------------------------------------------------------- веб-версия (вход по личной ссылке)
+
+WEB_TOKEN_DAYS = 180
+
+
+def _web_key(bot_token: str) -> bytes:
+    return hashlib.sha256(f"web-link:{bot_token}".encode()).digest()
+
+
+def make_web_token(telegram_id: int, version: int, bot_token: str, days: int = WEB_TOKEN_DAYS) -> str:
+    exp = int(time.time()) + days * 24 * 3600
+    payload = f"{telegram_id}.{version}.{exp}"
+    sig = hmac.new(_web_key(bot_token), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{payload}.{sig}"
+
+
+def verify_web_token(token: str, bot_token: str) -> dict | None:
+    """Личная ссылка для браузера. Возвращает {"id", "web_version"} или None."""
+    try:
+        tg_id, version, exp, sig = (token or "").split(".")
+        payload = f"{tg_id}.{version}.{exp}"
+        expected = hmac.new(_web_key(bot_token), payload.encode(), hashlib.sha256).hexdigest()[:32]
+        if not bot_token or not hmac.compare_digest(expected, sig) or int(exp) < time.time():
+            return None
+        return {"id": int(tg_id), "web_version": int(version)}
+    except ValueError:
+        return None
+
+
+def web_link(user: User) -> str | None:
+    if not config.public_url:
+        return None
+    return f"{config.public_url}/app?key={make_web_token(user.telegram_id, user.web_version or 0, config.bot_token)}"
+
+
 # ----------------------------------------------------------------- представления
 
 
@@ -137,6 +172,7 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         "games": [],
         "penalty_points": config.penalty_points,
         "after_minutes": int(config.after_duties_minutes),
+        "web": "web_version" in tg,
     }
     if user is None or not user.profile_completed:
         data["access"] = "new"
@@ -259,6 +295,11 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
     await svc.refresh_admins(session)
     is_admin = config.is_admin(tg_id)
     user = await svc.get_user_by_tg(session, tg_id)
+    if "web_version" in tg:  # вход по личной ссылке из браузера
+        if user is None or (user.web_version or 0) != tg["web_version"]:
+            raise ApiError("Ссылка устарела. Попросите новую в боте командой /web.", 401)
+        if action == "register":
+            raise ApiError("Регистрация — через бота в Telegram (/start).", 403)
     if user is not None:
         user.username = tg.get("username") or user.username
         if is_admin and user.status != UserStatus.APPROVED:
@@ -313,6 +354,14 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 bot, session, user, int(body.get("assignment_id", 0)), int(body.get("user_id", 0))
             )
             note = f"Предложение отправлено: {target.name}. Ответ придёт в чат с ботом."
+        elif action == "web_link":
+            link = web_link(user)
+            if link is None:
+                raise ApiError("Веб-версия доступна, когда бот работает на Vercel.")
+            return {"url": link}
+        elif action == "web_logout":
+            user.web_version = (user.web_version or 0) + 1
+            note = "Все личные ссылки отключены. Новую можно получить в боте: /web."
         elif action == "stats":
             return await stats_view(session)
         elif action == "player_stats":

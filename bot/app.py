@@ -16,6 +16,7 @@ COMMANDS = [
     BotCommand(command="game", description="Текущая игра"),
     BotCommand(command="profile", description="Мой профиль"),
     BotCommand(command="stats", description="Статистика"),
+    BotCommand(command="web", description="Открыть в браузере (личная ссылка)"),
     BotCommand(command="help", description="Помощь"),
 ]
 
