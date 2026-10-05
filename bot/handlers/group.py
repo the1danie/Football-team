@@ -3,10 +3,10 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, notifier, texts
+from bot import actions, notifier, operations, texts
 from bot.config import config
 from bot.middlewares import IsAdmin
-from bot.models import GameStatus, Rsvp
+from bot.models import Rsvp
 from bot.services import games as svc
 
 router = Router()
@@ -30,25 +30,22 @@ async def on_rsvp(cb: CallbackQuery, session: AsyncSession, bot: Bot):
         await cb.answer()
         return
     game = await svc.get_game(session, int(game_id))
-    if game is None or game.status not in GameStatus.ACTIVE:
-        await cb.answer("Сбор по этой игре закрыт.", show_alert=True)
+    if game is None:
+        await cb.answer("Игра не найдена.", show_alert=True)
         return
-    if config.now() >= game.starts_at:
-        await cb.answer("Игра уже началась.", show_alert=True)
+    user = await svc.get_user_by_tg(session, cb.from_user.id)  # подтверждённый — проверил AccessMiddleware
+    if user is None:
+        await cb.answer("Сначала нажми /start в личке с ботом.", show_alert=True)
         return
-
-    user = await svc.get_user_by_tg(session, cb.from_user.id) or await svc.get_or_create_user(
-        session, cb.from_user.id, await svc.name_from_telegram(session, cb.from_user)
-    )
     had_duties = await svc.user_assignments(session, game.id, user.id)
-    result = await svc.set_rsvp(session, game, user, status)
+    try:
+        result = await operations.change_rsvp(bot, session, game, user, status)
+    except operations.OpError as e:
+        await cb.answer(str(e), show_alert=True)
+        return
     if not result.changed:
         await cb.answer(f"Ты уже отметил: {texts.RSVP_LABELS[status]}")
         return
-
-    await notifier.refresh_game(bot, session, game)
-    await notifier.announce_reassignments(bot, game, result.reassigned)
-    await notifier.announce_new_assignments(bot, game, result.filled)
 
     if cb.message and cb.message.chat.type == "private":
         text, markup = await actions.game_card(session, game, user, config.is_admin(cb.from_user.id))

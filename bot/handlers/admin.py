@@ -10,11 +10,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, keyboards, notifier, texts, whatsapp
+from bot import actions, keyboards, notifier, operations, texts, whatsapp
 from bot.config import config
-from bot.deadlines import distribute_at, penalties_enabled, rsvp_deadline
 from bot.middlewares import IsAdmin
-from bot.models import Duty, Game, GameStatus, Rsvp, User, UserStatus
+from bot.models import Duty, Game, GameStatus, Rsvp, User
 from bot.players import player_card, players_list
 from bot.services import games as svc
 
@@ -162,32 +161,21 @@ async def new_game_abort(cb: CallbackQuery, state: FSMContext):
 async def new_game_publish(cb: CallbackQuery, session: AsyncSession, state: FSMContext, bot: Bot):
     data = await state.get_data()
     await state.clear()
-    chat_id = await notifier.group_chat_id(session)  # необязательно: команда может сидеть в WhatsApp
     creator = await svc.get_user_by_tg(session, cb.from_user.id)
-    game = await svc.create_game(
-        session, data["kind"], datetime.fromisoformat(data["starts_at"]), data.get("location"), creator
-    )
-    if chat_id is not None:
-        await notifier.publish_game(bot, session, game, chat_id)
-        await cb.message.edit_text(f"✅ Опубликовано в чат команды: {texts.game_header(game)}")
-    else:
-        await cb.message.edit_text(f"✅ Игра создана: {texts.game_header(game)}")
+    try:
+        game, poll_report, hint, announce = await operations.create_game(
+            bot, session, creator, data["kind"], datetime.fromisoformat(data["starts_at"]), data.get("location")
+        )
+    except operations.OpError as e:
+        await cb.answer(str(e), show_alert=True)
+        return
+    where = "Опубликовано в чат команды" if game.chat_id else "Игра создана"
+    await cb.message.edit_text(f"✅ {where}: {texts.game_header(game)}")
     await cb.answer()
-    poll_report = await actions.send_poll_invites(bot, session, game, skip=creator)
-    now, deadline = config.now(), rsvp_deadline(game)
-    hint = [f"Сбор закрывается {texts.until(deadline, now)}."]
-    if distribute_at(game) is not None:
-        hint.append("Тогда же обязанности распределятся автоматически.")
-    else:
-        hint.append("Обязанности распределите кнопкой «🎯 Распределить обязанности».")
-    if penalties_enabled(game) and config.penalty_points > 0:
-        hint.append(f"Кто не ответит к этому времени — получит −{config.penalty_points}.")
     text, markup = await actions.game_card(session, game, creator, True)
-    await cb.message.answer(f"{text}\n\n{poll_report}\n\n<i>{' '.join(hint)}</i>", reply_markup=markup)
-    # Анонс для группы WhatsApp — с ссылкой, по которой игрок сразу попадает на опрос.
-    link = await whatsapp.game_link(bot, game)
+    await cb.message.answer(f"{text}\n\n{poll_report}\n\n<i>{hint}</i>", reply_markup=markup)
     await whatsapp.send_draft(
-        bot, whatsapp.announce(game, deadline, now, link), chat_ids=[cb.from_user.id],
+        bot, announce, chat_ids=[cb.from_user.id],
         note="📤 Анонс для группы WhatsApp — нажмите кнопку под ним и выберите группу 👇",
     )
 
@@ -254,21 +242,7 @@ async def run_action(message: Message, session: AsyncSession, bot: Bot, action: 
             reply_markup=keyboards.confirm(f"adm:cancelyes:{game.id}", "❌ Да, отменить"),
         )
     elif action == "cancelyes":
-        dropped = await svc.cancel_game(session, game)
-        await notifier.refresh_game(bot, session, game)
-        if not game.chat_id:
-            await whatsapp.send_draft(
-                bot, f"❌ *{texts.game_header(game)} отменена.*", chat_ids=[message.chat.id],
-                note="Сообщите команде в WhatsApp 👇",
-            )
-        if game.chat_id:
-            await bot.send_message(
-                game.chat_id,
-                f"❌ <b>{texts.game_header(game)} отменена.</b>",
-                reply_to_message_id=game.announce_message_id,
-            )
-        for user in {a.user.id: a.user for a in dropped}.values():
-            await notifier.send_dm(bot, user, f"❌ {texts.game_header(game)} отменена. Обязанности сняты.")
+        await operations.cancel_game(bot, session, game, message.chat.id)
         await message.answer(f"Готово: {texts.game_header(game)} отменена.")
 
 
@@ -328,19 +302,14 @@ async def edit_set(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     duty = await session.get(Duty, int(duty_id))
     user = await session.get(User, int(user_id)) if user_id != "0" else None
     await cb.answer()
-    if game is None or duty is None or game.status != GameStatus.DISTRIBUTED:
+    if game is None or duty is None:
         await cb.message.edit_text("Игра неактуальна.")
         return
-    old_user, _ = await svc.set_assignment(session, game, duty, user)
-    await notifier.refresh_game(bot, session, game)
-    if old_user is not None and (user is None or old_user.id != user.id):
-        await notifier.send_dm(
-            bot, old_user, f"Администратор снял с тебя обязанность {duty.title} ({texts.game_header(game)})."
-        )
-    if user is not None and (old_user is None or old_user.id != user.id):
-        await notifier.send_dm(
-            bot, user, f"Тебе назначена обязанность на {texts.game_header(game)}:\n{duty.emoji} {texts.h(duty.action)}"
-        )
+    try:
+        await operations.assign_duty(bot, session, game, duty, user)
+    except operations.OpError as e:
+        await cb.message.edit_text(texts.h(str(e)))
+        return
     await cb.message.edit_text(f"✅ {duty.title} — {texts.h(user.name) if user else 'не назначено'}")
 
 
@@ -407,12 +376,6 @@ async def players(message: Message, session: AsyncSession, state: FSMContext):
     await message.answer(text, reply_markup=markup)
 
 
-async def _announce_moves(bot: Bot, session: AsyncSession, moves) -> None:
-    for game, reassigned in moves:
-        await notifier.refresh_game(bot, session, game)
-        await notifier.announce_reassignments(bot, game, reassigned)
-
-
 @router.callback_query(F.data.startswith("pl:"))
 async def player_action(cb: CallbackQuery, session: AsyncSession, bot: Bot, state: FSMContext):
     _, action, raw_id = cb.data.split(":")
@@ -425,50 +388,19 @@ async def player_action(cb: CallbackQuery, session: AsyncSession, bot: Bot, stat
     if user is None:
         await cb.answer("Игрок не найден.", show_alert=True)
         return
-    now = config.now()
-    note = None
-
-    if action == "approve":
-        was = user.status
-        await svc.set_user_status(session, user, UserStatus.APPROVED, now)
-        user.is_active = True
-        note = f"✅ {user.name} в команде"
-        if was != UserStatus.APPROVED:
-            await notifier.send_dm(
-                bot, user, "✅ Администратор добавил тебя в команду! Теперь можно отмечаться на игры.",
-                keyboards.main_menu(False),
-            )
-            for game in await svc.upcoming_games(session, now):
-                if game.status in GameStatus.ACTIVE:
-                    text, markup = await actions.game_card(session, game, user, False)
-                    await notifier.send_dm(bot, user, text, markup)
-    elif action == "block":
-        was = user.status
-        await _announce_moves(bot, session, await svc.set_user_status(session, user, UserStatus.BLOCKED, now))
-        note = f"⛔ {user.name} заблокирован"
-        if was == UserStatus.PENDING:
-            await notifier.send_dm(bot, user, "Заявка отклонена администратором.")
-    elif action == "car":
-        await _announce_moves(bot, session, await svc.set_car(session, user, not user.has_car, now, by_admin=True))
-        note = f"{user.name}: {'есть машина' if user.has_car else 'нет машины'} (закреплено)"
-        await notifier.send_dm(
-            bot, user,
-            f"Администратор отметил в профиле: {texts.CAR_YES if user.has_car else texts.CAR_NO}.",
-        )
-    elif action == "unlock":
-        user.car_locked = False
-        note = "Игрок снова может сам менять машину"
-    elif action == "active":
-        user.is_active = not user.is_active
-        note = f"{user.name}: {'в составе' if user.is_active else 'временно не в составе'}"
-    elif action == "name":
+    if action == "name":
         await state.set_state(AdminStates.rename)
         await state.update_data(rename_user_id=user.id)
         await cb.message.answer(f"Новое имя для «{texts.h(user.name)}»:")
         await cb.answer()
         return
-
-    await session.flush()
+    note = None
+    if action != "show":
+        try:
+            note = await operations.player_action(bot, session, user, action)
+        except operations.OpError as e:
+            await cb.answer(str(e), show_alert=True)
+            return
     text, markup = await player_card(session, user)
     await cb.message.edit_text(text, reply_markup=markup)
     await cb.answer(note)

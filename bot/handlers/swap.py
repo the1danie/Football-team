@@ -1,10 +1,10 @@
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import notifier, texts
+from bot import notifier, operations, texts
 from bot.config import config
 from bot.models import Assignment, AssignmentStatus, GameStatus, SwapRequest, SwapStatus, User
 from bot.services import games as svc
@@ -83,49 +83,14 @@ async def swap_pick_mine(cb: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data.startswith("swapto:"))
 async def swap_offer(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     _, assignment_id, target_id = cb.data.split(":")
-    a = await session.get(Assignment, int(assignment_id))
-    if a is None or a.status != AssignmentStatus.ACTIVE or a.user.telegram_id != cb.from_user.id:
+    me = await svc.get_user_by_tg(session, cb.from_user.id)
+    try:
+        target = await operations.offer_swap(bot, session, me, int(assignment_id), int(target_id))
+    except operations.OpError as e:
         await cb.answer()
-        await cb.message.edit_text("Назначение уже неактуально.")
+        await cb.message.edit_text(texts.h(str(e)))
         return
-    game = await svc.get_game(session, a.game_id)
-    targets = {u.id: (u, theirs) for u, theirs in await svc.swap_targets(session, game, a)}
-    if int(target_id) not in targets:
-        await cb.answer("С этим игроком поменяться нельзя.", show_alert=True)
-        return
-    target, theirs = targets[int(target_id)]
-    req = await svc.create_swap(session, game, a, target)
-
-    me = a.user
-    if theirs:
-        offer = (
-            f"🔄 {texts.h(me.name)} предлагает обмен обязанностями\n{texts.game_header(game)}\n\n"
-            f"{texts.h(me.name)} — {a.duty.title}\n"
-            f"Ты — {theirs.duty.title}\n\n"
-            f"После обмена: ты — {a.duty.title}, {texts.h(me.name)} — {theirs.duty.title}."
-        )
-    else:
-        offer = (
-            f"🔄 {texts.h(me.name)} просит взять его обязанность\n{texts.game_header(game)}\n\n"
-            f"{a.duty.emoji} {texts.h(a.duty.action)}"
-        )
-    markup = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ Согласиться", callback_data=f"swapok:{req.id}"),
-                InlineKeyboardButton(text="❌ Отказаться", callback_data=f"swapno:{req.id}"),
-            ]
-        ]
-    )
     await cb.answer()
-    if not await notifier.send_dm(bot, target, offer, markup):
-        req.status = SwapStatus.EXPIRED
-        me_bot = await bot.me()
-        await cb.message.edit_text(
-            f"Не удалось отправить предложение: {texts.h(target.name)} ещё не писал боту.\n"
-            f"Попроси его открыть @{me_bot.username} и нажать «Start», либо выбери другого игрока."
-        )
-        return
     await cb.message.edit_text(f"Предложение отправлено: {texts.h(target.name)}. Ждём ответа ⏳")
 
 

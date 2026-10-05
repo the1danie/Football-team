@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, keyboards, notifier, texts
+from bot import actions, keyboards, operations, texts
 from bot.config import config
 from bot.models import User
 from bot.services import games as svc
@@ -143,12 +143,9 @@ async def profile_name(message: Message, state: FSMContext):
 @router.callback_query(ProfileStates.car, F.data.startswith("car:"))
 async def profile_car(cb: CallbackQuery, session: AsyncSession, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    user = await svc.get_or_create_user(session, cb.from_user.id, data["name"], cb.from_user.username)
-    first_time = not user.profile_completed
-    user.name = data["name"]
-    if not user.car_locked:
-        user.has_car = cb.data == "car:1"
-    user.profile_completed = True
+    user = await operations.complete_registration(
+        bot, session, cb.from_user.id, data["name"], cb.from_user.username, cb.data == "car:1"
+    )
     await state.clear()
     await cb.answer()
 
@@ -158,12 +155,6 @@ async def profile_car(cb: CallbackQuery, session: AsyncSession, state: FSMContex
             "⏳ Заявка отправлена администратору. Как только он подтвердит, что ты из команды, "
             "придёт сообщение — и можно будет отмечаться на игры."
         )
-        if first_time:
-            from bot.players import player_card  # избегаем циклического импорта
-
-            text, markup = await player_card(session, user)
-            for admin_id in config.admin_ids:
-                await notifier.send_raw(bot, admin_id, "🆕 Новый игрок просится в команду:\n\n" + text, markup)
         return
 
     await cb.message.edit_text(texts.profile_text(user) + "\n\n✅ Профиль сохранён.")
@@ -222,23 +213,13 @@ async def profile_edit_car_save(cb: CallbackQuery, session: AsyncSession, bot: B
     if user is None:
         await cb.answer("Сначала нажми /start", show_alert=True)
         return
-    if user.car_locked and not config.is_admin(cb.from_user.id):
-        await cb.answer("Наличие машины отметил администратор — изменить может только он.", show_alert=True)
+    try:
+        await operations.set_own_car(bot, session, user, cb.data == "pcar:1")
+    except operations.OpError as e:
+        await cb.answer(str(e), show_alert=True)
         return
-    had_car = user.has_car
-    moved = await svc.set_car(session, user, cb.data == "pcar:1", config.now(), by_admin=False)
     await cb.message.edit_text(texts.profile_text(user) + "\n\n✅ Сохранено.")
     await cb.answer()
-    for game, reassigned in moved:
-        await notifier.refresh_game(bot, session, game)
-        await notifier.announce_reassignments(bot, game, reassigned)
-    if had_car != user.has_car and not config.is_admin(cb.from_user.id):
-        await notifier.notify_admins(
-            bot,
-            f"🚗 {texts.h(user.name)} изменил в профиле: "
-            f"{texts.CAR_YES if user.has_car else texts.CAR_NO} (было: {texts.CAR_YES if had_car else texts.CAR_NO}).\n"
-            "Если это неправда — исправьте и закрепите: 🗂 Игроки.",
-        )
 
 
 # ----------------------------------------------------------------- текущая игра
