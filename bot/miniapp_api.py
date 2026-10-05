@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import actions, operations, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline
-from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
+from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
 from bot.services import games as svc
 
 INIT_DATA_MAX_AGE = 24 * 3600
@@ -85,7 +85,14 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         }
         for d in unassigned
     ]
+    from bot.actions import after_at
+
+    before = await svc.active_duties(session, DutyPhase.BEFORE)
+    pending_after = await svc.pending_after_duties(session, game)
     view = {
+        "before_titles": [d.title for d in before],
+        "after_pending": [d.title for d in pending_after],
+        "after_time": texts.fmt_time(after_at(game)),
         "id": game.id,
         "kind": game.kind,
         "kind_title": texts.kind_title(game),
@@ -142,6 +149,13 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
             data["pending_count"] = sum(p.status == UserStatus.PENDING for p in players)
             data["schedules"] = [schedule_view(x) for x in await svc.schedules(session)]
     return data
+
+
+def duty_view(d: Duty) -> dict:
+    return {
+        "id": d.id, "emoji": d.emoji, "name": d.name, "action": d.action, "phase": d.phase,
+        "requires_car": d.requires_car, "active": d.is_active,
+    }
 
 
 def schedule_view(x: Schedule) -> dict:
@@ -212,7 +226,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel",
 }
 
@@ -329,6 +343,20 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 "whatsapp": {"text": announce, "url": whatsapp.share_url(announce)},
                 "state": await state_view(bot, session, tg, user),
             }
+        elif action == "duties":
+            return {"duties": [duty_view(d) for d in await svc.all_duties(session)]}
+        elif action == "duty_update":
+            duty = await session.get(Duty, int(body.get("id", 0)))
+            if duty is None:
+                raise ApiError("Обязанность не найдена.", 404)
+            if body.get("phase") in (DutyPhase.BEFORE, DutyPhase.AFTER):
+                duty.phase = body["phase"]
+            if "requires_car" in body:
+                duty.requires_car = bool(body["requires_car"])
+            if "active" in body:
+                duty.is_active = bool(body["active"])
+            await session.flush()
+            return {"duties": [duty_view(d) for d in await svc.all_duties(session)]}
         elif action == "min_decide":
             note = await operations.decide_min(bot, session, await _game(session, body), body.get("choice", ""), tg_id)
         elif action == "update_game":

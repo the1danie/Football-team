@@ -78,8 +78,11 @@ def distribute(
     duties: list[DutySpec],
     candidates: list[Candidate],
     rng: random.Random | None = None,
+    base_load: dict[int, int] | None = None,
 ) -> tuple[dict[int, int], list[int]]:
     """Распределить обязанности.
+
+    base_load — сколько обязанностей у игрока уже есть на этой игре (например, вода «до»).
 
     Возвращает ({duty_id: user_id}, [duty_id без исполнителя]).
     """
@@ -99,7 +102,7 @@ def distribute(
         [
             INFEASIBLE
             if d.requires_car and not c.has_car
-            else k * EXTRA_DUTY_COST + score(c, d.id) + noise[c.user_id]
+            else (k + (base_load or {}).get(c.user_id, 0)) * EXTRA_DUTY_COST + score(c, d.id) + noise[c.user_id]
             for c, k in slots
         ]
         for d in fillable

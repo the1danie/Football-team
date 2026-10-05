@@ -85,7 +85,13 @@ async def refresh_game(bot: Bot, session: AsyncSession, game: Game) -> None:
     else:
         assignments = await svc.active_assignments(session, game.id)
         unassigned = await svc.unassigned_duties(session, game)
-    text = texts.summary_text(game, len(by_status[Rsvp.YES]), assignments, unassigned)
+    from datetime import timedelta
+
+    pending = await svc.pending_after_duties(session, game)
+    text = texts.summary_text(
+        game, len(by_status[Rsvp.YES]), assignments, unassigned,
+        pending, game.starts_at + timedelta(minutes=config.after_duties_minutes),
+    )
     me = await bot.me()
     markup = keyboards.swap_link(game, me.username)
     if game.summary_message_id:

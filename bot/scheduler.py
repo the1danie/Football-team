@@ -35,6 +35,14 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
 
     games = (await session.scalars(select(Game).where(Game.status.in_(GameStatus.ACTIVE)))).all()
     for game in games:
+        # После тренировки: мячи, манишки, стирка — среди тех, кто был.
+        if (
+            game.status == GameStatus.DISTRIBUTED
+            and not game.after_duties_done
+            and now >= game.starts_at + timedelta(minutes=config.after_duties_minutes)
+        ):
+            await actions.distribute_after_and_announce(bot, session, game)
+
         if now >= game.starts_at + timedelta(hours=config.finish_after_hours):
             if game.status == GameStatus.DISTRIBUTED:
                 await actions.redeem_and_announce(bot, session, game)

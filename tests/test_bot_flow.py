@@ -295,7 +295,7 @@ async def test_full_flow(h: Harness):
         holders = {a.user_id for a in await svc.active_assignments(s, game_id)}
     assert len(personal) == len(holders)
     assert any("Твои обязанности" in m.text for m in fake.sent(a1.user.telegram_id))
-    assert any("привезти мячи" in m.text for m in personal)
+    assert any("мячи" in m.text for m in personal)
     group = fake.sent(GROUP)[-1].text
     assert "Сегодня игра в" in group and "Ответственные" in group
     # повторно не шлём

@@ -321,10 +321,16 @@ async def list_duties(message: Message, session: AsyncSession):
     duties = (await session.scalars(select(Duty).order_by(Duty.sort_order, Duty.id))).all()
     lines = ["<b>Обязанности</b>", ""]
     for d in duties:
-        flags = (" 🚗 нужна машина" if d.requires_car else "") + ("" if d.is_active else " (выключена)")
+        flags = (
+            (" · после игры" if d.phase == "after" else " · до игры")
+            + (" 🚗 нужна машина" if d.requires_car else "")
+            + ("" if d.is_active else " (выключена)")
+        )
         lines.append(f"{d.id}. {d.title}{flags}")
     lines += ["", "/add_duty 🩹 Аптечка — добавить", "/add_duty 🎈 Насос машина — нужна машина",
-              "/toggle_duty &lt;id&gt; — включить/выключить"]
+              "/toggle_duty &lt;id&gt; — включить/выключить",
+              "/duty_phase &lt;id&gt; — до игры / после игры",
+              "Удобнее — в приложении: Профиль → ⚙️ Обязанности"]
     await message.answer("\n".join(lines))
 
 
@@ -346,6 +352,19 @@ async def add_duty(message: Message, command: CommandObject, session: AsyncSessi
         return
     duty = await svc.add_duty(session, emoji, name[:64], requires_car)
     await message.answer(f"✅ Добавлена обязанность: {duty.title}" + (" (нужна машина)" if requires_car else ""))
+
+
+@router.message(Command("duty_phase"))
+async def duty_phase(message: Message, command: CommandObject, session: AsyncSession):
+    if not command.args or not command.args.strip().isdigit():
+        await message.answer("Формат: /duty_phase &lt;id&gt; (id — из /duties)")
+        return
+    duty = await session.get(Duty, int(command.args))
+    if duty is None:
+        await message.answer("Нет такой обязанности.")
+        return
+    duty.phase = "before" if duty.phase == "after" else "after"
+    await message.answer(f"{duty.title}: {'после игры' if duty.phase == 'after' else 'до игры'}.")
 
 
 @router.message(Command("toggle_duty"))

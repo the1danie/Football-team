@@ -5,15 +5,16 @@ from sqlalchemy import Boolean, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from bot.models import Base, Duty
+from bot.models import Base, Duty, Setting
 
 DEFAULT_DUTIES = [
-    # code, emoji, name, action, requires_car, sort_order
-    ("balls", "⚽", "Мячи", "привезти мячи", True, 10),
-    ("water", "💧", "Вода", "принести воду", False, 20),
-    ("bibs", "👕", "Манишки", "принести манишки", False, 30),
-    ("laundry", "🧺", "Стирка манишек", "забрать и постирать манишки", False, 40),
+    # code, emoji, name, action, requires_car, sort_order, phase
+    ("balls", "⚽", "Мячи", "забрать мячи и привезти на следующую", True, 10, "after"),
+    ("water", "💧", "Вода", "принести воду", False, 20, "before"),
+    ("bibs", "👕", "Манишки", "забрать манишки и принести на следующую", False, 30, "after"),
+    ("laundry", "🧺", "Стирка манишек", "забрать и постирать манишки", False, 40, "after"),
 ]
+DUTY_PHASES_KEY = "duty_phases_v1"
 
 
 # Параметры libpq из строки подключения Neon, которых asyncpg не понимает.
@@ -90,7 +91,7 @@ async def init_db(engine: AsyncEngine) -> None:
 
     async with make_sessionmaker(engine)() as session:
         existing = set((await session.scalars(select(Duty.code).where(Duty.code.is_not(None)))).all())
-        for code, emoji, name, action, requires_car, order in DEFAULT_DUTIES:
+        for code, emoji, name, action, requires_car, order, phase in DEFAULT_DUTIES:
             if code not in existing:
                 session.add(
                     Duty(
@@ -100,6 +101,14 @@ async def init_db(engine: AsyncEngine) -> None:
                         action=action,
                         requires_car=requires_car,
                         sort_order=order,
+                        phase=phase,
                     )
                 )
+        # Один раз: стандартные обязанности «после тренировки» и их формулировки (для уже работающих баз).
+        if await session.get(Setting, DUTY_PHASES_KEY) is None:
+            defaults = {d[0]: d for d in DEFAULT_DUTIES}
+            for duty in (await session.scalars(select(Duty).where(Duty.code.in_(defaults)))).all():
+                duty.phase = defaults[duty.code][6]
+                duty.action = defaults[duty.code][3]
+            session.add(Setting(key=DUTY_PHASES_KEY, value="1"))
         await session.commit()

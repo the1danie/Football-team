@@ -35,6 +35,11 @@ class AssignmentStatus:
     CANCELLED = "cancelled"  # распределение пересчитано или игра отменена
 
 
+class DutyPhase:
+    BEFORE = "before"  # распределяется при закрытии сбора (вода)
+    AFTER = "after"  # после тренировки, среди тех, кто был (мячи, манишки, стирка)
+
+
 class SwapStatus:
     PENDING = "pending"
     ACCEPTED = "accepted"
@@ -95,6 +100,8 @@ class Game(Base):
     # Напоминание тем, кто не отметился, и начисление минусов.
     rsvp_nudge_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     penalties_applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Обязанности «после тренировки» уже распределены.
+    after_duties_done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     # Повторяющаяся тренировка: из какого расписания создана.
     schedule_id: Mapped[int | None] = mapped_column(
@@ -164,6 +171,7 @@ class Duty(Base):
     # Формулировка для напоминания: «привезти мячи».
     action: Mapped[str] = mapped_column(String(128))
     requires_car: Mapped[bool] = mapped_column(Boolean, default=False)
+    phase: Mapped[str] = mapped_column(String(8), default=DutyPhase.BEFORE, server_default=DutyPhase.BEFORE)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=100)
 

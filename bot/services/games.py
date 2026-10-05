@@ -12,6 +12,7 @@ from bot.models import (
     Assignment,
     AssignmentStatus,
     Duty,
+    DutyPhase,
     Game,
     GameParticipant,
     GameStatus,
@@ -178,11 +179,25 @@ async def get_rsvp(session: AsyncSession, game_id: int, user_id: int) -> str | N
 # ---------------------------------------------------------------- обязанности
 
 
-async def active_duties(session: AsyncSession) -> list[Duty]:
-    rows = await session.scalars(
-        select(Duty).where(Duty.is_active.is_(True)).order_by(Duty.sort_order, Duty.id)
-    )
-    return list(rows.all())
+async def active_duties(session: AsyncSession, phase: str | None = None) -> list[Duty]:
+    q = select(Duty).where(Duty.is_active.is_(True)).order_by(Duty.sort_order, Duty.id)
+    if phase is not None:
+        q = q.where(Duty.phase == phase)
+    return list((await session.scalars(q)).all())
+
+
+async def all_duties(session: AsyncSession) -> list[Duty]:
+    return list((await session.scalars(select(Duty).order_by(Duty.sort_order, Duty.id))).all())
+
+
+def phases_open(game: Game) -> set[str]:
+    """Какие этапы обязанностей уже распределялись на этой игре."""
+    result = set()
+    if game.status in (GameStatus.DISTRIBUTED, GameStatus.FINISHED):
+        result.add(DutyPhase.BEFORE)
+    if game.after_duties_done:
+        result.add(DutyPhase.AFTER)
+    return result
 
 
 async def add_duty(session: AsyncSession, emoji: str, name: str, requires_car: bool) -> Duty:
@@ -293,20 +308,24 @@ class DistributionResult:
 
 
 async def distribute_game(
-    session: AsyncSession, game: Game, rng: random.Random | None = None
+    session: AsyncSession, game: Game, rng: random.Random | None = None, phase: str = DutyPhase.BEFORE
 ) -> DistributionResult:
-    """Распределить (или пересчитать заново) обязанности на игру."""
+    """Распределить (или пересчитать заново) обязанности этапа: до тренировки или после."""
+    duties = await active_duties(session, phase)
+    duty_ids = {d.id for d in duties}
     for a in await active_assignments(session, game.id):
-        a.status = AssignmentStatus.CANCELLED
+        if a.duty_id in duty_ids:
+            a.status = AssignmentStatus.CANCELLED
     await _expire_swaps(session, game.id)
     await session.flush()
 
-    duties = await active_duties(session)
     duty_by_id = {d.id: d for d in duties}
     candidates = await build_candidates(session, game)
     users = {u.id: u for u in (await participants_by_status(session, game.id))[Rsvp.YES]}
 
-    mapping, unassigned = distribute([_spec(d) for d in duties], candidates, rng)
+    mapping, unassigned = distribute(
+        [_spec(d) for d in duties], candidates, rng, base_load=await _current_load(session, game.id)
+    )
 
     result = DistributionResult()
     for duty in duties:  # в порядке отображения
@@ -315,7 +334,10 @@ async def distribute_game(
             session.add(a)
             result.assignments.append(a)
     result.unassigned = [duty_by_id[d] for d in unassigned]
-    game.status = GameStatus.DISTRIBUTED
+    if phase == DutyPhase.AFTER:
+        game.after_duties_done = True
+    else:
+        game.status = GameStatus.DISTRIBUTED
     await session.flush()
     return result
 
@@ -351,8 +373,17 @@ async def reassign(
 
 
 async def unassigned_duties(session: AsyncSession, game: Game) -> list[Duty]:
+    """Свободные обязанности тех этапов, что уже распределялись."""
     taken = {a.duty_id for a in await active_assignments(session, game.id)}
-    return [d for d in await active_duties(session) if d.id not in taken]
+    open_phases = phases_open(game)
+    return [d for d in await active_duties(session) if d.id not in taken and d.phase in open_phases]
+
+
+async def pending_after_duties(session: AsyncSession, game: Game) -> list[Duty]:
+    """Обязанности «после тренировки», которые ещё впереди."""
+    if game.after_duties_done or game.status not in GameStatus.ACTIVE:
+        return []
+    return await active_duties(session, DutyPhase.AFTER)
 
 
 async def fill_unassigned(

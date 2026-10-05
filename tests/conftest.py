@@ -57,3 +57,14 @@ async def make_game(session, days: int = 1, hour: int = 20):
 
 async def duties_by_code(session):
     return {d.code: d for d in await svc.active_duties(session)}
+
+
+@pytest.fixture(autouse=True)
+def _all_duties_before(request, monkeypatch):
+    """Большинство тестов писались, когда все обязанности распределялись сразу («до» игры).
+    Тесты со схемой «вода до, остальное после» помечены @pytest.mark.real_phases."""
+    from bot import db
+
+    if "real_phases" in request.keywords:
+        return
+    monkeypatch.setattr(db, "DEFAULT_DUTIES", [d[:6] + ("before",) for d in db.DEFAULT_DUTIES])

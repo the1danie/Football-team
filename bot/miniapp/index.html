@@ -374,10 +374,14 @@ function gameCard(g) {
       h("div", { class: "grow" }, h("div", { class: "small muted" }, x.name),
         h("div", { class: "who" }, x.user ? (x.mine ? "Ты" : x.user.name) : "⚠️ не назначено")),
       x.mine ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "swap", game: g, duty: x }) }, "🔄 Поменяться") : null))));
-  } else if (g.status === "open") {
-    add(card, h("div", { class: "small muted", style: "margin-top:12px" },
-      g.deadline_passed ? "Обязанности скоро распределит админ." : `Обязанности распределятся ${g.deadline_at_label}.`));
+  } else if (g.status === "open" && !g.needs_decision) {
+    const plan = h("div", { class: "small muted", style: "margin-top:12px" });
+    if (g.before_titles.length) add(plan, h("div", {}, `${g.before_titles.join(", ")} — ${g.deadline_passed ? "скоро распределит админ" : "распределится " + g.deadline_at_label}`));
+    if (g.after_pending.length) add(plan, h("div", { style: "margin-top:2px" }, `${g.after_pending.join(", ")} — после тренировки, около ${g.after_time}`));
+    add(card, plan);
   }
+  if (g.status === "distributed" && g.after_pending.length)
+    add(card, h("div", { class: "small muted", style: "margin-top:8px" }, `🏁 После тренировки (около ${g.after_time}): ${g.after_pending.join(", ")} — среди тех, кто был.`));
 
   if (d.is_admin) {
     add(card, h("div", { class: "admin-bar" },
@@ -472,10 +476,11 @@ function profileTab() {
           onclick: async () => { haptic(); const r = await api("profile", { car: !u.car }); if (r) render(); } }))),
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
       h("div", { class: "small muted", style: "margin-top:4px" }, "За то, что не ответил на опрос вовремя. Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
+    S.data.is_admin ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: openDuties }, "⚙️ Обязанности: что, когда, нужна ли машина") : null,
     h("h2", {}, "Как это работает"),
     h("div", { class: "card" }, h("ul", { class: "rules" },
       h("li", {}, "Когда админ создаёт игру, бот присылает опрос. Отметься: Буду / Не знаю / Не буду."),
-      h("li", {}, "Перед игрой обязанности (мячи, вода, манишки, стирка) распределяются между теми, кто придёт. Первыми — кто делал меньше."),
+      h("li", {}, "Обязанности распределяются между теми, кто придёт, — первыми тем, кто делал меньше. Воду — перед тренировкой, мячи и манишки — после, среди тех, кто был."),
       h("li", {}, "Не можешь выполнить — «🔄 Поменяться». Передумал идти — «Не буду», обязанность перейдёт другому."),
       S.data.penalty_points ? h("li", {}, `Не ответил до закрытия сбора — минус (−${S.data.penalty_points}).`) : null)));
 }
@@ -492,6 +497,24 @@ function everyWeekday(iso) {
   return names[new Date(y, m - 1, d).getDay()];
 }
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+async function openDuties() {
+  const r = await api("duties");
+  if (r) openSheet({ type: "duties", duties: r.duties });
+}
+function dutiesSheet() {
+  const upd = async (d, body) => { const r = await api("duty_update", { id: d.id, ...body }); if (r) { S.sheet.duties = r.duties; render(); } };
+  return h("div", {}, h("h3", {}, "⚙️ Обязанности"),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "«До» — распределяется при закрытии сбора среди тех, кто придёт. «После» — через полтора часа после начала, среди тех, кто был: забрать и принести на следующую."),
+    S.sheet.duties.map((d) => h("div", { class: "card", style: d.active ? "" : "opacity:.55" },
+      h("div", { class: "row" }, h("span", { style: "font-size:24px" }, d.emoji),
+        h("div", { class: "grow" }, h("b", {}, d.name), h("div", { class: "small muted" }, d.action)),
+        h("button", { class: "switch" + (d.active ? " on" : ""), role: "switch", "aria-checked": d.active ? "true" : "false", onclick: () => upd(d, { active: !d.active }) })),
+      d.active ? h("div", { class: "seg", style: "margin-top:10px" }, [["before", "До тренировки"], ["after", "После тренировки"]].map(([k, l]) =>
+        h("button", { class: d.phase === k ? "on" : "", onclick: () => upd(d, { phase: k }) }, l))) : null,
+      d.active ? h("div", { class: "switch-row" }, h("div", { class: "grow small" }, "🚗 Только для тех, кто на машине"),
+        h("button", { class: "switch" + (d.requires_car ? " on" : ""), role: "switch", "aria-checked": d.requires_car ? "true" : "false", onclick: () => upd(d, { requires_car: !d.requires_car }) })) : null)));
+}
 
 function scheduleEditSheet() {
   const x = S.sheet.schedule;
@@ -550,7 +573,7 @@ function renderSheet() {
   if (!S.sheet) return;
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
-    scheduleEdit: scheduleEditSheet }[S.sheet.type]();
+    scheduleEdit: scheduleEditSheet, duties: dutiesSheet }[S.sheet.type]();
   const bg = h("div", { class: "sheet-bg", onclick: (e) => { if (e.target === bg) closeSheet(); } },
     h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content));
   document.body.append(bg);

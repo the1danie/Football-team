@@ -79,10 +79,15 @@ def nudge(game: Game, users: list[User], deadline: datetime, now: datetime, link
     return "\n".join(lines)
 
 
-def duties(game: Game, yes_count: int, assignments: list[Assignment], unassigned: list[Duty], link: str) -> str:
+def duties(
+    game: Game, yes_count: int, assignments: list[Assignment], unassigned: list[Duty], link: str,
+    pending_after: list[Duty] | None = None, after_at: datetime | None = None,
+) -> str:
     lines = _header(game) + ["", f"Участников: {yes_count}", "", "*Обязанности*"]
     lines += [f"{a.duty.emoji} {a.duty.name} — {a.user.name}" for a in assignments]
     lines += [f"{d.emoji} {d.name} — ⚠️ не назначено" for d in unassigned]
+    if pending_after and after_at:
+        lines += ["", texts.after_line(pending_after, after_at)]
     lines += ["", "Не сможете — поменяйтесь в боте («🔄 Поменяться»):", link]
     return "\n".join(lines)
 
@@ -121,3 +126,10 @@ async def send_draft(bot: Bot, text: str, chat_ids: list[int] | None = None, not
                 await bot.send_message(chat_id, text, parse_mode=None)
         except (TelegramForbiddenError, TelegramBadRequest) as e:
             log.info("WhatsApp draft to %s failed: %s", chat_id, e)
+
+
+def after_duties(game: Game, assignments: list[Assignment], unassigned: list[Duty]) -> str:
+    lines = [f"*🏁 После тренировки — {texts.game_header(game)}*", ""]
+    lines += [f"{a.duty.emoji} {a.duty.name} — {a.user.name}" for a in assignments]
+    lines += [f"{d.emoji} {d.name} — ⚠️ не назначено" for d in unassigned]
+    return "\n".join(lines)

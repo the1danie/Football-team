@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import keyboards, notifier, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline
-from bot.models import Game, GameStatus, Rsvp, User
+from bot.models import DutyPhase, Game, GameStatus, Rsvp, User
 from bot.services import games as svc
 
 
@@ -24,6 +24,9 @@ async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game) -
     yes = len((await svc.participants_by_status(session, game.id))[Rsvp.YES])
     lines = [f"🎯 Обязанности распределены: {texts.game_header(game)}", f"Участников: {yes}", ""]
     lines += texts.duties_block(result.assignments, result.unassigned)
+    pending = await svc.pending_after_duties(session, game)
+    if pending:
+        lines += ["", texts.after_line(pending, after_at(game))]
     if result.unassigned:
         warning = texts.unassigned_warning(result.unassigned)
         lines += ["", warning]
@@ -32,8 +35,39 @@ async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game) -
     if not game.chat_id:
         link = await whatsapp.game_link(bot, game)
         await whatsapp.send_draft(
-            bot, whatsapp.duties(game, yes, result.assignments, result.unassigned, link),
+            bot, whatsapp.duties(game, yes, result.assignments, result.unassigned, link, pending, after_at(game)),
             note="🎯 Обязанности для группы WhatsApp 👇",
+        )
+    return "\n".join(lines)
+
+
+def after_at(game: Game):
+    from datetime import timedelta
+
+    return game.starts_at + timedelta(minutes=config.after_duties_minutes)
+
+
+async def distribute_after_and_announce(bot: Bot, session: AsyncSession, game: Game) -> str | None:
+    """После тренировки: мячи, манишки, стирка — среди тех, кто был («Буду»)."""
+    if not await svc.active_duties(session, DutyPhase.AFTER):
+        game.after_duties_done = True
+        return None
+    result = await svc.distribute_game(session, game, phase=DutyPhase.AFTER)
+    await notifier.refresh_game(bot, session, game)
+    for a in result.assignments:
+        await notifier.send_dm(
+            bot, a.user,
+            f"🏁 После тренировки ({texts.game_header(game)}) — на тебе:\n{a.duty.emoji} {texts.h(a.duty.action)}",
+            keyboards.with_app_button(None, game.id),
+        )
+    lines = [f"🏁 <b>После тренировки — {texts.game_header(game)}</b>", ""]
+    lines += texts.duties_block(result.assignments, result.unassigned, with_mentions=bool(game.chat_id))
+    if game.chat_id:
+        await bot.send_message(game.chat_id, "\n".join(lines))
+    else:
+        await whatsapp.send_draft(
+            bot, whatsapp.after_duties(game, result.assignments, result.unassigned),
+            note="🏁 Кто что забирает после тренировки — для группы WhatsApp 👇",
         )
     return "\n".join(lines)
 
@@ -167,5 +201,6 @@ async def whatsapp_snapshot(bot: Bot, session: AsyncSession, game: Game) -> str:
         return whatsapp.duties(
             game, len(by_status[Rsvp.YES]),
             await svc.active_assignments(session, game.id), await svc.unassigned_duties(session, game), link,
+            await svc.pending_after_duties(session, game), after_at(game),
         )
     return whatsapp.status(game, by_status, link)

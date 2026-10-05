@@ -113,7 +113,8 @@ def duties_block(assignments: list[Assignment], unassigned: list[Duty], with_men
 
 
 def summary_text(
-    game: Game, yes_count: int, assignments: list[Assignment], unassigned: list[Duty]
+    game: Game, yes_count: int, assignments: list[Assignment], unassigned: list[Duty],
+    pending_after: list[Duty] | None = None, after_at: datetime | None = None,
 ) -> str:
     lines = [f"<b>{game_header(game)}</b>"]
     if game.location:
@@ -123,6 +124,8 @@ def summary_text(
         return "\n".join(lines)
     lines += ["", f"Участников: {yes_count}", "", "<b>Обязанности</b>", ""]
     lines += duties_block(assignments, unassigned)
+    if pending_after and after_at:
+        lines += ["", after_line(pending_after, after_at)]
     if any(d.requires_car for d in unassigned):
         lines += ["", no_car_warning()]
     if game.status == GameStatus.DISTRIBUTED:
@@ -269,3 +272,9 @@ def penalty_limit_admin(rows: list[tuple[User, int]], limit: int) -> str:
 def penalty_redeemed(game: Game, count: int, left: int) -> str:
     text = f"✅ Обязанность на «{game_header(game)}» выполнена — списано минусов: {count}."
     return text + (f" Осталось: {left}." if left else " Минусов больше нет 👍")
+
+
+
+def after_line(duties: list[Duty], when: datetime) -> str:
+    names = ", ".join(d.title for d in duties)
+    return f"🏁 После тренировки (около {fmt_time(when)}) распределим: {names}"
