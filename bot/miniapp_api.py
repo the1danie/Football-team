@@ -131,6 +131,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "deadline_label": texts.until(deadline, now),
         "deadline_at_label": f"{texts.day_word(deadline, now).lower()} в {texts.fmt_time(deadline)}",
         "deadline_passed": now >= deadline,
+        "silence_penalized": bool(game.penalties_applied) and config.penalty_points > 0,
         "penalty": config.penalty_points if penalties_enabled(game) and not game.penalties_applied else 0,
         "participants": {
             s: [{**_user_brief(u), "attended": marks.get(u.id)} for u in by_status[s]] for s in Rsvp.ALL

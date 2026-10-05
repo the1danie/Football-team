@@ -665,7 +665,13 @@ function attendanceSheet() {
   };
   const yes = g.participants.yes;
   const absent = g.participants.no.filter((u) => u.attended === false);
-  const others = [...g.participants.maybe, ...g.participants.no.filter((u) => u.attended !== false), ...(g.no_answer || [])];
+  const silent = g.no_answer || [];
+  const others = [
+    [`🔇 Не ответили на опрос (${silent.length})`, silent,
+      silent.length && g.silence_penalized ? `За молчание уже −${S.data.penalty_points}. Если пришёл — нажмите, минус за молчание останется.` : null],
+    [`🤔 Отвечали «Не знаю» (${g.participants.maybe.length})`, g.participants.maybe, null],
+    [`❌ Отвечали «Не буду»`, g.participants.no.filter((u) => u.attended !== false), null],
+  ].filter(([, list]) => list.length);
   const row = (u, came) => h("div", { class: "switch-row" }, avatar(u.name, u.id),
     h("div", { class: "grow" }, h("div", { style: "font-weight:600" }, u.name + (u.car ? " 🚗" : "")),
       h("div", { class: "small muted" }, came ? (u.attended ? "пришёл" : "отметил «Буду»") : "не пришёл — минус, обязанности «после» не получит")),
@@ -674,8 +680,11 @@ function attendanceSheet() {
     h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Выключите тех, кто отметил «Буду», но не пришёл: им минус, а обязанности «после тренировки» достанутся тем, кто был."),
     h("div", { class: "card" }, yes.map((u) => row(u, u.attended !== false)), absent.map((u) => row(u, false)),
       !yes.length && !absent.length ? h("div", { class: "muted" }, "Никто не отметил «Буду».") : null),
-    others.length ? h("div", {}, h("div", { class: "label" }, "Пришёл без отметки? Нажмите:"),
-      h("div", { class: "people" }, others.map((u) => h("button", { class: "chip", onclick: () => mark(u, true) }, "＋ " + u.name)))) : null);
+    others.length ? h("div", {}, h("div", { class: "label" }, "Пришёл без «Буду»? Нажмите на имя:"),
+      others.map(([title, list, hint]) => h("div", { style: "margin-top:12px" },
+        h("div", { class: "small muted", style: "margin:0 2px 6px;font-weight:600" }, title),
+        hint ? h("div", { class: "small muted", style: "margin:-2px 2px 8px" }, hint) : null,
+        h("div", { class: "people" }, list.map((u) => h("button", { class: "chip", onclick: () => mark(u, true) }, "＋ " + u.name)))))) : null);
 }
 
 async function openDuties() {
