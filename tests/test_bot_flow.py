@@ -277,7 +277,7 @@ async def test_full_flow(h: Harness):
     fake.reset()
     await h.text(2, texts.BTN_STATS)
     stat = fake.sent(2)[-1]
-    assert "Статистика команды" in stat.text and "обязанност" in stat.text
+    assert "Рейтинг" in stat.text and "обязанност" in stat.text
     await h.click(2, f"stat:{a1.user_id}")
     assert "💧 Вода" in fake.edits(2)[-1].text
 

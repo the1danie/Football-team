@@ -107,6 +107,20 @@
   .bar { height: 6px; border-radius: 3px; background: var(--soft); margin-top: 6px; overflow: hidden; }
   .bar > div { height: 100%; background: var(--accent); border-radius: 3px; }
   .num { font-weight: 700; font-size: 18px; min-width: 28px; text-align: right; }
+  .rank { width: 26px; text-align: center; font-weight: 700; color: var(--hint); flex: none; font-size: 15px; }
+  .item.me-row { background: var(--accent-soft); }
+  .podium { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; align-items: end; margin: 4px 0 14px; }
+  .podium-col { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+  .podium-col .avatar { width: 52px; height: 52px; font-size: 18px; }
+  .podium-col.me .avatar { box-shadow: 0 0 0 3px var(--accent); }
+  .podium-medal { font-size: 26px; line-height: 1; }
+  .podium-name { font-weight: 600; font-size: 14px; max-width: 100%; }
+  .podium-num { font-weight: 800; font-size: 20px; }
+  .podium-step { width: 100%; border-radius: 12px 12px 4px 4px; background: var(--card); display: grid; place-items: center;
+    font-weight: 800; font-size: 22px; color: var(--hint); }
+  .podium-step.step-1 { height: 86px; background: color-mix(in srgb, #f5c542 35%, var(--card)); color: var(--text); }
+  .podium-step.step-2 { height: 64px; background: color-mix(in srgb, #b8c1cc 40%, var(--card)); }
+  .podium-step.step-3 { height: 48px; background: color-mix(in srgb, #d8955a 35%, var(--card)); }
 
   /* Сегменты и чипсы выбора */
   .seg { display: flex; background: var(--soft); border-radius: 12px; padding: 3px; gap: 3px; }
@@ -288,7 +302,7 @@ function screen() {
   if (d.access === "pending") return info("⏳", "Заявка у администратора",
     "Как только администратор подтвердит, что ты из команды, здесь появятся игры, а бот пришлёт сообщение.");
   if (d.access === "blocked") return info("⛔", "Доступ закрыт", "Администратор закрыл доступ к боту команды.");
-  const tabs = [["games", "⚽", "Игры"], ["stats", "📊", "Статистика"]];
+  const tabs = [["games", "⚽", "Игры"], ["stats", "🏆", "Рейтинг"]];
   if (d.is_admin) tabs.push(["players", "👥", "Игроки"]);
   tabs.push(["profile", "👤", "Профиль"]);
   document.body.classList.toggle("has-fab", S.tab === "games" && d.is_admin);
@@ -308,7 +322,7 @@ function info(icon, title, text) {
 
 async function switchTab(id) {
   S.tab = id; haptic(); render(); window.scrollTo(0, 0);
-  if (id === "stats") { const r = await api("stats"); if (r) { S.stats = r.team; render(); } }
+  if (id === "stats") loadStats();
   if (id === "players") { const r = await api("players"); if (r) { S.players = r.players; render(); } }
 }
 
@@ -449,18 +463,55 @@ async function shareWhatsApp(g) {
 }
 
 // ---------------------------------------------------------------- статистика
+const BOARDS = {
+  duties: { title: "🏆 Помощь", unit: (n) => plural(n, "обязанность", "обязанности", "обязанностей"),
+    hint: "Кто больше всех выполнил обязанностей (вода, мячи, манишки). У кого меньше — тому следующие." },
+  games: { title: "⚽ Посещения", unit: (n) => plural(n, "игра", "игры", "игр"),
+    hint: "На скольких играх и тренировках был: «Буду» и пришёл." },
+  minuses: { title: "⚠️ Минусы", unit: (n) => plural(n, "минус", "минуса", "минусов"),
+    hint: "Антирейтинг: минусы за неответ на опрос и за неявку после «Буду»." },
+};
+async function loadStats() {
+  const r = await api("stats", { period: S.statsPeriod || "all" });
+  if (r) { S.stats = r.board; render(); }
+}
 function statsTab() {
-  if (!S.stats) return h("div", {}, h("h1", {}, "Статистика"), h("div", { class: "spinner" }));
-  const max = Math.max(1, ...S.stats.map((p) => p.total));
-  return h("div", {}, h("h1", {}, "Статистика"),
-    h("p", { class: "muted small", style: "margin:-6px 4px 12px" }, "Сколько обязанностей выполнил каждый. У кого меньше — тому следующие."),
-    h("div", { class: "list" }, S.stats.map((p) => h("button", { class: "item", onclick: () => openPlayerStats(p.id) },
+  const board = S.statsBoard || "duties", period = S.statsPeriod || "all";
+  const head = [h("h1", {}, "Рейтинг"),
+    h("div", { class: "seg", style: "margin-bottom:8px" }, Object.entries(BOARDS).map(([k, b]) =>
+      h("button", { class: board === k ? "on" : "", onclick: () => { S.statsBoard = k; haptic(); render(); } }, b.title))),
+    h("div", { class: "seg", style: "margin-bottom:12px" }, [["month", "За месяц"], ["all", "За всё время"]].map(([k, l]) =>
+      h("button", { class: period === k ? "on" : "", onclick: () => { S.statsPeriod = k; S.stats = null; render(); loadStats(); } }, l)))];
+  if (!S.stats) return h("div", {}, head, h("div", { class: "spinner", style: "margin:60px auto" }));
+
+  const me = S.data.user && S.data.user.id;
+  const rows = [...S.stats].sort((x, y) => y[board] - x[board] || x.name.localeCompare(y.name, "ru"));
+  let rank = 0, prev = null;
+  rows.forEach((p, i) => { if (p[board] !== prev) { rank = i + 1; prev = p[board]; } p.rank = rank; });
+  const max = Math.max(1, ...rows.map((p) => p[board]));
+  const top = rows.filter((p) => p[board] > 0).slice(0, 3);
+  const medal = (r) => ["🥇", "🥈", "🥉"][r - 1] || "";
+
+  const podium = top.length ? h("div", { class: "podium" },
+    [top[1], top[0], top[2]].map((p, i) => p ? h("button", { class: "podium-col" + (p.id === me ? " me" : ""), onclick: () => openPlayerStats(p.id) },
+      h("div", { class: "podium-medal" }, medal(p.rank)),
       avatar(p.name, p.id),
-      h("div", { class: "grow" }, h("div", { class: "row" }, h("span", { class: "ellipsis", style: "font-weight:600" }, p.name),
-        p.car ? h("span", {}, "🚗") : null, p.minuses ? h("span", { class: "chip bad" }, `−${p.minuses}`) : null),
-        h("div", { class: "bar" }, h("div", { style: `width:${(p.total / max) * 100}%` }))),
-      h("div", { class: "num" }, p.total)))),
-    S.stats.some((p) => p.minuses) ? h("p", { class: "muted small", style: "margin:0 6px" }, "−N — минусы за неответы на опросы.") : null);
+      h("div", { class: "podium-name ellipsis" }, p.id === me ? "Ты" : p.name),
+      h("div", { class: "podium-num" }, p[board]),
+      h("div", { class: "podium-step step-" + Math.min(p.rank, 3) }, p.rank)) : h("div", { class: "podium-col" }))) : null;
+
+  return h("div", {}, head,
+    h("p", { class: "muted small", style: "margin:0 4px 12px" }, BOARDS[board].hint),
+    podium || h("div", { class: "card empty muted" }, period === "month" ? "За последний месяц пока пусто." : "Пока пусто — сыграйте первую игру."),
+    h("div", { class: "list" }, rows.map((p) => h("button", { class: "item" + (p.id === me ? " me-row" : ""), onclick: () => openPlayerStats(p.id) },
+      h("div", { class: "rank" }, p[board] > 0 && p.rank <= 3 ? medal(p.rank) : p.rank),
+      avatar(p.name, p.id),
+      h("div", { class: "grow" }, h("div", { class: "row" },
+          h("span", { class: "ellipsis", style: "font-weight:600" }, p.id === me ? `${p.name} (ты)` : p.name),
+          p.car ? h("span", {}, "🚗") : null,
+          board === "minuses" && p.no_shows ? h("span", { class: "chip bad" }, `неявки: ${p.no_shows}`) : null),
+        h("div", { class: "bar" }, h("div", { style: `width:${(p[board] / max) * 100}%;${board === "minuses" ? "background:var(--danger)" : ""}` }))),
+      h("div", { class: "num" }, p[board])))));
 }
 async function openPlayerStats(id) {
   const r = await api("player_stats", { user_id: id });

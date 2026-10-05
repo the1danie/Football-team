@@ -25,14 +25,19 @@ async def team_view(session: AsyncSession):
     if not rows:
         return "Статистики пока нет.", None
     minuses = await svc.open_penalty_points(session)
-    lines = ["<b>📊 Статистика команды</b>", ""]
-    lines += [
-        f"{texts.h(u.name)} — {n} {duties_word(n)}" + (f" · ⚠️ −{minuses[u.id]}" if minuses.get(u.id) else "")
-        for u, n in rows
-    ]
+    lines = ["<b>🏆 Рейтинг: кто больше помог команде</b>", ""]
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    rank, prev = 0, None
+    for i, (u, n) in enumerate(rows, 1):
+        if n != prev:
+            rank, prev = i, n
+        mark = medals.get(rank, f"{rank}.") if n else f"{rank}."
+        lines.append(
+            f"{mark} {texts.h(u.name)} — {n} {duties_word(n)}" + (f" · ⚠️ −{minuses[u.id]}" if minuses.get(u.id) else "")
+        )
     if minuses:
         lines += ["", "⚠️ — минусы за неответы на опросы"]
-    lines += ["", "Нажми на игрока, чтобы посмотреть подробности."]
+    lines += ["", "Нажми на игрока, чтобы посмотреть подробности. Все рейтинги (посещения, минусы, за месяц) — в приложении."]
     b = InlineKeyboardBuilder()
     for u, _ in rows:
         b.button(text=u.name, callback_data=f"stat:{u.id}")

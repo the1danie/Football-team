@@ -155,3 +155,38 @@ async def test_maybe_gets_nudge(fake, monkeypatch):  # noqa: F811
     async with sm() as s:
         assert await svc.open_penalty_points(s) == {}
     assert PenaltyStatus.OPEN  # импорт используется
+
+
+async def test_leaderboard(session):
+    from datetime import datetime
+
+    from bot.models import Penalty
+
+    a, b, c = await make_user(session, "А", has_car=True), await make_user(session, "Б"), await make_user(session, "В")
+    now = config.now()
+    old = await svc.create_game(session, "training", now - timedelta(days=60), None, None)  # давно
+    recent = await svc.create_game(session, "training", now - timedelta(days=3), None, None)
+    future = await svc.create_game(session, "training", now + timedelta(days=3), None, None)
+    for g in (old, recent, future):
+        for u in (a, b, c):
+            await svc.set_rsvp(session, g, u, "yes")
+        await svc.distribute_game(session, g)
+        await svc.distribute_game(session, g, phase="after")
+    old.status = recent.status = "finished"
+    await svc.set_attendance(session, recent, c, False)  # В не пришёл на недавнюю
+    session.add(Penalty(user_id=b.id, game_id=old.id, points=1, created_at=datetime(2020, 1, 1)))
+    await session.flush()
+
+    board = {r["name"]: r for r in await svc.leaderboard(session, now)}
+    assert board["А"]["games"] == 2 and board["В"]["games"] == 1  # будущая не считается, неявка — тоже
+    assert sum(r["duties"] for r in board.values()) == 3 + 3 - 1  # две прошедшие игры минус невыполненное
+    assert board["В"]["minuses"] == 1 and board["В"]["no_shows"] == 1 and board["Б"]["minuses"] == 1
+
+    month = {r["name"]: r for r in await svc.leaderboard(session, now, now - timedelta(days=30))}
+    assert month["А"]["games"] == 1 and month["Б"]["minuses"] == 0  # старая игра и старый минус — вне месяца
+
+
+async def test_leaderboard_api(team):  # noqa: F811
+    _, res = await api(ADMIN, "stats", period="month")
+    assert res["period"] == "month" and res["board"][0]["name"] == "Даниял"
+    assert {"duties", "games", "minuses", "no_shows"} <= set(res["board"][0])

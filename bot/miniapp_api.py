@@ -215,9 +215,13 @@ def _tg_ns(tg: dict) -> SimpleNamespace:
     return SimpleNamespace(id=int(tg["id"]), first_name=tg.get("first_name", ""), last_name=tg.get("last_name", ""))
 
 
-async def stats_view(session: AsyncSession) -> dict:
+async def stats_view(session: AsyncSession, period: str = "all") -> dict:
     minuses = await svc.open_penalty_points(session)
+    now = config.now()
+    since = now - timedelta(days=30) if period == "month" else None
     return {
+        "period": "month" if since else "all",
+        "board": await svc.leaderboard(session, now, since),
         "team": [
             {"id": u.id, "name": u.name, "total": n, "minuses": minuses.get(u.id, 0), "car": u.has_car}
             for u, n in await svc.team_stats(session)
@@ -363,7 +367,7 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             user.web_version = (user.web_version or 0) + 1
             note = "Все личные ссылки отключены. Новую можно получить в боте: /web."
         elif action == "stats":
-            return await stats_view(session)
+            return await stats_view(session, body.get("period", "all"))
         elif action == "player_stats":
             return await player_view(session, await _user(session, body.get("user_id")), is_admin)
         # --- админ

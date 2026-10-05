@@ -864,3 +864,54 @@ async def set_attendance(
         result.penalty_total = (await open_penalty_points(session, [user.id])).get(user.id, 0)
     await session.flush()
     return result
+
+
+# ---------------------------------------------------------------- лидерборд
+
+
+async def leaderboard(session: AsyncSession, now: datetime, since: datetime | None = None) -> list[dict]:
+    """Рейтинги команды: помощь (выполненные обязанности), посещения, минусы — за период."""
+    played = [Game.status != GameStatus.CANCELLED, Game.starts_at <= now]
+    if since is not None:
+        played.append(Game.starts_at >= since)
+
+    duties = dict(
+        (await session.execute(
+            select(Assignment.user_id, func.count())
+            .join(Game, Assignment.game_id == Game.id)
+            .where(Assignment.status == AssignmentStatus.ACTIVE, *played)
+            .group_by(Assignment.user_id)
+        )).all()
+    )
+    games = dict(
+        (await session.execute(
+            select(GameParticipant.user_id, func.count())
+            .join(Game, GameParticipant.game_id == Game.id)
+            .where(GameParticipant.status == Rsvp.YES, GameParticipant.attended.is_not(False), *played)
+            .group_by(GameParticipant.user_id)
+        )).all()
+    )
+    pen_q = select(Penalty.user_id, Penalty.reason, func.sum(Penalty.points)).where(
+        Penalty.status != PenaltyStatus.CANCELLED
+    )
+    if since is not None:
+        pen_q = pen_q.where(Penalty.created_at >= since - timedelta(days=1))
+    minuses: dict[int, int] = {}
+    no_shows: dict[int, int] = {}
+    for uid, reason, pts in (await session.execute(pen_q.group_by(Penalty.user_id, Penalty.reason))).all():
+        minuses[uid] = minuses.get(uid, 0) + int(pts or 0)
+        if reason == PenaltyReason.NO_SHOW:
+            no_shows[uid] = no_shows.get(uid, 0) + int(pts or 0)
+
+    users = [
+        u for u in await all_users(session)
+        if u.profile_completed and (u.status == UserStatus.APPROVED or u.id in duties or u.id in games)
+    ]
+    return [
+        {
+            "id": u.id, "name": u.name, "car": u.has_car,
+            "duties": duties.get(u.id, 0), "games": games.get(u.id, 0),
+            "minuses": minuses.get(u.id, 0), "no_shows": no_shows.get(u.id, 0),
+        }
+        for u in users
+    ]
