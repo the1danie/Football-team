@@ -205,6 +205,10 @@ async def test_tick_installs_webhook_itself(fake, monkeypatch):
     hook = next(c for c in fake.calls if isinstance(c, SetWebhook))
     assert hook.url == "https://football.vercel.app/api/webhook"  # основной домен, а не адрес деплоя
     assert hook.secret_token == config.webhook_secret
+    from aiogram.methods import SetChatMenuButton
+
+    menu = next(c for c in fake.calls if isinstance(c, SetChatMenuButton))
+    assert menu.menu_button.web_app.url == "https://football.vercel.app/app"  # кнопка «Открыть» → Mini App
     _, body = await call(webhook.tick_app, query=f"secret={CRON}")
     assert body["webhook_installed"] is False
 

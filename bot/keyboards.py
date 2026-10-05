@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import texts
@@ -21,6 +21,24 @@ def main_menu(is_admin: bool) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=t) for t in row] for row in rows], resize_keyboard=True
     )
+
+
+def app_button(game_id: int | None = None, text: str = "📱 Открыть приложение") -> InlineKeyboardButton | None:
+    """Кнопка Mini App (только в личке). Нет публичного адреса (локальный запуск) — нет кнопки."""
+    from bot.config import config
+
+    if not config.public_url:
+        return None
+    url = f"{config.public_url}/app" + (f"?game={game_id}" if game_id else "")
+    return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))
+
+
+def with_app_button(markup: InlineKeyboardMarkup | None, game_id: int | None = None) -> InlineKeyboardMarkup | None:
+    button = app_button(game_id)
+    if button is None:
+        return markup
+    rows = list(markup.inline_keyboard) if markup else []
+    return InlineKeyboardMarkup(inline_keyboard=[*rows, [button]])
 
 
 def car_choice(prefix: str = "car") -> InlineKeyboardMarkup:

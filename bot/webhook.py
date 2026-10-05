@@ -3,23 +3,27 @@
 - webhook_app — Telegram присылает сюда каждое обновление (POST /api/webhook);
 - tick_app    — проверки по расписанию: автораспределение, напоминания (GET /api/tick);
 - setup_app   — один раз после деплоя: таблицы, webhook, меню команд (GET /api/setup);
-- health_app  — самодиагностика с подсказками (GET /api/health).
+- health_app  — самодиагностика с подсказками (GET /api/health);
+- app_page, miniapp_api_app — Telegram Mini App: страница (/app) и её API (POST /api/miniapp).
 """
 
 import asyncio
 import hmac
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
 from aiogram import Dispatcher
-from aiogram.types import Update
+from aiogram.types import MenuButtonWebApp, Update, WebAppInfo
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from bot import miniapp_api
 from bot.app import make_bot, make_dispatcher, set_commands
 from bot.config import config
+from bot.miniapp_api import verify_init_data
 from bot.db import init_db, make_engine, make_sessionmaker
 from bot.scheduler import tick
 
@@ -68,13 +72,20 @@ async def _read(scope: dict, receive) -> Request:
     return Request(scope, body)
 
 
+class Html(str):
+    """Ответ-страница вместо JSON."""
+
+
 async def _respond(send, status: int, payload: Any) -> None:
-    body = json.dumps(payload, ensure_ascii=False).encode()
+    if isinstance(payload, Html):
+        body, ctype = payload.encode(), b"text/html; charset=utf-8"
+    else:
+        body, ctype = json.dumps(payload, ensure_ascii=False).encode(), b"application/json; charset=utf-8"
     await send(
         {
             "type": "http.response.start",
             "status": status,
-            "headers": [(b"content-type", b"application/json; charset=utf-8")],
+            "headers": [(b"content-type", ctype), (b"cache-control", b"no-store")],
         }
     )
     await send({"type": "http.response.body", "body": body})
@@ -163,6 +174,16 @@ async def ensure_webhook(bot, base: str) -> bool:
     return True
 
 
+async def ensure_menu_button(bot, base: str) -> bool:
+    """Кнопка «Открыть» рядом с полем ввода — открывает Mini App."""
+    url = f"{base}/app"
+    current = await bot.get_chat_menu_button()
+    if isinstance(current, MenuButtonWebApp) and current.web_app.url == url:
+        return False
+    await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Открыть", web_app=WebAppInfo(url=url)))
+    return True
+
+
 async def handle_tick(request: Request) -> tuple[int, Any]:
     if not _authorized(request):
         return 401, {"ok": False, "error": "bad secret"}
@@ -173,6 +194,7 @@ async def handle_tick(request: Request) -> tuple[int, Any]:
     try:
         try:
             webhook_fixed = await ensure_webhook(bot, _current_base(request))
+            await ensure_menu_button(bot, _current_base(request))
         except Exception:
             log.exception("Webhook check failed")
         async with sessionmaker() as session:
@@ -195,6 +217,7 @@ async def handle_setup(request: Request) -> tuple[int, Any]:
     try:
         await bot.delete_webhook()  # принудительно переустанавливаем
         await ensure_webhook(bot, base)
+        await ensure_menu_button(bot, base)
         me = await bot.me()
         info = await bot.get_webhook_info()
     finally:
@@ -245,6 +268,7 @@ async def handle_health(request: Request) -> tuple[int, Any]:
     try:
         me = await bot.me()
         fixed = await ensure_webhook(bot, _current_base(request))
+        await ensure_menu_button(bot, _current_base(request))
         info = await bot.get_webhook_info()
         report["telegram"] = {
             "bot": f"@{me.username}",
@@ -272,7 +296,51 @@ async def handle_health(request: Request) -> tuple[int, Any]:
     return 200, report
 
 
+# ----------------------------------------------------------------- Mini App
+
+_PAGE: str | None = None
+
+
+def _page() -> str:
+    global _PAGE
+    if _PAGE is None:
+        _PAGE = (Path(__file__).parent / "miniapp" / "index.html").read_text(encoding="utf-8")
+    return _PAGE
+
+
+async def handle_app_page(request: Request) -> tuple[int, Any]:
+    return 200, Html(_page())
+
+
+async def handle_miniapp_api(request: Request) -> tuple[int, Any]:
+    if request.method != "POST":
+        return 405, {"ok": False, "error": "POST only"}
+    tg = verify_init_data(request.headers.get("x-telegram-init-data", ""), config.bot_token)
+    if tg is None:
+        return 401, {"ok": False, "error": "Откройте приложение из Telegram."}
+    try:
+        body = json.loads(request.body or b"{}")
+    except ValueError:
+        return 400, {"ok": False, "error": "Неверный запрос."}
+
+    sessionmaker, _ = await _ensure_ready()
+    bot = make_bot()
+    try:
+        async with sessionmaker() as session:
+            try:
+                data = await miniapp_api.handle(bot, session, tg, body)
+            except miniapp_api.ApiError as e:
+                await session.rollback()
+                return e.status, {"ok": False, "error": str(e)}
+            await session.commit()
+    finally:
+        await bot.session.close()
+    return 200, {"ok": True, **data}
+
+
 webhook_app = _endpoint(handle_webhook)
+app_page = _endpoint(handle_app_page)
+miniapp_api_app = _endpoint(handle_miniapp_api)
 health_app = _endpoint(handle_health)
 tick_app = _endpoint(handle_tick)
 setup_app = _endpoint(handle_setup)

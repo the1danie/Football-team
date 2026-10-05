@@ -5,13 +5,20 @@
   ],
   "functions": {
     "api/*.py": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "bot/**"
     }
   },
   "crons": [
     {
       "path": "/api/tick",
       "schedule": "0 3 * * *"
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/app",
+      "destination": "/api/app"
     }
   ]
 }

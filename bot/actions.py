@@ -46,7 +46,7 @@ async def send_poll_invites(bot: Bot, session: AsyncSession, game: Game, skip: U
     for user in await svc.roster(session):
         if skip is not None and user.id == skip.id:
             continue
-        if await notifier.send_dm(bot, user, text, keyboards.rsvp(game)):
+        if await notifier.send_dm(bot, user, text, keyboards.with_app_button(keyboards.rsvp(game), game.id)):
             sent += 1
         else:
             failed.append(user.name)
@@ -148,6 +148,9 @@ async def game_card(
     if is_admin:
         b.attach(InlineKeyboardBuilder.from_markup(keyboards.game_admin(game)))
         b.row(InlineKeyboardButton(text="📤 Текст для WhatsApp", callback_data=f"wa:{game.id}"))
+    app = keyboards.app_button(game.id)
+    if app is not None:
+        b.row(app)
     markup = b.as_markup()
     return "\n".join(lines), (markup if markup.inline_keyboard else None)
 

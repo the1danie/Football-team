@@ -91,6 +91,13 @@ async def start(message: Message, command: CommandObject, session: AsyncSession,
     if await open_payload(message, session, user, payload):
         return
     await show_menu(message, f"Привет, {texts.h(user.name)}! ⚽\n\n{HELP}")
+    app = keyboards.with_app_button(None)
+    if app is not None:
+        await message.answer(
+            "Удобнее всего — в приложении: игры, обязанности, статистика. "
+            "Оно открывается и кнопкой «Открыть» рядом с полем ввода.",
+            reply_markup=app,
+        )
 
 
 async def open_payload(message: Message, session: AsyncSession, user: User, payload: str) -> bool:

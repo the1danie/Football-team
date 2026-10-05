@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Футбол — команда</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-secondary-bg-color, #f1f2f6);
+    --card: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, #ffffff));
+    --text: var(--tg-theme-text-color, #111418);
+    --hint: var(--tg-theme-hint-color, #8a8f98);
+    --link: var(--tg-theme-link-color, #2a7de1);
+    --accent: var(--tg-theme-button-color, #2a7de1);
+    --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    --danger: var(--tg-theme-destructive-text-color, #e5484d);
+    --sep: color-mix(in srgb, var(--hint) 22%, transparent);
+    --soft: color-mix(in srgb, var(--hint) 12%, transparent);
+    --yes: #2fa84f; --maybe: #e8a317; --no: #e5484d;
+    --yes-soft: color-mix(in srgb, var(--yes) 16%, transparent);
+    --maybe-soft: color-mix(in srgb, var(--maybe) 18%, transparent);
+    --no-soft: color-mix(in srgb, var(--no) 14%, transparent);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  body.has-fab { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; padding: 0; }
+  input, select { font: inherit; color: var(--text); }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 12px 12px 0; }
+  h1 { font-size: 22px; margin: 8px 4px 12px; }
+  h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--hint); margin: 18px 6px 8px; }
+  .muted { color: var(--hint); }
+  .small { font-size: 13px; }
+  .card { background: var(--card); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .grow { flex: 1; min-width: 0; }
+  .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px;
+    background: var(--soft); font-size: 13px; white-space: nowrap; }
+  .chip.warn { background: var(--maybe-soft); }
+  .chip.bad { background: var(--no-soft); color: var(--danger); }
+  .chip.good { background: var(--yes-soft); }
+  .chip.accent { background: var(--accent-soft); color: var(--link); }
+  .btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
+    min-height: 46px; border-radius: 12px; background: var(--accent); color: var(--accent-text);
+    font-weight: 600; padding: 10px 14px; }
+  .btn.secondary { background: var(--soft); color: var(--text); }
+  .btn.danger { background: var(--no-soft); color: var(--danger); }
+  .btn.small { min-height: 38px; font-size: 14px; width: auto; }
+  .btn:disabled { opacity: .5; }
+  .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+
+  /* Игра */
+  .game-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .game-when { font-size: 20px; font-weight: 700; line-height: 1.2; }
+  .game-sub { color: var(--hint); margin-top: 2px; }
+  .banner { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--maybe-soft); font-size: 14px; }
+  .banner.info { background: var(--accent-soft); }
+  .banner.ok { background: var(--yes-soft); }
+  .rsvp { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .rsvp button { min-height: 58px; border-radius: 14px; background: var(--soft); display: flex;
+    flex-direction: column; align-items: center; justify-content: center; font-size: 14px; font-weight: 600;
+    border: 2px solid transparent; transition: transform .08s; }
+  .rsvp button:active { transform: scale(.97); }
+  .rsvp button .e { font-size: 20px; line-height: 1.1; }
+  .rsvp button.on.yes { background: var(--yes-soft); border-color: var(--yes); }
+  .rsvp button.on.maybe { background: var(--maybe-soft); border-color: var(--maybe); }
+  .rsvp button.on.no { background: var(--no-soft); border-color: var(--no); }
+  .counts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+  .people { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .toggle-link { color: var(--link); font-size: 14px; margin-top: 10px; display: inline-block; }
+  .duty { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--sep); }
+  .duty:first-child { border-top: 0; }
+  .duty .ico { width: 36px; height: 36px; border-radius: 10px; background: var(--soft); display: grid;
+    place-items: center; font-size: 19px; flex: none; }
+  .duty.mine .ico { background: var(--accent-soft); }
+  .duty .who { font-weight: 600; }
+  .duty.mine .who { color: var(--link); }
+  .admin-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;
+    padding-top: 12px; border-top: 1px dashed var(--sep); }
+
+  /* Списки */
+  .list { background: var(--card); border-radius: var(--radius); overflow: hidden; margin-bottom: 12px; }
+  .item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; width: 100%; text-align: left; }
+  .item + .item { border-top: 1px solid var(--sep); }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none;
+    font-weight: 700; color: #fff; font-size: 15px; }
+  .bar { height: 6px; border-radius: 3px; background: var(--soft); margin-top: 6px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--accent); border-radius: 3px; }
+  .num { font-weight: 700; font-size: 18px; min-width: 28px; text-align: right; }
+
+  /* Сегменты и чипсы выбора */
+  .seg { display: flex; background: var(--soft); border-radius: 12px; padding: 3px; gap: 3px; }
+  .seg button { flex: 1; min-height: 38px; border-radius: 10px; font-size: 14px; font-weight: 600; color: var(--hint); }
+  .seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .pick { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: none; }
+  .pick::-webkit-scrollbar { display: none; }
+  .pick button, .grid button { min-height: 44px; padding: 6px 12px; border-radius: 12px; background: var(--soft);
+    font-size: 14px; font-weight: 600; white-space: nowrap; border: 2px solid transparent; }
+  .pick button small { display: block; font-weight: 400; color: var(--hint); font-size: 12px; }
+  .pick button.on, .grid button.on { border-color: var(--accent); background: var(--accent-soft); }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .field { width: 100%; min-height: 46px; border-radius: 12px; border: 1px solid var(--sep);
+    background: var(--card); padding: 10px 12px; }
+  .label { font-size: 14px; font-weight: 600; margin: 16px 2px 8px; }
+
+  /* Переключатель */
+  .switch-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+  .switch-row + .switch-row { border-top: 1px solid var(--sep); }
+  .switch { width: 51px; height: 31px; border-radius: 16px; background: var(--soft); position: relative; flex: none;
+    transition: background .15s; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
+  .switch.on { background: var(--yes); }
+  .switch.on::after { transform: translateX(20px); }
+  .switch:disabled { opacity: .5; }
+
+  /* Нижнее меню */
+  .tabs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--sep);
+    display: flex; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); z-index: 5; }
+  .tabs button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px;
+    color: var(--hint); padding: 4px 0; position: relative; }
+  .tabs button .e { font-size: 21px; line-height: 1.1; filter: grayscale(1); opacity: .7; }
+  .tabs button.on { color: var(--link); }
+  .tabs button.on .e { filter: none; opacity: 1; }
+  .badge { position: absolute; top: 0; left: 55%; background: var(--danger); color: #fff; border-radius: 999px;
+    font-size: 11px; min-width: 18px; height: 18px; display: grid; place-items: center; padding: 0 5px; font-weight: 700; }
+  .fab { position: fixed; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 4;
+    border-radius: 999px; padding: 0 18px; min-height: 50px; box-shadow: 0 4px 14px rgba(0,0,0,.18); width: auto; }
+
+  /* Нижний лист */
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 10; display: flex; align-items: flex-end;
+    animation: fade .15s; }
+  .sheet { background: var(--bg); width: 100%; max-width: 560px; margin: 0 auto; max-height: 92vh; overflow-y: auto;
+    border-radius: 20px 20px 0 0; padding: 8px 14px calc(18px + env(safe-area-inset-bottom)); animation: up .2s; }
+  .sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--sep); margin: 4px auto 10px; }
+  .sheet h3 { margin: 4px 2px 12px; font-size: 19px; }
+  @keyframes up { from { transform: translateY(40px); opacity: .5; } }
+  @keyframes fade { from { opacity: 0; } }
+
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(90px + env(safe-area-inset-bottom));
+    background: rgba(20,20,20,.88); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 20;
+    max-width: calc(100% - 32px); text-align: center; animation: fade .2s; white-space: pre-line; }
+  .empty { text-align: center; padding: 40px 20px; }
+  .empty .big { font-size: 52px; }
+  .center-screen { min-height: 80vh; display: flex; flex-direction: column; justify-content: center; padding: 20px; }
+  .option { display: flex; align-items: center; gap: 14px; padding: 16px; border-radius: 16px; background: var(--card);
+    border: 2px solid transparent; width: 100%; text-align: left; margin-bottom: 10px; }
+  .option.on { border-color: var(--accent); background: var(--accent-soft); }
+  .option .e { font-size: 30px; }
+  .spinner { width: 28px; height: 28px; border: 3px solid var(--soft); border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .8s linear infinite; margin: 30vh auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  ul.rules { margin: 0; padding-left: 20px; } ul.rules li { margin: 6px 0; }
+</style>
+</head>
+<body>
+<div id="app"><div class="spinner"></div></div>
+<script>
+"use strict";
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+const S = { data: null, tab: "games", stats: null, players: null, playerFilter: null, sheet: null, open: {} };
+const RSVP = { yes: ["✅", "Буду"], maybe: ["🤔", "Не знаю"], no: ["❌", "Не буду"] };
+const COLORS = ["#e17076", "#7bc862", "#65aadd", "#a695e7", "#ee7aae", "#6ec9cb", "#faa774", "#5aa0d8"];
+const params = new URLSearchParams(location.search);
+const startGame = Number(params.get("game") || (tg && tg.initDataUnsafe && (tg.initDataUnsafe.start_param || "").replace("game_", "")) || 0);
+
+// ---------------------------------------------------------------- утилиты
+function h(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "style") el.style.cssText = v;
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c.nodeType ? c : String(c));
+  return el;
+}
+const plural = (n, one, few, many) => {
+  const m10 = n % 10, m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+};
+const haptic = (kind) => { try { tg && tg.HapticFeedback && (kind === "ok" ? tg.HapticFeedback.notificationOccurred("success") : kind === "err" ? tg.HapticFeedback.notificationOccurred("error") : tg.HapticFeedback.impactOccurred("light")); } catch (e) {} };
+function toast(text) {
+  if (!text) return;
+  document.querySelectorAll(".toast").forEach((t) => t.remove());
+  const t = h("div", { class: "toast" }, text);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 3200);
+}
+function confirmBox(text) {
+  return new Promise((resolve) => {
+    if (tg && tg.showConfirm && tg.initData) tg.showConfirm(text, (ok) => resolve(ok));
+    else resolve(window.confirm(text));
+  });
+}
+function avatar(name, id) {
+  const letters = (name || "?").split(/\s+/).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
+  return h("div", { class: "avatar", style: `background:${COLORS[(id || 0) % COLORS.length]}` }, letters);
+}
+function openLink(url) { if (tg && tg.openLink && tg.initData) tg.openLink(url); else window.open(url, "_blank"); }
+
+async function api(action, body = {}, { quiet } = {}) {
+  try {
+    const res = await fetch("/api/miniapp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": (tg && tg.initData) || "" },
+      body: JSON.stringify({ action, ...body }),
+    });
+    const json = await res.json().catch(() => ({ ok: false, error: "Сервер не ответил" }));
+    if (!json.ok) { if (!quiet) { haptic("err"); toast(json.error || "Ошибка"); } return null; }
+    if (json.state) S.data = json.state;
+    if (json.note) toast(json.note);
+    return json;
+  } catch (e) { haptic("err"); toast("Нет связи с сервером"); return null; }
+}
+
+// ---------------------------------------------------------------- отрисовка
+function render() {
+  const root = document.getElementById("app");
+  root.replaceChildren(screen());
+  renderSheet();
+  if (tg && tg.BackButton) { S.sheet ? tg.BackButton.show() : tg.BackButton.hide(); }
+}
+
+function screen() {
+  const d = S.data;
+  if (!d) return h("div", { class: "spinner" });
+  if (d.access === "new") return onboarding();
+  if (d.access === "pending") return info("⏳", "Заявка у администратора",
+    "Как только администратор подтвердит, что ты из команды, здесь появятся игры, а бот пришлёт сообщение.");
+  if (d.access === "blocked") return info("⛔", "Доступ закрыт", "Администратор закрыл доступ к боту команды.");
+  const tabs = [["games", "⚽", "Игры"], ["stats", "📊", "Статистика"]];
+  if (d.is_admin) tabs.push(["players", "👥", "Игроки"]);
+  tabs.push(["profile", "👤", "Профиль"]);
+  document.body.classList.toggle("has-fab", S.tab === "games" && d.is_admin);
+  const body = { games: gamesTab, stats: statsTab, players: playersTab, profile: profileTab }[S.tab]();
+  return h("div", {},
+    h("div", { class: "wrap" }, body),
+    S.tab === "games" && d.is_admin ? h("button", { class: "btn fab", onclick: () => openSheet({ type: "create" }) }, "＋ Новая игра") : null,
+    h("nav", { class: "tabs" }, tabs.map(([id, e, label]) =>
+      h("button", { class: S.tab === id ? "on" : "", onclick: () => switchTab(id) },
+        h("span", { class: "e" }, e), label,
+        id === "players" && d.pending_count ? h("span", { class: "badge" }, d.pending_count) : null))));
+}
+
+function info(icon, title, text) {
+  return h("div", { class: "center-screen empty" }, h("div", { class: "big" }, icon), h("h1", {}, title), h("p", { class: "muted" }, text));
+}
+
+async function switchTab(id) {
+  S.tab = id; haptic(); render(); window.scrollTo(0, 0);
+  if (id === "stats") { const r = await api("stats"); if (r) { S.stats = r.team; render(); } }
+  if (id === "players") { const r = await api("players"); if (r) { S.players = r.players; render(); } }
+}
+
+// ---------------------------------------------------------------- регистрация
+function onboarding() {
+  const st = S.onb || (S.onb = { name: S.data.tg_name || "", car: null });
+  const opt = (val, e, title, sub) => h("button", { class: "option" + (st.car === val ? " on" : ""), onclick: () => { st.car = val; haptic(); render(); } },
+    h("span", { class: "e" }, e), h("div", {}, h("div", { style: "font-weight:600" }, title), h("div", { class: "muted small" }, sub)));
+  return h("div", { class: "wrap center-screen" },
+    h("div", { style: "font-size:48px" }, "⚽"),
+    h("h1", {}, `Привет${st.name ? ", " + st.name : ""}!`),
+    h("p", { class: "muted", style: "margin:0 4px 16px" }, "Здесь отмечаемся на игры и видим, кто что приносит. Пара вопросов:"),
+    h("div", { class: "label" }, "Как тебя зовут в команде"),
+    h("input", { class: "field", value: st.name, maxlength: 64, oninput: (e) => { st.name = e.target.value; } }),
+    h("div", { class: "label" }, "Есть ли у тебя машина?"),
+    h("div", { class: "muted small", style: "margin:-4px 2px 10px" }, "Мячи возят только те, кто на машине."),
+    opt(true, "🚗", "Есть машина", "Иногда попрошу привезти мячи"),
+    opt(false, "🚶", "Нет машины", "Мячи доставаться не будут"),
+    h("button", { class: "btn", style: "margin-top:10px", disabled: st.car === null || !st.name.trim(),
+      onclick: async (e) => { e.target.disabled = true; const r = await api("register", { name: st.name.trim(), car: st.car }); if (r) haptic("ok"); render(); } },
+      "Готово"));
+}
+
+// ---------------------------------------------------------------- игры
+function gamesTab() {
+  const d = S.data;
+  const head = h("h1", {}, "Игры");
+  if (!d.games.length) return h("div", {}, head, h("div", { class: "card empty" }, h("div", { class: "big" }, "🏟"),
+    h("p", {}, "Запланированных игр нет."), d.is_admin ? h("p", { class: "muted small" }, "Создайте игру кнопкой «＋ Новая игра».") : h("p", { class: "muted small" }, "Когда админ создаст игру, бот пришлёт сообщение.")));
+  return h("div", {}, head, d.games.map(gameCard));
+}
+
+function gameCard(g) {
+  const d = S.data;
+  const yes = g.participants.yes, maybe = g.participants.maybe, no = g.participants.no;
+  const mine = g.duties.filter((x) => x.mine);
+  const relative = g.day_word === "Сегодня" || g.day_word === "Завтра";
+  const card = h("div", { class: "card", id: "game-" + g.id });
+  card.append(
+    h("div", { class: "game-top" },
+      h("div", { class: "grow" },
+        h("div", { class: "game-when" }, `${relative ? g.day_word : g.date_label} · ${g.time}`),
+        h("div", { class: "game-sub" }, [relative ? g.date_label : null, g.location].filter(Boolean).join(" · ") || null)),
+      h("span", { class: "chip" }, g.kind_title)));
+
+  // Подсказка: что от меня нужно
+  if (g.status === "open" && !g.my_rsvp && !g.deadline_passed)
+    card.append(h("div", { class: "banner" }, `⏰ Ответь ${g.deadline_label}` + (g.penalty ? ` — иначе −${g.penalty}` : "")));
+  if (mine.length)
+    card.append(h("div", { class: "banner info" }, h("b", {}, "Твоя обязанность: "), mine.map((m) => `${m.emoji} ${m.action}`).join(", ")));
+
+  card.append(h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
+    h("button", { class: `${key}${g.my_rsvp === key ? " on" : ""}`, "aria-pressed": g.my_rsvp === key ? "true" : "false",
+      onclick: async () => { if (g.my_rsvp === key) return; haptic(); const r = await api("rsvp", { game_id: g.id, status: key }); if (r) { haptic("ok"); render(); } } },
+      h("span", { class: "e" }, e), label))));
+
+  const open = S.open[g.id];
+  const counts = h("div", { class: "counts" },
+    h("span", { class: "chip good" }, yes.length ? `✅ ${yes.length} ${plural(yes.length, "идёт", "идут", "идут")}` : "✅ пока никого"),
+    maybe.length ? h("span", { class: "chip warn" }, `🤔 ${maybe.length}`) : null,
+    no.length ? h("span", { class: "chip" }, `❌ ${no.length}`) : null,
+    d.is_admin && g.no_answer && g.no_answer.length ? h("span", { class: "chip bad" }, `🙈 молчат: ${g.no_answer.length}`) : null);
+  card.append(counts, h("button", { class: "toggle-link", onclick: () => { S.open[g.id] = !open; render(); } }, open ? "Скрыть список ▲" : "Кто идёт ▼"));
+  if (open) {
+    const group = (title, list) => list && list.length ? h("div", { style: "margin-top:10px" },
+      h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
+    card.append(group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
+      d.is_admin ? group(`🙈 Не ответили (${(g.no_answer || []).length})`, g.no_answer) : null);
+  }
+
+  // Обязанности
+  if (g.status === "distributed") {
+    card.append(h("h2", { style: "margin:16px 0 4px" }, "Обязанности"));
+    card.append(h("div", {}, g.duties.map((x) => h("div", { class: "duty" + (x.mine ? " mine" : "") },
+      h("div", { class: "ico" }, x.emoji),
+      h("div", { class: "grow" }, h("div", { class: "small muted" }, x.name),
+        h("div", { class: "who" }, x.user ? (x.mine ? "Ты" : x.user.name) : "⚠️ не назначено")),
+      x.mine ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "swap", game: g, duty: x }) }, "🔄 Поменяться") : null))));
+  } else if (g.status === "open") {
+    card.append(h("div", { class: "small muted", style: "margin-top:12px" },
+      g.deadline_passed ? "Обязанности скоро распределит админ." : `Обязанности распределятся ${g.deadline_at_label}.`));
+  }
+
+  if (d.is_admin) {
+    card.append(h("div", { class: "admin-bar" },
+      h("button", { class: "btn small secondary", onclick: () => adminDistribute(g) }, g.status === "distributed" ? "🔁 Пересчитать" : "🎯 Распределить"),
+      h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp"),
+      g.status === "distributed" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "assign", game: g }) }, "✏️ Назначения") : null,
+      h("button", { class: "btn small danger", onclick: () => adminCancel(g) }, "Отменить")));
+  }
+  return card;
+}
+
+async function adminDistribute(g) {
+  if (g.status === "distributed" && !(await confirmBox("Пересчитать обязанности заново? Все получат новые назначения."))) return;
+  const r = await api("distribute", { game_id: g.id });
+  if (r) { haptic("ok"); render(); }
+}
+async function adminCancel(g) {
+  if (!(await confirmBox(`Отменить: ${g.kind_title}, ${g.date_label} ${g.time}? Всем назначенным придёт уведомление.`))) return;
+  const r = await api("cancel", { game_id: g.id });
+  if (r) { haptic("ok"); render(); }
+}
+async function shareWhatsApp(g) {
+  const r = await api("whatsapp", { game_id: g.id });
+  if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url });
+}
+
+// ---------------------------------------------------------------- статистика
+function statsTab() {
+  if (!S.stats) return h("div", {}, h("h1", {}, "Статистика"), h("div", { class: "spinner" }));
+  const max = Math.max(1, ...S.stats.map((p) => p.total));
+  return h("div", {}, h("h1", {}, "Статистика"),
+    h("p", { class: "muted small", style: "margin:-6px 4px 12px" }, "Сколько обязанностей выполнил каждый. У кого меньше — тому следующие."),
+    h("div", { class: "list" }, S.stats.map((p) => h("button", { class: "item", onclick: () => openPlayerStats(p.id) },
+      avatar(p.name, p.id),
+      h("div", { class: "grow" }, h("div", { class: "row" }, h("span", { class: "ellipsis", style: "font-weight:600" }, p.name),
+        p.car ? h("span", {}, "🚗") : null, p.minuses ? h("span", { class: "chip bad" }, `−${p.minuses}`) : null),
+        h("div", { class: "bar" }, h("div", { style: `width:${(p.total / max) * 100}%` }))),
+      h("div", { class: "num" }, p.total)))),
+    S.stats.some((p) => p.minuses) ? h("p", { class: "muted small", style: "margin:0 6px" }, "−N — минусы за неответы на опросы.") : null);
+}
+async function openPlayerStats(id) {
+  const r = await api("player_stats", { user_id: id });
+  if (r) openSheet({ type: "playerStats", player: r });
+}
+
+// ---------------------------------------------------------------- игроки (админ)
+function playersTab() {
+  if (!S.players) return h("div", {}, h("h1", {}, "Игроки"), h("div", { class: "spinner" }));
+  const groups = { pending: [], approved: [], blocked: [] };
+  S.players.forEach((p) => (groups[p.status] || groups.approved).push(p));
+  const filter = S.playerFilter || (groups.pending.length ? "pending" : "approved");
+  const seg = [["pending", `Заявки${groups.pending.length ? " " + groups.pending.length : ""}`], ["approved", `Команда ${groups.approved.length}`], ["blocked", "Удалены"]];
+  const list = groups[filter];
+  return h("div", {}, h("h1", {}, "Игроки"),
+    h("div", { class: "seg", style: "margin-bottom:12px" }, seg.map(([id, label]) =>
+      h("button", { class: filter === id ? "on" : "", onclick: () => { S.playerFilter = id; render(); } }, label))),
+    filter === "pending" && list.length ? h("p", { class: "muted small", style: "margin:0 6px 10px" }, "Эти люди нажали /start в боте. Примите своих — чужих отклоните.") : null,
+    list.length ? h("div", { class: "list" }, list.map((p) => h("button", { class: "item", onclick: () => openPlayer(p.id) },
+      avatar(p.name, p.id),
+      h("div", { class: "grow" },
+        h("div", { class: "ellipsis", style: "font-weight:600" }, p.name),
+        h("div", { class: "small muted ellipsis" }, [p.username ? "@" + p.username : null,
+          p.car ? "🚗 есть машина" + (p.car_locked ? " 🔒" : "") : "🚶 нет машины",
+          p.status === "approved" && !p.active ? "🚫 не в составе" : null].filter(Boolean).join(" · "))),
+      p.minuses ? h("span", { class: "chip bad" }, `−${p.minuses}`) : null,
+      p.status === "pending" ? h("span", { class: "chip warn" }, "ждёт") : h("span", { class: "muted" }, "›"))))
+      : h("div", { class: "card empty muted" }, filter === "pending" ? "Новых заявок нет 👍" : "Пусто"));
+}
+async function openPlayer(id) {
+  const r = await api("player_detail", { user_id: id });
+  if (r) openSheet({ type: "player", player: r });
+}
+async function playerOp(p, op, extra = {}) {
+  if (op === "block" && !(await confirmBox(p.status === "pending" ? `Отклонить заявку: ${p.name}?` : `Удалить ${p.name} из команды? Его обязанности перейдут другим.`))) return;
+  const r = await api("player", { user_id: p.id, op, ...extra });
+  if (r) { haptic("ok"); S.players = r.players; S.sheet.player = r.player; const st = await api("state", {}, { quiet: true }); render(); }
+}
+
+// ---------------------------------------------------------------- профиль
+function profileTab() {
+  const u = S.data.user;
+  return h("div", {}, h("h1", {}, "Профиль"),
+    h("div", { class: "card row" }, avatar(u.name, u.id),
+      h("div", { class: "grow" }, h("div", { style: "font-weight:700;font-size:18px" }, u.name),
+        h("div", { class: "muted small" }, S.data.is_admin ? "Администратор" : "Игрок команды")),
+      h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "rename", value: u.name }) }, "Изменить")),
+    h("div", { class: "card" },
+      h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🚗 Есть машина"),
+        h("div", { class: "small muted" }, u.car_locked ? "Отметил администратор — изменить может только он." : "Мячи возят только те, кто на машине.")),
+        h("button", { class: "switch" + (u.car ? " on" : ""), role: "switch", "aria-checked": u.car ? "true" : "false", disabled: u.car_locked && !S.data.is_admin,
+          onclick: async () => { haptic(); const r = await api("profile", { car: !u.car }); if (r) render(); } }))),
+    u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
+      h("div", { class: "small muted", style: "margin-top:4px" }, "За то, что не ответил на опрос вовремя. Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
+    h("h2", {}, "Как это работает"),
+    h("div", { class: "card" }, h("ul", { class: "rules" },
+      h("li", {}, "Когда админ создаёт игру, бот присылает опрос. Отметься: Буду / Не знаю / Не буду."),
+      h("li", {}, "Перед игрой обязанности (мячи, вода, манишки, стирка) распределяются между теми, кто придёт. Первыми — кто делал меньше."),
+      h("li", {}, "Не можешь выполнить — «🔄 Поменяться». Передумал идти — «Не буду», обязанность перейдёт другому."),
+      S.data.penalty_points ? h("li", {}, `Не ответил до закрытия сбора — минус (−${S.data.penalty_points}).`) : null)));
+}
+
+// ---------------------------------------------------------------- нижние листы
+function openSheet(sheet) { S.sheet = sheet; haptic(); render(); }
+function closeSheet() { S.sheet = null; render(); }
+if (tg && tg.BackButton) tg.BackButton.onClick(closeSheet);
+
+function renderSheet() {
+  document.querySelectorAll(".sheet-bg").forEach((x) => x.remove());
+  if (!S.sheet) return;
+  const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
+    playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet }[S.sheet.type]();
+  const bg = h("div", { class: "sheet-bg", onclick: (e) => { if (e.target === bg) closeSheet(); } },
+    h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content));
+  document.body.append(bg);
+}
+
+function createSheet() {
+  const st = S.sheet.form || (S.sheet.form = { date: null, minutes: null, kind: "game", location: "", custom: false });
+  const days = [];
+  const now = new Date();
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const wd = d.toLocaleDateString("ru-RU", { weekday: "short" });
+    days.push([iso, i === 0 ? "Сегодня" : i === 1 ? "Завтра" : wd.charAt(0).toUpperCase() + wd.slice(1), d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })]);
+  }
+  const times = [];
+  for (let m = 13 * 60; m <= 24 * 60; m += 30) times.push(m);
+  const label = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const places = [...new Set(S.data.games.map((g) => g.location).filter(Boolean))];
+  const ready = st.date && st.minutes !== null;
+  return h("div", {},
+    h("h3", {}, "Новая игра"),
+    h("div", { class: "label" }, "Что"),
+    h("div", { class: "seg" }, [["game", "⚽ Игра"], ["training", "🏃 Тренировка"]].map(([k, l]) =>
+      h("button", { class: st.kind === k ? "on" : "", onclick: () => { st.kind = k; render(); } }, l))),
+    h("div", { class: "label" }, "День"),
+    h("div", { class: "pick" }, days.map(([iso, top, bottom]) =>
+      h("button", { class: st.date === iso ? "on" : "", onclick: () => { st.date = iso; haptic(); render(); } }, top, h("small", {}, bottom)))),
+    h("div", { class: "label" }, "Время"),
+    h("div", { class: "grid" }, times.map((m) =>
+      h("button", { class: st.minutes === m && !st.custom ? "on" : "", onclick: () => { st.minutes = m; st.custom = false; haptic(); render(); } }, label(m)))),
+    h("div", { class: "row", style: "margin-top:8px" }, h("span", { class: "small muted" }, "или своё:"),
+      h("input", { class: "field", type: "time", style: "max-width:140px", value: st.custom && st.minutes !== null ? label(st.minutes) : "",
+        onchange: (e) => { const [hh, mm] = e.target.value.split(":").map(Number); if (!isNaN(hh)) { st.minutes = hh * 60 + mm; st.custom = true; render(); } } })),
+    h("div", { class: "label" }, "Место (необязательно)"),
+    h("input", { class: "field", placeholder: "Например: Стадион Динамо", value: st.location, maxlength: 255, oninput: (e) => { st.location = e.target.value; } }),
+    places.length ? h("div", { class: "people" }, places.map((p) => h("button", { class: "chip", onclick: () => { st.location = p; render(); } }, p))) : null,
+    h("button", { class: "btn", style: "margin-top:18px", disabled: !ready,
+      onclick: async (e) => {
+        e.target.disabled = true;
+        const r = await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location });
+        if (r) { haptic("ok"); S.sheet = { type: "created", note: r.note, wa: r.whatsapp }; render(); } else e.target.disabled = false;
+      } }, ready ? `Создать: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}` : "Выберите день и время"),
+    h("p", { class: "muted small", style: "margin:8px 4px 0" }, "Игрокам придёт опрос в Telegram. Анонс для WhatsApp — на следующем шаге."));
+}
+
+function createdSheet() {
+  const s = S.sheet;
+  return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, "✅"), h("h3", {}, "Игра создана")),
+    h("div", { class: "card small", style: "white-space:pre-line" }, s.note || ""),
+    h("button", { class: "btn", onclick: () => openLink(s.wa.url) }, "📤 Отправить анонс в WhatsApp"),
+    h("p", { class: "muted small", style: "margin:8px 4px" }, "Откроется WhatsApp с готовым текстом и ссылкой на опрос — выберите группу команды."),
+    h("button", { class: "btn secondary", style: "margin-top:8px", onclick: closeSheet }, "Готово"));
+}
+
+function whatsappSheet() {
+  const s = S.sheet;
+  return h("div", {}, h("h3", {}, "Текст для WhatsApp"),
+    h("div", { class: "card small", style: "white-space:pre-wrap" }, s.text),
+    h("button", { class: "btn", onclick: () => openLink(s.url) }, "📤 Открыть WhatsApp"),
+    h("button", { class: "btn secondary", style: "margin-top:8px", onclick: async () => {
+      try { await navigator.clipboard.writeText(s.text); toast("Скопировано"); } catch (e) { toast("Не удалось скопировать"); } } }, "Скопировать текст"));
+}
+
+function swapSheet() {
+  const s = S.sheet;
+  if (!s.targets) {
+    api("swap_targets", { assignment_id: s.duty.assignment_id }).then((r) => { if (r && S.sheet === s) { s.targets = r.targets; render(); } });
+    return h("div", {}, h("h3", {}, "Поменяться"), h("div", { class: "spinner", style: "margin:30px auto" }));
+  }
+  return h("div", {}, h("h3", {}, "Поменяться"),
+    h("div", { class: "card" }, h("div", { class: "small muted" }, "Твоя обязанность"), h("div", { style: "font-weight:700;font-size:18px" }, `${s.duty.emoji} ${s.duty.name}`)),
+    h("div", { class: "label" }, "Кому предложить"),
+    s.targets.length ? h("div", { class: "list" }, s.targets.map((t) => h("button", { class: "item", onclick: async () => {
+      const r = await api("swap", { assignment_id: s.duty.assignment_id, user_id: t.id });
+      if (r) { haptic("ok"); closeSheet(); } } },
+      avatar(t.name, t.id), h("div", { class: "grow" }, h("div", { style: "font-weight:600" }, t.name),
+        h("div", { class: "small muted" }, t.duty ? `меняемся на ${t.duty.emoji} ${t.duty.name}` : "без обязанности — просто возьмёт твою")), h("span", { class: "muted" }, "›"))))
+      : h("div", { class: "card muted" }, s.duty.requires_car ? "Нет других участников с машиной." : "Нет других участников."),
+    h("p", { class: "muted small", style: "margin:4px" }, "Игроку придёт предложение в Telegram — он согласится или откажется."));
+}
+
+function assignSheet() {
+  const g = S.data.games.find((x) => x.id === S.sheet.game.id) || S.sheet.game;
+  const yes = g.participants.yes;
+  return h("div", {}, h("h3", {}, "Назначения"),
+    g.duties.map((x) => h("div", { class: "card" },
+      h("div", { class: "row" }, h("span", { style: "font-size:22px" }, x.emoji), h("b", { class: "grow" }, x.name), x.requires_car ? h("span", { class: "chip" }, "нужна 🚗") : null),
+      h("select", { class: "field", style: "margin-top:10px", onchange: async (e) => {
+        const r = await api("assign", { game_id: g.id, duty_id: x.duty_id, user_id: Number(e.target.value) || null });
+        if (r) { haptic("ok"); render(); } } },
+        h("option", { value: "0", selected: !x.user }, "— не назначено —"),
+        yes.filter((u) => u.car || !x.requires_car).map((u) => h("option", { value: u.id, selected: x.user && x.user.id === u.id }, u.name + (u.car ? " 🚗" : "")))))));
+}
+
+function playerSheet() {
+  const p = S.sheet.player;
+  const statusLabel = { pending: "⏳ ждёт подтверждения", approved: "✅ в команде", blocked: "⛔ удалён" }[p.status];
+  return h("div", {},
+    h("div", { class: "row", style: "margin-bottom:12px" }, avatar(p.name, p.id),
+      h("div", { class: "grow" }, h("h3", { style: "margin:0" }, p.name),
+        h("div", { class: "small muted" }, [p.username ? "@" + p.username : null, statusLabel].filter(Boolean).join(" · ")))),
+    p.status === "pending" ? h("div", { class: "btns", style: "margin-bottom:12px" },
+      h("button", { class: "btn", onclick: () => playerOp(p, "approve") }, "✅ Принять"),
+      h("button", { class: "btn danger", onclick: () => playerOp(p, "block") }, "Отклонить")) : null,
+    h("div", { class: "card" },
+      h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🚗 Есть машина"),
+        h("div", { class: "small muted" }, p.car_locked ? "Закреплено вами — игрок не может изменить." : "Указал сам. Нажмите, чтобы исправить и закрепить.")),
+        h("button", { class: "switch" + (p.car ? " on" : ""), role: "switch", "aria-checked": p.car ? "true" : "false", onclick: () => playerOp(p, p.car ? "car_off" : "car_on") })),
+      p.car_locked ? h("button", { class: "toggle-link", style: "margin:0 0 6px", onclick: () => playerOp(p, "unlock") }, "🔓 Разрешить игроку менять самому") : null,
+      p.status === "approved" ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "В составе"),
+        h("div", { class: "small muted" }, "Выключите на время травмы или отъезда — не будет опросов и минусов.")),
+        h("button", { class: "switch" + (p.active ? " on" : ""), role: "switch", "aria-checked": p.active ? "true" : "false", onclick: () => playerOp(p, "active") })) : null),
+    h("div", { class: "label" }, "Имя"),
+    h("div", { class: "row" }, h("input", { class: "field grow", id: "pname", value: p.name, maxlength: 64 }),
+      h("button", { class: "btn small", onclick: () => playerOp(p, "rename", { name: document.getElementById("pname").value }) }, "Сохранить")),
+    p.duties && p.duties.some((x) => x.count) ? h("div", {}, h("div", { class: "label" }, "Выполнял обязанности"),
+      h("div", { class: "people" }, p.duties.map((x) => h("span", { class: "chip" }, `${x.emoji} ${x.name}: ${x.count}`)))) : null,
+    p.minuses && p.minuses.length ? h("div", {}, h("div", { class: "label" }, `Минусы: ${p.minuses.length}`),
+      h("div", { class: "list" }, p.minuses.map((m) => h("div", { class: "item" }, h("div", { class: "grow small" }, `−${m.points} · не ответил: ${m.game}`),
+        h("button", { class: "btn small secondary", onclick: async () => { const r = await api("penalty_cancel", { penalty_id: m.id }); if (r) { S.sheet.player = r.player; render(); } } }, "Снять"))))) : null,
+    h("div", { style: "margin-top:16px" },
+      p.status === "approved" ? h("button", { class: "btn danger", onclick: () => playerOp(p, "block") }, "Удалить из команды") : null,
+      p.status === "blocked" ? h("button", { class: "btn secondary", onclick: () => playerOp(p, "approve") }, "♻️ Вернуть в команду") : null),
+    h("a", { class: "toggle-link", href: `tg://user?id=${p.telegram_id}` }, "Написать в Telegram"));
+}
+
+function playerStatsSheet() {
+  const p = S.sheet.player;
+  return h("div", {}, h("div", { class: "row", style: "margin-bottom:12px" }, avatar(p.name, p.id), h("h3", { style: "margin:0" }, p.name + (p.car ? " 🚗" : ""))),
+    h("div", { class: "list" }, p.duties.map((x) => h("div", { class: "item" }, h("span", { style: "font-size:20px" }, x.emoji), h("div", { class: "grow" }, x.name), h("div", { class: "num" }, x.count)))),
+    p.minuses.length ? h("div", { class: "card small" }, `⚠️ Минусы: ${p.minuses.length}`, h("div", { class: "muted" }, p.minuses.map((m) => m.game).join(", "))) : null);
+}
+
+function renameSheet() {
+  return h("div", {}, h("h3", {}, "Как тебя зовут в команде"),
+    h("input", { class: "field", id: "myname", value: S.sheet.value, maxlength: 64 }),
+    h("button", { class: "btn", style: "margin-top:12px", onclick: async () => {
+      const r = await api("profile", { name: document.getElementById("myname").value });
+      if (r) { haptic("ok"); closeSheet(); } } }, "Сохранить"));
+}
+
+// ---------------------------------------------------------------- старт
+(async function start() {
+  if (!tg || !tg.initData) {
+    document.getElementById("app").replaceChildren(info("📱", "Откройте из Telegram", "Это приложение команды открывается кнопкой «Открыть» в чате с ботом."));
+    return;
+  }
+  const r = await api("state");
+  if (!r) { document.getElementById("app").replaceChildren(info("😕", "Не получилось загрузить", "Закройте и откройте приложение ещё раз.")); return; }
+  render();
+  if (startGame) { const el = document.getElementById("game-" + startGame); if (el) { S.open[startGame] = true; render(); document.getElementById("game-" + startGame).scrollIntoView({ block: "start" }); } }
+})();
+</script>
+</body>
+</html>
