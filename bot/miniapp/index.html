@@ -7,6 +7,10 @@
 <meta name="referrer" content="no-referrer">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Футбол">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/api/app?asset=icon-180.png">
+<link rel="icon" type="image/png" href="/api/app?asset=icon-192.png">
 <meta name="theme-color" content="#f1f2f6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
@@ -82,6 +86,8 @@
   .countdown .cd-num { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .countdown.urgent { background: var(--no-soft); }
   .countdown.urgent .cd-num { color: var(--no); }
+  .step-num { min-width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--link);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
   .audit-item { align-items: flex-start; }
   .audit-time { min-width: 44px; padding-top: 2px; font-variant-numeric: tabular-nums; }
   .past-item { margin-bottom: 8px; border-radius: 16px; background: var(--card); }
@@ -218,21 +224,30 @@
 const tg = window.Telegram && window.Telegram.WebApp;
 const inTg = !!(tg && tg.initData);
 if (inTg) { document.documentElement.classList.add("tg"); tg.ready(); tg.expand(); }
-// Браузер: вход по личной ссылке из бота (?key=…). Запоминаем и убираем ключ из адреса.
+// Браузер: вход по личной ссылке (?key=…). Ключ оставляем в адресе: так закладка и иконка
+// на экране «Домой» сразу открываются со входом (у них своё хранилище, localStorage там пустой).
 const WEB_KEY = "fb_web_key";
 let webKey = null;
+let installPrompt = null;
+const standalone = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
 if (!inTg) {
   const q = new URLSearchParams(location.search);
   if (q.get("key")) {
-    try { localStorage.setItem(WEB_KEY, q.get("key")); } catch (e) {}
     webKey = q.get("key");
-    q.delete("key");
-    history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : ""));
+    try { localStorage.setItem(WEB_KEY, webKey); } catch (e) {}
   } else {
     try { webKey = localStorage.getItem(WEB_KEY); } catch (e) {}
+    if (webKey) { q.set("key", webKey); history.replaceState(null, "", location.pathname + "?" + q + location.hash); }
   }
+  if (webKey) {
+    const link = document.createElement("link");
+    link.rel = "manifest"; link.href = "/api/app?manifest=1&k=" + encodeURIComponent(webKey);
+    document.head.append(link);
+  }
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installPrompt = e; if (S.data) render(); });
 }
-function webLogoutLocal() { try { localStorage.removeItem(WEB_KEY); } catch (e) {} location.reload(); }
+function myLink() { return location.origin + "/app?key=" + encodeURIComponent(webKey || ""); }
+function webLogoutLocal() { try { localStorage.removeItem(WEB_KEY); } catch (e) {} location.href = location.pathname; }
 
 const S = { data: null, tab: "games", stats: null, players: null, playerFilter: null, sheet: null, open: {}, viewAs: null };
 const VIEW_KEY = "fb_view_as";
@@ -408,7 +423,52 @@ function gamesTab() {
   if (!d.games.length) return h("div", {}, head, h("div", { class: "card empty" }, h("div", { class: "big" }, "🏟"),
     h("p", {}, "Запланированных игр нет."), d.is_admin ? h("p", { class: "muted small" }, "Создайте игру кнопкой «＋ Новая игра».") : h("p", { class: "muted small" }, "Когда админ создаст игру, бот пришлёт сообщение.")),
     archiveSection());
-  return h("div", {}, head, webBanner(), d.games.map(gameCard), archiveSection());
+  return h("div", {}, head, webBanner(), saveBanner(), d.games.map(gameCard), archiveSection());
+}
+
+// ---------------------------------------------------------------- сайт: сохранить на телефон
+function saveBanner() {
+  if (!S.data.web || standalone) return null;
+  let closed = false;
+  try { closed = localStorage.getItem("fb_save_banner") === "closed"; } catch (e) {}
+  if (closed) return null;
+  return h("div", { class: "card row", style: "background:var(--accent-soft)" },
+    h("div", { style: "font-size:30px" }, "📌"),
+    h("div", { class: "grow" }, h("div", { style: "font-weight:700" }, "Сохраните на телефон"),
+      h("div", { class: "small muted" }, "Иконка на экране — и бот всегда под рукой, без Telegram и без ссылки.")),
+    h("button", { class: "btn small", onclick: () => openSheet({ type: "save" }) }, "Как?"),
+    h("button", { class: "toggle-link", "aria-label": "закрыть", style: "margin:0;padding:6px", onclick: () => {
+      try { localStorage.setItem("fb_save_banner", "closed"); } catch (e) {} render(); } }, "✕"));
+}
+function saveSheet() {
+  const ua = navigator.userAgent || "";
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const android = /Android/.test(ua);
+  const inApp = /WhatsApp|Instagram|FBAN|FBAV|Telegram/.test(ua);
+  const step = (n, text) => h("div", { class: "row", style: "align-items:flex-start;margin:8px 0" },
+    h("div", { class: "step-num" }, n), h("div", { class: "grow" }, text));
+  const copy = async () => { try { await navigator.clipboard.writeText(myLink()); toast("Ссылка скопирована"); } catch (e) { toast("Не удалось скопировать"); } };
+  return h("div", {}, h("h3", {}, "📌 Сохранить на телефон"),
+    standalone ? h("div", { class: "banner info" }, "✅ Уже установлено — вы открыли приложение с экрана «Домой».") : null,
+    installPrompt ? h("button", { class: "btn", style: "margin-bottom:12px", onclick: async () => {
+      installPrompt.prompt(); const r = await installPrompt.userChoice; installPrompt = null; if (r && r.outcome === "accepted") toast("Готово — иконка на экране"); render(); } }, "📲 Установить как приложение") : null,
+    ios ? h("div", { class: "card" }, h("div", { style: "font-weight:700" }, "iPhone"),
+      inApp ? step("0", "Сначала откройте в Safari: внизу справа нажмите значок компаса или «⋯» → «Открыть в Safari».") : null,
+      step("1", "Внизу Safari нажмите «Поделиться» — квадрат со стрелкой вверх ⬆️."),
+      step("2", "Прокрутите и выберите «На экран „Домой“»."),
+      step("3", "Нажмите «Добавить» — появится иконка, как у приложения.")) : null,
+    android || !ios ? h("div", { class: "card" }, h("div", { style: "font-weight:700" }, android ? "Android" : "Android (Chrome)"),
+      inApp ? step("0", "Сначала откройте в Chrome: «⋮» вверху → «Открыть в Chrome».") : null,
+      step("1", "В Chrome нажмите «⋮» вверху справа."),
+      step("2", "«Добавить на главный экран» или «Установить приложение» → «Добавить».")) : null,
+    !ios && !android ? h("div", { class: "card" }, h("div", { style: "font-weight:700" }, "Компьютер"),
+      step("1", "Нажмите Ctrl+D (на Mac — ⌘+D) — сайт сохранится в закладки.")) : null,
+    h("div", { class: "card" }, h("div", { style: "font-weight:700" }, "Или сохраните ссылку"),
+      h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Отправьте её себе в WhatsApp (чат «Я» / «Сообщение себе») или в заметки — по ней всегда войдёте."),
+      h("div", { class: "btns" },
+        h("button", { class: "btn secondary", onclick: copy }, "📋 Скопировать"),
+        h("button", { class: "btn secondary", onclick: () => openLink("https://wa.me/?text=" + encodeURIComponent("Мой вход в бот команды (не пересылать): " + myLink())) }, "💬 Себе в WhatsApp"))),
+    h("p", { class: "small muted", style: "margin:4px 2px" }, "⚠️ Ссылка и иконка личные: по ним отмечаются от вашего имени. Не отправляйте их в общий чат."));
 }
 
 // ---------------------------------------------------------------- прошедшие игры
@@ -719,6 +779,7 @@ function profileTab() {
     S.data.is_admin ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
       const r = await api("team_invite"); if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: "Инструкция для команды" }); } },
       "📤 Инструкция для команды (WhatsApp)") : null,
+    S.data.web ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openSheet({ type: "save" }) }, "📌 Сохранить на телефон / в закладки") : null,
     S.data.web
       ? h("div", { class: "btns", style: "margin:0 0 12px" },
           h("button", { class: "btn secondary", onclick: webLogoutLocal }, "Выйти"),
@@ -877,7 +938,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet, save: saveSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;
@@ -1153,6 +1214,10 @@ function playerSheet() {
         ? h("button", { class: "btn secondary", onclick: () => playerOp(p, "staff_off") }, "⚽ Вернуть в игроки")
         : h("div", { class: "people" }, ["Тренер", "Директор", "Менеджер"].map((t) => h("button", { class: "chip",
             onclick: async () => { if (await confirmBox(`${p.name} — ${t.toLowerCase()}? Отметки на будущие игры снимутся, опросов и минусов больше не будет.`)) playerOp(p, "staff", { name: t }); } }, t)))) : null,
+    p.status === "approved" && !p.manual ? h("button", { class: "btn secondary", style: "margin-top:12px", onclick: async () => {
+      const r = await api("player_web_link", { user_id: p.id });
+      if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: `Ссылка на сайт для ${p.name} (лично, не в группу)` }); } },
+      "🌐 Отправить ему ссылку на сайт") : null,
     h("div", { class: "label" }, "Имя"),
     h("div", { class: "row" }, h("input", { class: "field grow", id: "pname", value: p.name, maxlength: 64 }),
       h("button", { class: "btn small", onclick: () => playerOp(p, "rename", { name: document.getElementById("pname").value }) }, "Сохранить")),

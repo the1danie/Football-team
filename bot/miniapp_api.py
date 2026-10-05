@@ -288,7 +288,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game",
+    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link",
 }
 
 
@@ -613,6 +613,16 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             tg_link = f"https://t.me/{(await bot.me()).username}?start={link_payload(target)}"
             text = whatsapp.manual_invite(target.name, tg_link, web_link(target))
             return {"tg_link": tg_link, "web": web_link(target), "text": text, "url": whatsapp.share_url(text)}
+        elif action == "player_web_link":
+            target = await _user(session, body.get("user_id"))
+            if target.status != UserStatus.APPROVED:
+                raise ApiError("Сначала примите игрока в команду.")
+            link = web_link(target)
+            if link is None:
+                raise ApiError("Сайт доступен, когда бот работает на Vercel.")
+            text = whatsapp.site_invite(target.name, link)
+            await audit.record(session, f"🌐 Выдал ссылку на сайт: {target.name}")
+            return {"text": text, "url": whatsapp.share_url(text)}
         elif action == "rsvp_for":
             target = await _user(session, body.get("user_id"))
             game = await _game(session, body)

@@ -148,3 +148,48 @@ async def test_whatsapp_texts_link_to_site(fake, monkeypatch):  # noqa: F811
 
     monkeypatch.setattr(config, "public_url", "")  # без сайта — только бот
     assert await whatsapp.game_link(webhook.make_bot(), game) == "https://t.me/duty_bot?start=game_4"
+
+
+async def test_manifest_icons_and_admin_site_link(fake, monkeypatch):  # noqa: F811
+    """Сохранение на телефон: иконки, манифест с личным ключом; админ выдаёт ссылку на сайт любому игроку."""
+    import json as _json
+
+    from bot import webhook
+    from tests.test_miniapp import ADMIN, api, tg_user
+
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(m):
+        sent.append(m)
+
+    scope = {"type": "http", "method": "GET", "headers": [], "query_string": b"asset=icon-192.png"}
+    await webhook.app_page(scope, receive, send)
+    assert sent[0]["status"] == 200 and (b"content-type", b"image/png") in sent[0]["headers"]
+    assert sent[1]["body"][:8] == b"\x89PNG\r\n\x1a\n"
+    sent.clear()
+    await webhook.app_page({**scope, "query_string": b"asset=../../etc/passwd"}, receive, send)
+    assert (b"content-type", b"text/html; charset=utf-8") in sent[0]["headers"]  # чужие файлы не отдаём
+    sent.clear()
+    await webhook.app_page({**scope, "query_string": b"manifest=1&k=-3.0.1999999999.abcdef0123"}, receive, send)
+    manifest = _json.loads(sent[1]["body"])
+    assert manifest["start_url"] == "/app?key=-3.0.1999999999.abcdef0123" and manifest["display"] == "standalone"
+    sent.clear()
+    await webhook.app_page({**scope, "query_string": b"manifest=1&k=<script>"}, receive, send)
+    assert _json.loads(sent[1]["body"])["start_url"] == "/app"
+
+    monkeypatch.setattr(config, "admin_ids", [1])
+    monkeypatch.setattr(config, "public_url", "https://team.example")
+    await api(ADMIN, "register", car=True)
+    pasha = tg_user(2, "Паша")
+    await api(pasha, "register", car=False)
+    _, pl = await api(ADMIN, "players")
+    pid = next(p["id"] for p in pl["players"] if p["name"] == "Паша")
+    status, _ = await api(ADMIN, "player_web_link", user_id=pid)
+    assert status == 400  # ещё заявка
+    await api(ADMIN, "player", user_id=pid, op="approve")
+    _, res = await api(ADMIN, "player_web_link", user_id=pid)
+    assert "https://team.example/app?key=" in res["text"] and "не пересылай" in res["text"]
+    assert (await api(pasha, "player_web_link", user_id=pid))[0] == 403

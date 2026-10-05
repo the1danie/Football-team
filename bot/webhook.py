@@ -11,6 +11,7 @@ import asyncio
 import hmac
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -76,8 +77,18 @@ class Html(str):
     """Ответ-страница вместо JSON."""
 
 
+class Raw:
+    """Файл (иконка, манифест) с типом и кэшированием."""
+
+    def __init__(self, body: bytes, ctype: str, cache: str = "public, max-age=86400"):
+        self.body, self.ctype, self.cache = body, ctype, cache
+
+
 async def _respond(send, status: int, payload: Any) -> None:
-    if isinstance(payload, Html):
+    cache = b"no-store"
+    if isinstance(payload, Raw):
+        body, ctype, cache = payload.body, payload.ctype.encode(), payload.cache.encode()
+    elif isinstance(payload, Html):
         body, ctype = payload.encode(), b"text/html; charset=utf-8"
     else:
         body, ctype = json.dumps(payload, ensure_ascii=False).encode(), b"application/json; charset=utf-8"
@@ -85,7 +96,7 @@ async def _respond(send, status: int, payload: Any) -> None:
         {
             "type": "http.response.start",
             "status": status,
-            "headers": [(b"content-type", ctype), (b"cache-control", b"no-store")],
+            "headers": [(b"content-type", ctype), (b"cache-control", cache)],
         }
     )
     await send({"type": "http.response.body", "body": body})
@@ -308,7 +319,41 @@ def _page() -> str:
     return _PAGE
 
 
+ICONS = {"icon-192.png", "icon-512.png", "icon-180.png"}
+_TEAM_NAME: str | None = None
+
+
+async def _team_name() -> str:
+    """Название для иконки на экране «Домой» — имя бота (один раз за запуск)."""
+    global _TEAM_NAME
+    if _TEAM_NAME is None:
+        bot = make_bot()
+        try:
+            _TEAM_NAME = (await bot.me()).first_name or "Команда"
+        except Exception:  # noqa: BLE001 — без Telegram тоже отдаём манифест
+            return "Команда"
+        finally:
+            await bot.session.close()
+    return _TEAM_NAME
+
+
 async def handle_app_page(request: Request) -> tuple[int, Any]:
+    asset = request.query.get("asset", "")
+    if asset in ICONS:
+        return 200, Raw((Path(__file__).parent / "miniapp" / asset).read_bytes(), "image/png")
+    if "manifest" in request.query:
+        # Установка на экран «Домой»: адрес запуска — с личным ключом, иначе установленное приложение
+        # (у него своё хранилище) открылось бы без входа.
+        key = request.query.get("k", "")
+        start = "/app" + (f"?key={key}" if re.fullmatch(r"[0-9a-f.\-]{10,200}", key) else "")
+        name = await _team_name()
+        manifest = {
+            "name": name, "short_name": name[:12], "start_url": start, "scope": "/", "display": "standalone",
+            "background_color": "#0f1115", "theme_color": "#1f8a4c", "lang": "ru",
+            "icons": [{"src": f"/api/app?asset=icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png", "purpose": "any"}
+                      for n in (192, 512)],
+        }
+        return 200, Raw(json.dumps(manifest, ensure_ascii=False).encode(), "application/manifest+json", "no-store")
     return 200, Html(_page())
 
 
