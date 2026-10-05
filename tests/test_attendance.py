@@ -32,7 +32,9 @@ async def test_no_show_and_walk_in(session, rng):
     a, b, c = await make_user(session, "А"), await make_user(session, "Б"), await make_user(session, "В")
     walk_in = await make_user(session, "Без отметки")
     game = await _started_game(session, [driver, a, b, c])
-    water_holder = (await svc.active_assignments(session, game.id))[0].user
+    water = next(d for d in await svc.active_duties(session) if d.code == "water")
+    await svc.set_assignment(session, game, water, a)  # воду нёс А (не водитель)
+    water_holder = a
 
     # водоноса не было: вода не засчитывается, минус
     res = await svc.set_attendance(session, game, water_holder, False)
@@ -44,10 +46,11 @@ async def test_no_show_and_walk_in(session, rng):
     await svc.set_attendance(session, game, walk_in, True)
     assert await svc.get_rsvp(session, game.id, walk_in.id) == "yes"
 
+    candidates = {c.user_id for c in await svc.build_candidates(session, game)}
+    assert walk_in.id in candidates and water_holder.id not in candidates
     after = await svc.distribute_game(session, game, rng, phase="after")
     takers = {x.user_id for x in after.assignments}
-    assert water_holder.id not in takers
-    assert walk_in.id in takers or len(takers) == 3
+    assert water_holder.id not in takers and len(after.assignments) == 2
 
     # ошиблись — вернули: минус снят
     res = await svc.set_attendance(session, game, water_holder, True)

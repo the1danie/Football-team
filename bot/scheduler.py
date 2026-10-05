@@ -44,7 +44,7 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
         ):
             await operations.ask_attendance(bot, session, game)
 
-        # После тренировки: мячи, манишки, стирка — среди тех, кто был.
+        # После тренировки: мячи, манишки — среди тех, кто был.
         if (
             game.status == GameStatus.DISTRIBUTED
             and not game.after_duties_done

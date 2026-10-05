@@ -62,9 +62,12 @@ async def duties_by_code(session):
 @pytest.fixture(autouse=True)
 def _all_duties_before(request, monkeypatch):
     """Большинство тестов писались, когда все обязанности распределялись сразу («до» игры).
-    Тесты со схемой «вода до, остальное после» помечены @pytest.mark.real_phases."""
+    Тесты с настоящей схемой (вода — до; мячи и манишки — после; стирка объединена с манишками)
+    помечены @pytest.mark.real_phases."""
     from bot import db
 
     if "real_phases" in request.keywords:
         return
-    monkeypatch.setattr(db, "DEFAULT_DUTIES", [d[:6] + ("before",) for d in db.DEFAULT_DUTIES])
+    # прежняя схема: 4 обязанности (со стиркой), все — до игры
+    monkeypatch.setattr(db, "DEFAULT_DUTIES", [d[:6] + ("before", True) for d in db.DEFAULT_DUTIES])
+    monkeypatch.setattr(db, "MERGE_LAUNDRY_INTO_BIBS", False)

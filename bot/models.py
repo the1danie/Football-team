@@ -37,7 +37,7 @@ class AssignmentStatus:
 
 class DutyPhase:
     BEFORE = "before"  # распределяется при закрытии сбора (вода)
-    AFTER = "after"  # после тренировки, среди тех, кто был (мячи, манишки, стирка)
+    AFTER = "after"  # после тренировки, среди тех, кто был (мячи, манишки)
 
 
 class SwapStatus:

@@ -1,4 +1,4 @@
-"""Обязанности «до» (вода) и «после» тренировки (мячи, манишки, стирка)."""
+"""Обязанности «до» (вода) и «после» тренировки (мячи, манишки — с ними и стирка)."""
 
 from datetime import timedelta
 
@@ -21,8 +21,10 @@ pytestmark = pytest.mark.real_phases
 async def test_default_phases(session):
     duties = {d.code: d for d in await svc.active_duties(session)}
     assert duties["water"].phase == "before"
-    assert {duties[c].phase for c in ("balls", "bibs", "laundry")} == {"after"}
+    assert {duties[c].phase for c in ("balls", "bibs")} == {"after"}
     assert "на следующую" in duties["balls"].action
+    assert "постирать" in duties["bibs"].action
+    assert "laundry" not in duties  # стирка — часть «Манишек», отдельно выключена
 
 
 async def test_before_then_after(session, rng):
@@ -38,16 +40,16 @@ async def test_before_then_after(session, rng):
     assert [a.duty.code for a in before.assignments] == ["water"]
     assert game.status == GameStatus.DISTRIBUTED and not game.after_duties_done
     assert await svc.unassigned_duties(session, game) == []  # «после» ещё не наступило
-    assert {d.code for d in await svc.pending_after_duties(session, game)} == {"balls", "bibs", "laundry"}
+    assert {d.code for d in await svc.pending_after_duties(session, game)} == {"balls", "bibs"}
     water_holder = before.assignments[0].user_id
 
     after = await svc.distribute_game(session, game, rng, phase="after")
     codes = {a.duty.code: a.user_id for a in after.assignments}
-    assert set(codes) == {"balls", "bibs", "laundry"} and game.after_duties_done
+    assert set(codes) == {"balls", "bibs"} and game.after_duties_done
     assert codes["balls"] == driver.id  # мячи — на машине
     assert absent.id not in codes.values()  # только среди тех, кто был
     assert water_holder not in codes.values()  # у кого вода — тому не надо (людей хватает)
-    assert len(await svc.active_assignments(session, game.id)) == 4  # «до» не сбросилось
+    assert len(await svc.active_assignments(session, game.id)) == 3  # «до» не сбросилось
     assert await svc.pending_after_duties(session, game) == []
 
 
@@ -85,7 +87,7 @@ async def test_scheduler_after_training(fake, monkeypatch):  # noqa: F811
         await tick(webhook.make_bot(), s)
         await s.commit()
         codes = {a.duty.code for a in await svc.active_assignments(s, gid)}
-        assert codes == {"water", "balls", "bibs", "laundry"}
+        assert codes == {"water", "balls", "bibs"}
     assert any("После тренировки" in m.text and "на тебе" in m.text for m in fake.sent())
     assert any("🏁 После тренировки" in m.text and m.parse_mode is None for m in fake.sent(1))
 
@@ -149,3 +151,48 @@ async def test_gather_time_in_app(team):  # noqa: F811
     tomorrow = config.now() + timedelta(days=1)
     _, res = await api(ADMIN, "create_game", date=tomorrow.date().isoformat(), minutes=23 * 60, kind="training")
     assert res["state"]["games"][0]["gather_time"] == "22:30"
+
+
+async def test_laundry_merged_into_bibs_on_existing_db(tmp_path, monkeypatch):
+    from bot import db
+    from bot.models import Assignment, AssignmentStatus
+
+    url = await db_url(tmp_path, "merge.db")
+    engine = make_engine(url)
+    # «старая» база: стирка — отдельная активная обязанность, без флага объединения
+    monkeypatch.setattr(db, "MERGE_LAUNDRY_INTO_BIBS", False)
+    monkeypatch.setattr(db, "DEFAULT_DUTIES", [d[:7] + (True,) for d in db.DEFAULT_DUTIES])
+    await init_db(engine)
+    sm = make_sessionmaker(engine)
+    async with sm() as s:
+        users = [await make_user(s, n) for n in ("А", "Б", "В")]
+        duties = {d.code: d for d in await svc.active_duties(s)}
+        old = await svc.create_game(s, "training", config.now() - timedelta(days=7), None, None)
+        old.status = "finished"
+        s.add(Assignment(game_id=old.id, user=users[0], duty=duties["laundry"]))
+        s.add(Assignment(game_id=old.id, user=users[1], duty=duties["bibs"]))
+        cur = await svc.create_game(s, "training", config.now() + timedelta(days=1), None, None)
+        cur.status = "distributed"
+        s.add(Assignment(game_id=cur.id, user=users[2], duty=duties["laundry"]))
+        await s.execute(text("DELETE FROM settings WHERE key = 'merge_laundry_v1'"))
+        await s.commit()
+        old_id, cur_id = old.id, cur.id
+
+    monkeypatch.setattr(db, "MERGE_LAUNDRY_INTO_BIBS", True)
+    await init_db(engine)
+    async with sm() as s:
+        laundry = await s.scalar(select(Duty).where(Duty.code == "laundry"))
+        bibs = await s.scalar(select(Duty).where(Duty.code == "bibs"))
+        assert laundry.is_active is False and "постирать" in bibs.action
+        old_codes = sorted(a.duty.code for a in await svc.active_assignments(s, old_id))
+        assert old_codes == ["bibs", "bibs"]  # история: стирал — значит, «Манишки»
+        cur_rows = (await s.scalars(select(Assignment).where(Assignment.game_id == cur_id))).all()
+        assert [a.status for a in cur_rows] == [AssignmentStatus.CANCELLED]  # на текущей — без двоих на манишки
+        stats = dict((d.code, n) for d, n in await svc.player_stats(s, users[0].id))
+        assert stats.get("bibs") == 1 and "laundry" not in stats
+        laundry.is_active = True  # админ включил обратно
+        await s.commit()
+    await init_db(engine)  # повторно не трогаем
+    async with sm() as s:
+        assert (await s.scalar(select(Duty).where(Duty.code == "laundry"))).is_active is True
+    await engine.dispose()

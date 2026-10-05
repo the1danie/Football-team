@@ -8,12 +8,16 @@ from sqlalchemy.pool import NullPool
 from bot.models import Base, Duty, Setting
 
 DEFAULT_DUTIES = [
-    # code, emoji, name, action, requires_car, sort_order, phase
-    ("balls", "⚽", "Мячи", "забрать мячи и привезти на следующую", True, 10, "after"),
-    ("water", "💧", "Вода", "принести воду", False, 20, "before"),
-    ("bibs", "👕", "Манишки", "забрать манишки и принести на следующую", False, 30, "after"),
-    ("laundry", "🧺", "Стирка манишек", "забрать и постирать манишки", False, 40, "after"),
+    # code, emoji, name, action, requires_car, sort_order, phase, active
+    ("balls", "⚽", "Мячи", "забрать мячи и привезти на следующую", True, 10, "after", True),
+    ("water", "💧", "Вода", "принести воду", False, 20, "before", True),
+    ("bibs", "👕", "Манишки", "забрать манишки, постирать и принести на следующую", False, 30, "after", True),
+    # Стирка — та же обязанность, что «Манишки»: кто забрал, тот и стирает. Выключена, можно включить.
+    ("laundry", "🧺", "Стирка манишек", "забрать и постирать манишки", False, 40, "after", False),
 ]
+# Один раз: «Стирка манишек» объединяется с «Манишками» (история переносится, обязанность выключается).
+MERGE_LAUNDRY_INTO_BIBS = True
+MERGE_LAUNDRY_KEY = "merge_laundry_v1"
 DUTY_PHASES_KEY = "duty_phases_v1"
 
 
@@ -91,7 +95,8 @@ async def init_db(engine: AsyncEngine) -> None:
 
     async with make_sessionmaker(engine)() as session:
         existing = set((await session.scalars(select(Duty.code).where(Duty.code.is_not(None)))).all())
-        for code, emoji, name, action, requires_car, order, phase in DEFAULT_DUTIES:
+        fresh_install = not existing
+        for code, emoji, name, action, requires_car, order, phase, active in DEFAULT_DUTIES:
             if code not in existing:
                 session.add(
                     Duty(
@@ -102,6 +107,7 @@ async def init_db(engine: AsyncEngine) -> None:
                         requires_car=requires_car,
                         sort_order=order,
                         phase=phase,
+                        is_active=active,
                     )
                 )
         # Один раз: стандартные обязанности «после тренировки» и их формулировки (для уже работающих баз).
@@ -111,4 +117,30 @@ async def init_db(engine: AsyncEngine) -> None:
                 duty.phase = defaults[duty.code][6]
                 duty.action = defaults[duty.code][3]
             session.add(Setting(key=DUTY_PHASES_KEY, value="1"))
+        await session.flush()
+        if await session.get(Setting, MERGE_LAUNDRY_KEY) is None:
+            if MERGE_LAUNDRY_INTO_BIBS and not fresh_install:
+                await _merge_laundry_into_bibs(session)
+            session.add(Setting(key=MERGE_LAUNDRY_KEY, value="1"))
         await session.commit()
+
+
+async def _merge_laundry_into_bibs(session: AsyncSession) -> None:
+    """Кто забрал манишки, тот и стирает: одна обязанность вместо двух."""
+    from bot.models import Assignment, AssignmentStatus, Game, GameStatus
+
+    bibs = await session.scalar(select(Duty).where(Duty.code == "bibs"))
+    laundry = await session.scalar(select(Duty).where(Duty.code == "laundry"))
+    if bibs is None or laundry is None:
+        return
+    defaults = {d[0]: d for d in DEFAULT_DUTIES}
+    bibs.action = defaults["bibs"][3]
+    laundry.is_active = False
+    rows = await session.execute(
+        select(Assignment, Game.status).join(Game, Assignment.game_id == Game.id).where(Assignment.duty_id == laundry.id)
+    )
+    for assignment, game_status in rows.all():
+        if game_status in GameStatus.ACTIVE and assignment.status == AssignmentStatus.ACTIVE:
+            assignment.status = AssignmentStatus.CANCELLED  # иначе на манишки окажутся двое
+        else:
+            assignment.duty_id = bibs.id  # история: стирал — значит, делал «Манишки»

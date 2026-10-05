@@ -48,7 +48,7 @@ def after_at(game: Game):
 
 
 async def distribute_after_and_announce(bot: Bot, session: AsyncSession, game: Game) -> str | None:
-    """После тренировки: мячи, манишки, стирка — среди тех, кто был («Буду»)."""
+    """После тренировки: мячи, манишки — среди тех, кто был («Буду»)."""
     if not await svc.active_duties(session, DutyPhase.AFTER):
         game.after_duties_done = True
         return None
