@@ -55,9 +55,19 @@ def share_markup(text: str) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=SHARE_LABEL, url=url)]])
 
 
+def site_link(game: Game | None = None) -> str | None:
+    """Общая ссылка на сайт (без ключа): кто уже входил в браузере — сразу увидит игру."""
+    if not config.public_url:
+        return None
+    return f"{config.public_url}/app" + (f"?game={game.id}" if game else "")
+
+
 async def game_link(bot: Bot, game: Game) -> str:
+    """Где отметиться: бот в Telegram и сайт (для тех, кто без Telegram)."""
     me = await bot.me()
-    return f"https://t.me/{me.username}?start=game_{game.id}"
+    tg = f"https://t.me/{me.username}?start=game_{game.id}"
+    site = site_link(game)
+    return f"Telegram: {tg}\nСайт: {site}" if site else tg
 
 
 def _header(game: Game) -> list[str]:
@@ -70,7 +80,7 @@ def _header(game: Game) -> list[str]:
 
 
 def announce(game: Game, deadline: datetime, now: datetime, link: str) -> str:
-    lines = _header(game) + ["", f"Кто будет? Отметьтесь в боте {texts.until(deadline, now)}:", link]
+    lines = _header(game) + ["", f"Кто будет? Отметьтесь {texts.until(deadline, now)}:", link]
     if game.min_players:
         lines += ["", f"Нужно минимум {game.min_players} {texts.people_word(game.min_players)}."]
     if config.penalty_points > 0:
@@ -110,7 +120,7 @@ def duties(
     lines += [f"{d.name} — не назначено" for d in unassigned]
     if pending_after and after_at:
         lines += ["", texts.after_line(pending_after, after_at)]
-    lines += ["", "Не сможете — поменяйтесь в боте (кнопка «Поменяться»):", link]
+    lines += ["", "Не сможете — нажмите «Поменяться» в боте или на сайте:", link]
     return "\n".join(lines)
 
 
@@ -173,7 +183,8 @@ def team_invite(bot_username: str) -> str:
         "3. Отмечайтесь «Буду / Не буду» в боте или в приложении (кнопка «Открыть» рядом с полем ввода).",
         "",
         "Не пользуетесь Telegram? Зайдите в бота один раз и нажмите «Сайт» — бот пришлёт личную ссылку, "
-        "дальше можно через браузер, без Telegram.",
+        "дальше можно через браузер, без Telegram."
+        + (f" Сайт команды: {site_link()}" if site_link() else ""),
         "",
         "Кто не отвечает на опрос до закрытия сбора — получает минус.",
     ])

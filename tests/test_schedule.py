@@ -65,7 +65,7 @@ async def test_scheduler_creates_and_asks_admin_when_too_few(fake, monkeypatch):
     assert any("По расписанию создана" in m.text for m in fake.sent(1))
     invite = next(m for m in fake.sent() if "Открыт сбор" in m.text)
     assert "Нужно минимум 3 человека" in invite.text
-    wa = next(m for m in fake.sent(1) if m.parse_mode is None and "Отметьтесь в боте" in m.text)
+    wa = next(m for m in fake.sent(1) if m.parse_mode is None and "Отметьтесь" in m.text)
     assert "Нужно минимум 3" in wa.text
 
     # --- повторный тик — без дублей

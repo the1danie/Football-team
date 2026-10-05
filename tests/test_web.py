@@ -132,3 +132,19 @@ async def test_team_invite_api(team):  # noqa: F811
     assert "Как отмечаться" in res["text"] and res["url"].startswith("https://wa.me/")
     status, _ = await api(tg_user(9, "Игрок"), "team_invite")
     assert status == 403
+
+
+async def test_whatsapp_texts_link_to_site(fake, monkeypatch):  # noqa: F811
+    """Тексты для WhatsApp: и бот в Telegram, и сайт — для тех, кто без Telegram."""
+    from bot import whatsapp
+    from bot.models import Game
+
+    game = Game(id=4, kind="training", status="open")
+    monkeypatch.setattr(config, "public_url", "https://qalamger.vercel.app")
+    links = await whatsapp.game_link(webhook.make_bot(), game)
+    assert links == "Telegram: https://t.me/duty_bot?start=game_4\nСайт: https://qalamger.vercel.app/app?game=4"
+    assert "key=" not in links  # в группу — только общая ссылка, без личного ключа
+    assert "Сайт команды: https://qalamger.vercel.app/app" in whatsapp.team_invite("duty_bot")
+
+    monkeypatch.setattr(config, "public_url", "")  # без сайта — только бот
+    assert await whatsapp.game_link(webhook.make_bot(), game) == "https://t.me/duty_bot?start=game_4"
