@@ -25,13 +25,14 @@
     --radius: 16px;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; background: var(--bg); color: var(--text);
+  html, body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden; max-width: 100%;
     font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
   body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
   body.has-fab { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
   button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; padding: 0; }
   input, select { font: inherit; color: var(--text); }
-  .wrap { max-width: 560px; margin: 0 auto; padding: 12px 12px 0; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 12px 12px 0; overflow-wrap: anywhere; }
+  .people .chip { white-space: normal; }
   h1 { font-size: 22px; margin: 8px 4px 12px; }
   h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
     color: var(--hint); margin: 18px 6px 8px; }
@@ -191,6 +192,11 @@ function h(tag, attrs, ...children) {
   for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c.nodeType ? c : String(c));
   return el;
 }
+// Добавить детей, пропуская пустые (null/false) — иначе браузер выводит слово «null».
+function add(el, ...children) {
+  for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c.nodeType ? c : String(c));
+  return el;
+}
 const plural = (n, one, few, many) => {
   const m10 = n % 10, m100 = n % 100;
   return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
@@ -306,7 +312,7 @@ function gameCard(g) {
   const mine = g.duties.filter((x) => x.mine);
   const relative = g.day_word === "Сегодня" || g.day_word === "Завтра";
   const card = h("div", { class: "card", id: "game-" + g.id });
-  card.append(
+  add(card, 
     h("div", { class: "game-top" },
       h("div", { class: "grow" },
         h("div", { class: "game-when" }, `${relative ? g.day_word : g.date_label} · ${g.time}`),
@@ -315,11 +321,11 @@ function gameCard(g) {
 
   // Подсказка: что от меня нужно
   if (g.status === "open" && !g.my_rsvp && !g.deadline_passed)
-    card.append(h("div", { class: "banner" }, `⏰ Ответь ${g.deadline_label}` + (g.penalty ? ` — иначе −${g.penalty}` : "")));
+    add(card, h("div", { class: "banner" }, `⏰ Ответь ${g.deadline_label}` + (g.penalty ? ` — иначе −${g.penalty}` : "")));
   if (mine.length)
-    card.append(h("div", { class: "banner info" }, h("b", {}, "Твоя обязанность: "), mine.map((m) => `${m.emoji} ${m.action}`).join(", ")));
+    add(card, h("div", { class: "banner info" }, h("b", {}, "Твоя обязанность: "), mine.map((m) => `${m.emoji} ${m.action}`).join(", ")));
 
-  card.append(h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
+  add(card, h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
     h("button", { class: `${key}${g.my_rsvp === key ? " on" : ""}`, "aria-pressed": g.my_rsvp === key ? "true" : "false",
       onclick: async () => { if (g.my_rsvp === key) return; haptic(); const r = await api("rsvp", { game_id: g.id, status: key }); if (r) { haptic("ok"); render(); } } },
       h("span", { class: "e" }, e), label))));
@@ -330,17 +336,17 @@ function gameCard(g) {
     maybe.length ? h("span", { class: "chip warn" }, `🤔 ${maybe.length}`) : null,
     no.length ? h("span", { class: "chip" }, `❌ ${no.length}`) : null,
     d.is_admin && g.no_answer && g.no_answer.length ? h("span", { class: "chip bad" }, `🙈 молчат: ${g.no_answer.length}`) : null);
-  card.append(counts, h("button", { class: "toggle-link", onclick: () => { S.open[g.id] = !open; render(); } }, open ? "Скрыть список ▲" : "Кто идёт ▼"));
+  add(card, counts, h("button", { class: "toggle-link", onclick: () => { S.open[g.id] = !open; render(); } }, open ? "Скрыть список ▲" : "Кто идёт ▼"));
   if (open) {
     const group = (title, list) => list && list.length ? h("div", { style: "margin-top:10px" },
       h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
-    card.append(group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
+    add(card, group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
       d.is_admin ? group(`🙈 Не ответили (${(g.no_answer || []).length})`, g.no_answer) : null);
   }
 
   if (g.min_players && g.status !== "distributed") {
     const ok = yes.length >= g.min_players;
-    card.append(h("div", { class: "banner " + (ok ? "ok" : ""), style: "margin-top:10px" },
+    add(card, h("div", { class: "banner " + (ok ? "ok" : ""), style: "margin-top:10px" },
       ok ? `✅ Минимум ${g.min_players} набран` : `⚠️ Пока ${yes.length} из минимум ${g.min_players} — иначе ${g.kind === "training" ? "тренировка" : "игра"} отменится`,
       h("div", { class: "bar", style: "margin-top:8px;background:rgba(0,0,0,.08)" },
         h("div", { style: `width:${Math.min(100, (yes.length / g.min_players) * 100)}%;background:${ok ? "var(--yes)" : "var(--maybe)"}` }))));
@@ -348,19 +354,19 @@ function gameCard(g) {
 
   // Обязанности
   if (g.status === "distributed") {
-    card.append(h("h2", { style: "margin:16px 0 4px" }, "Обязанности"));
-    card.append(h("div", {}, g.duties.map((x) => h("div", { class: "duty" + (x.mine ? " mine" : "") },
+    add(card, h("h2", { style: "margin:16px 0 4px" }, "Обязанности"));
+    add(card, h("div", {}, g.duties.map((x) => h("div", { class: "duty" + (x.mine ? " mine" : "") },
       h("div", { class: "ico" }, x.emoji),
       h("div", { class: "grow" }, h("div", { class: "small muted" }, x.name),
         h("div", { class: "who" }, x.user ? (x.mine ? "Ты" : x.user.name) : "⚠️ не назначено")),
       x.mine ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "swap", game: g, duty: x }) }, "🔄 Поменяться") : null))));
   } else if (g.status === "open") {
-    card.append(h("div", { class: "small muted", style: "margin-top:12px" },
+    add(card, h("div", { class: "small muted", style: "margin-top:12px" },
       g.deadline_passed ? "Обязанности скоро распределит админ." : `Обязанности распределятся ${g.deadline_at_label}.`));
   }
 
   if (d.is_admin) {
-    card.append(h("div", { class: "admin-bar" },
+    add(card, h("div", { class: "admin-bar" },
       h("button", { class: "btn small secondary", onclick: () => adminDistribute(g) }, g.status === "distributed" ? "🔁 Пересчитать" : "🎯 Распределить"),
       h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp"),
       g.status === "distributed" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "assign", game: g }) }, "✏️ Назначения") : null,
