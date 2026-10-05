@@ -79,3 +79,56 @@ async def test_bot_web_command(h: Harness, monkeypatch):  # noqa: F811
     h.names[50] = "Чужой"
     await h.text(50, "/web")
     assert not any("app?key=" in (m.text or "") for m in h.fake.sent(50))
+
+
+async def test_web_buttons_everywhere(h: Harness, monkeypatch):  # noqa: F811
+    from datetime import timedelta
+
+    from bot import texts
+    from bot.services import games as svc
+
+    monkeypatch.setattr(config, "public_url", "https://fb.vercel.app")
+    monkeypatch.setattr(config, "bot_token", TOKEN)
+    await h.register(1, "Даниял", car=True)
+    h.fake.reset()
+    await h.register(2, "Арман", car=False)
+
+    # приветствие после подтверждения — с кнопкой сайта
+    welcome = [m for m in h.fake.sent(2) if m.reply_markup and "сайт" in m.text.lower()]
+    assert welcome and buttons(welcome[0].reply_markup)[-1].text == "🌐 Открыть на сайте"
+    # меню: кнопка «🌐 Сайт»
+    menu = next(m for m in h.fake.sent(2) if "добавил тебя в команду" in m.text)
+    assert any(b.text == texts.BTN_WEB for row in menu.reply_markup.keyboard for b in row)
+    h.fake.reset()
+    await h.text(2, texts.BTN_WEB)
+    link = buttons(h.fake.sent(2)[-1].reply_markup)[0].url
+    assert verify_web_token(link.split("key=")[1], TOKEN)["id"] == 2
+
+    # опрос «Открыт сбор» — с личной ссылкой на сайт
+    h.fake.reset()
+    async with h.sm() as s:
+        creator = await svc.get_user_by_tg(s, 1)
+        from bot import actions
+
+        game = await svc.create_game(s, "training", config.now() + timedelta(days=1), None, creator)
+        await actions.send_poll_invites(h.bot, s, game, skip=creator)
+        await s.commit()
+    invite = next(m for m in h.fake.sent(2) if "Открыт сбор" in m.text)
+    site = buttons(invite.reply_markup)[-1]
+    assert site.text == "🌐 Открыть на сайте" and verify_web_token(site.url.split("key=")[1], TOKEN)["id"] == 2
+
+    # /invite — инструкция для WhatsApp (только админ)
+    h.fake.reset()
+    await h.text(1, "/invite")
+    draft = h.fake.sent(1)[-1]
+    assert "https://t.me/duty_bot" in draft.text and "Сайт" in draft.text and draft.parse_mode is None
+    h.fake.reset()
+    await h.text(2, "/invite")
+    assert not any("Как отмечаться" in (m.text or "") for m in h.fake.sent(2))
+
+
+async def test_team_invite_api(team):  # noqa: F811
+    _, res = await api(ADMIN, "team_invite")
+    assert "Как отмечаться" in res["text"] and res["url"].startswith("https://wa.me/")
+    status, _ = await api(tg_user(9, "Игрок"), "team_invite")
+    assert status == 403

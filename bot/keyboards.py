@@ -14,10 +14,10 @@ def main_menu(is_admin: bool) -> ReplyKeyboardMarkup:
             [texts.BTN_PARTICIPANTS, texts.BTN_DISTRIBUTE],
             [texts.BTN_EDIT, texts.BTN_CANCEL],
             [texts.BTN_PLAYERS, texts.BTN_STATS],
-            [texts.BTN_PROFILE],
+            [texts.BTN_PROFILE, texts.BTN_WEB],
         ]
     else:
-        rows = [[texts.BTN_CURRENT, texts.BTN_SWAP], [texts.BTN_STATS, texts.BTN_PROFILE]]
+        rows = [[texts.BTN_CURRENT, texts.BTN_SWAP], [texts.BTN_STATS, texts.BTN_PROFILE], [texts.BTN_WEB]]
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=t) for t in row] for row in rows], resize_keyboard=True
     )
@@ -31,6 +31,17 @@ def app_button(game_id: int | None = None, text: str = "📱 Открыть пр
         return None
     url = f"{config.public_url}/app" + (f"?game={game_id}" if game_id else "")
     return InlineKeyboardButton(text=text, web_app=WebAppInfo(url=url))
+
+
+def with_web_button(markup: InlineKeyboardMarkup | None, user) -> InlineKeyboardMarkup | None:
+    """Кнопка «🌐 Открыть на сайте» — личная ссылка для браузера (если бот на Vercel)."""
+    from bot.weblink import web_link
+
+    link = web_link(user)
+    if link is None:
+        return markup
+    rows = list(markup.inline_keyboard) if markup else []
+    return InlineKeyboardMarkup(inline_keyboard=[*rows, [InlineKeyboardButton(text="🌐 Открыть на сайте", url=link)]])
 
 
 def with_app_button(markup: InlineKeyboardMarkup | None, game_id: int | None = None) -> InlineKeyboardMarkup | None:

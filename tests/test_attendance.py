@@ -179,7 +179,11 @@ async def test_leaderboard(session):
 
     board = {r["name"]: r for r in await svc.leaderboard(session, now)}
     assert board["А"]["games"] == 2 and board["В"]["games"] == 1  # будущая не считается, неявка — тоже
-    assert sum(r["duties"] for r in board.values()) == 3 + 3 - 1  # две прошедшие игры минус невыполненное
+    done = len(await svc.active_assignments(session, old.id)) + len(await svc.active_assignments(session, recent.id))
+    assert sum(r["duties"] for r in board.values()) == done  # только прошедшие игры, без невыполненного
+    c_old = len(await svc.user_assignments(session, old.id, c.id))
+    assert board["В"]["duties"] == c_old  # у не пришедшего — только прошлые игры, недавняя не засчитана
+    assert await svc.user_assignments(session, recent.id, c.id) == []
     assert board["В"]["minuses"] == 1 and board["В"]["no_shows"] == 1 and board["Б"]["minuses"] == 1
 
     month = {r["name"]: r for r in await svc.leaderboard(session, now, now - timedelta(days=30))}

@@ -80,7 +80,8 @@ async def send_poll_invites(bot: Bot, session: AsyncSession, game: Game, skip: U
     for user in await svc.roster(session):
         if skip is not None and user.id == skip.id:
             continue
-        if await notifier.send_dm(bot, user, text, keyboards.with_app_button(keyboards.rsvp(game), game.id)):
+        markup = keyboards.with_web_button(keyboards.with_app_button(keyboards.rsvp(game), game.id), user)
+        if await notifier.send_dm(bot, user, text, markup):
             sent += 1
         else:
             failed.append(user.name)

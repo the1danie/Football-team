@@ -549,3 +549,12 @@ async def attendance_toggle(cb: CallbackQuery, session: AsyncSession, bot: Bot):
         return
     await cb.message.edit_reply_markup(reply_markup=await operations.attendance_markup(session, game))
     await cb.answer(note)
+
+
+@router.message(Command("invite"))
+async def team_invite(message: Message, bot: Bot):
+    me = await bot.me()
+    await whatsapp.send_draft(
+        bot, whatsapp.team_invite(me.username), chat_ids=[message.chat.id],
+        note="📤 Инструкция для команды — отправьте в группу WhatsApp 👇",
+    )

@@ -473,6 +473,14 @@ async def player_action(
                 bot, user, "✅ Администратор добавил тебя в команду! Теперь можно отмечаться на игры.",
                 keyboards.main_menu(False),
             )
+            if keyboards.with_web_button(None, user) is not None:
+                await notifier.send_dm(
+                    bot, user,
+                    "📱 Удобнее всего — кнопкой «Открыть» рядом с полем ввода.\n"
+                    "🌐 Не пользуешься Telegram каждый день? Открой сайт — по этой личной ссылке "
+                    "браузер запомнит вход (не пересылай её):",
+                    keyboards.with_web_button(None, user),
+                )
             for game in await svc.upcoming_games(session, now):
                 if game.status in GameStatus.ACTIVE:
                     text, markup = await actions.game_card(session, game, user, False)

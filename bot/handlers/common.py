@@ -16,6 +16,7 @@ router.message.filter(F.chat.type == "private")
 MENU_BUTTONS = {
     texts.BTN_CREATE, texts.BTN_CURRENT, texts.BTN_PARTICIPANTS, texts.BTN_DISTRIBUTE,
     texts.BTN_EDIT, texts.BTN_CANCEL, texts.BTN_STATS, texts.BTN_PROFILE, texts.BTN_SWAP, texts.BTN_PLAYERS,
+    texts.BTN_WEB,
 }
 
 HELP = (
@@ -38,6 +39,7 @@ ADMIN_HELP = (
     "/duties — список обязанностей\n"
     "/add_duty 🩹 Аптечка — добавить обязанность (добавьте слово «машина», если нужна машина)\n"
     "/toggle_duty &lt;id&gt; — включить/выключить обязанность\n"
+    "/invite — инструкция для команды в WhatsApp (как подключиться к боту и сайту)\n"
     "🗂 Игроки (/players) — заявки новых игроков, машина, имя, состав, удаление\n"
     "/penalties — минусы за неответы, снятие минуса"
 )
@@ -92,11 +94,12 @@ async def start(message: Message, command: CommandObject, session: AsyncSession,
     if await open_payload(message, session, user, payload):
         return
     await show_menu(message, f"Привет, {texts.h(user.name)}! ⚽\n\n{HELP}")
-    app = keyboards.with_app_button(None)
+    app = keyboards.with_web_button(keyboards.with_app_button(None), user)
     if app is not None:
         await message.answer(
-            "Удобнее всего — в приложении: игры, обязанности, статистика. "
-            "Оно открывается и кнопкой «Открыть» рядом с полем ввода.",
+            "📱 Удобнее всего — в приложении: игры, обязанности, рейтинг. "
+            "Оно открывается и кнопкой «Открыть» рядом с полем ввода.\n"
+            "🌐 Не пользуешься Telegram каждый день? Есть сайт — кнопка ниже (личная ссылка, не пересылай).",
             reply_markup=app,
         )
 
@@ -280,6 +283,7 @@ async def send_web_link(message: Message, session: AsyncSession, user: User) -> 
 
 
 @router.message(Command("web"))
+@router.message(F.text == texts.BTN_WEB)
 async def web_cmd(message: Message, session: AsyncSession, state: FSMContext):
     await state.clear()
     user = await require_profile(message, session, state)

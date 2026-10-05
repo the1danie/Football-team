@@ -26,6 +26,7 @@ BTN_CANCEL = "❌ Отменить игру"
 BTN_STATS = "📊 Статистика"
 BTN_PROFILE = "👤 Мой профиль"
 BTN_PLAYERS = "🗂 Игроки"
+BTN_WEB = "🌐 Сайт"
 BTN_SWAP = "🔄 Поменяться"
 
 CAR_YES = "🚗 Есть машина"

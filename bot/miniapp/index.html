@@ -354,7 +354,23 @@ function gamesTab() {
       `🔁 Расписание${d.schedules && d.schedules.length ? " · " + d.schedules.filter((x) => x.active).length : ""}`) : null);
   if (!d.games.length) return h("div", {}, head, h("div", { class: "card empty" }, h("div", { class: "big" }, "🏟"),
     h("p", {}, "Запланированных игр нет."), d.is_admin ? h("p", { class: "muted small" }, "Создайте игру кнопкой «＋ Новая игра».") : h("p", { class: "muted small" }, "Когда админ создаст игру, бот пришлёт сообщение.")));
-  return h("div", {}, head, d.games.map(gameCard));
+  return h("div", {}, head, webBanner(), d.games.map(gameCard));
+}
+
+// Подсказка про сайт (в Telegram): можно и без Telegram — через браузер.
+function webBanner() {
+  if (S.data.web) return null;
+  let closed = false;
+  try { closed = localStorage.getItem("fb_web_banner") === "closed"; } catch (e) {}
+  if (closed) return null;
+  return h("div", { class: "card row", style: "background:var(--accent-soft)" },
+    h("span", { style: "font-size:26px" }, "🌐"),
+    h("div", { class: "grow small" }, h("b", {}, "Есть сайт — можно и без Telegram"),
+      h("div", { class: "muted" }, "Личная ссылка для браузера: Chrome, Safari.")),
+    h("button", { class: "btn small", onclick: async () => {
+      const r = await api("web_link"); if (r) openSheet({ type: "weblink", url: r.url }); } }, "Ссылка"),
+    h("button", { class: "muted", style: "font-size:20px;padding:4px 6px", "aria-label": "закрыть", onclick: () => {
+      try { localStorage.setItem("fb_web_banner", "closed"); } catch (e) {} render(); } }, "×"));
 }
 
 function gameCard(g) {
@@ -567,6 +583,9 @@ function profileTab() {
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
       h("div", { class: "small muted", style: "margin-top:4px" }, "За неответ на опрос или неявку после «Буду». Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
     S.data.is_admin ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: openDuties }, "⚙️ Обязанности: что, когда, нужна ли машина") : null,
+    S.data.is_admin ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
+      const r = await api("team_invite"); if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: "Инструкция для команды" }); } },
+      "📤 Инструкция для команды (WhatsApp)") : null,
     S.data.web
       ? h("div", { class: "btns", style: "margin:0 0 12px" },
           h("button", { class: "btn secondary", onclick: webLogoutLocal }, "Выйти"),
@@ -807,7 +826,7 @@ function createdSheet() {
 
 function whatsappSheet() {
   const s = S.sheet;
-  return h("div", {}, h("h3", {}, "Текст для WhatsApp"),
+  return h("div", {}, h("h3", {}, s.title || "Текст для WhatsApp"),
     h("div", { class: "card small", style: "white-space:pre-wrap" }, s.text),
     h("button", { class: "btn", onclick: () => openLink(s.url) }, "📤 Открыть WhatsApp"),
     h("button", { class: "btn secondary", style: "margin-top:8px", onclick: async () => {

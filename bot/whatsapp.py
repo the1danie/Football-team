@@ -160,3 +160,20 @@ def after_duties(game: Game, assignments: list[Assignment], unassigned: list[Dut
 
 def clean_duties(*args, **kwargs) -> str:
     return clean(duties(*args, **kwargs))
+
+
+def team_invite(bot_username: str) -> str:
+    """Инструкция для группы WhatsApp: как подключиться к боту и сайту."""
+    bot = f"https://t.me/{bot_username}"
+    return "\n".join([
+        "*Как отмечаться на игры и тренировки*",
+        "",
+        f"1. Откройте бота команды в Telegram: {bot}",
+        "2. Нажмите «Старт» — админ подтвердит, что вы из команды.",
+        "3. Отмечайтесь «Буду / Не буду» в боте или в приложении (кнопка «Открыть» рядом с полем ввода).",
+        "",
+        "Не пользуетесь Telegram? Зайдите в бота один раз и нажмите «Сайт» — бот пришлёт личную ссылку, "
+        "дальше можно через браузер, без Telegram.",
+        "",
+        "Кто не отвечает на опрос до закрытия сбора — получает минус.",
+    ])
