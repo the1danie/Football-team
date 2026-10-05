@@ -8,7 +8,7 @@ from bot.models import Game
 from tests.test_miniapp import ADMIN, api, team  # noqa: F401 — фикстура team
 from tests.test_webhook import fake  # noqa: F401
 
-GIS = "https://2gis.kz/almaty/firm/70000001234567"
+GIS = "https://2gis.kz/petropavlovsk/firm/70000001234567"
 
 
 def test_normalize_and_fallback():
