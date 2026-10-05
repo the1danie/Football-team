@@ -468,7 +468,7 @@ async def _user_penalties_view(session: AsyncSession, user: User):
     b = InlineKeyboardBuilder()
     for p in items:
         when = texts.game_header(p.game) if p.game else texts.fmt_date(p.created_at)
-        lines.append(f"• −{p.points}: не ответил — {when}")
+        lines.append(f"• −{p.points}: {texts.penalty_reason(p.reason)} — {when}")
         b.button(text=f"❌ Снять: {texts.fmt_date(p.game.starts_at) if p.game else p.id}", callback_data=f"pendel:{p.id}")
     if not items:
         lines.append("Минусов нет.")
@@ -532,3 +532,20 @@ async def min_decision(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     await cb.answer()
     await cb.message.edit_reply_markup(reply_markup=None)
     await cb.message.answer(note)
+
+
+@router.callback_query(F.data.startswith("att:"))
+async def attendance_toggle(cb: CallbackQuery, session: AsyncSession, bot: Bot):
+    _, game_id, user_id, present = cb.data.split(":")
+    game = await svc.get_game(session, int(game_id))
+    user = await session.get(User, int(user_id))
+    if game is None or user is None:
+        await cb.answer("Не найдено.", show_alert=True)
+        return
+    try:
+        note = await operations.mark_attendance(bot, session, game, user, present == "1")
+    except operations.OpError as e:
+        await cb.answer(str(e), show_alert=True)
+        return
+    await cb.message.edit_reply_markup(reply_markup=await operations.attendance_markup(session, game))
+    await cb.answer(note)

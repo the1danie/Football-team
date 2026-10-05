@@ -66,7 +66,7 @@ async def player(cb: CallbackQuery, session: AsyncSession):
     minuses = await svc.user_penalties(session, user.id)
     if minuses:
         lines += ["", f"⚠️ Минусы: {sum(p.points for p in minuses)}"]
-        lines += [f"• не ответил — {texts.game_header(p.game)}" for p in minuses if p.game]
+        lines += [f"• {texts.penalty_reason(p.reason)} — {texts.game_header(p.game)}" for p in minuses if p.game]
     b = InlineKeyboardBuilder()
     b.button(text="← Вся команда", callback_data="stat:all")
     await cb.message.edit_text("\n".join(lines), reply_markup=b.as_markup())

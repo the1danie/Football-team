@@ -102,6 +102,8 @@ class Game(Base):
     penalties_applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Обязанности «после тренировки» уже распределены.
     after_duties_done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Админам отправлен список «кто пришёл».
+    attendance_asked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     # Повторяющаяся тренировка: из какого расписания создана.
     schedule_id: Mapped[int | None] = mapped_column(
@@ -156,6 +158,8 @@ class GameParticipant(Base):
     game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     status: Mapped[str] = mapped_column(String(8))
+    # Отметка админа после начала: True — пришёл, False — не пришёл, None — не отмечали.
+    attended: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(lazy="joined")
@@ -208,6 +212,13 @@ class SwapRequest(Base):
     )
     status: Mapped[str] = mapped_column(String(16), default=SwapStatus.PENDING)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PenaltyReason:
+    NO_RESPONSE = "no_response"  # не ответил на опрос
+    NO_SHOW = "no_show"  # сказал «Буду», но не пришёл
+
+    LABELS = {NO_RESPONSE: "не ответил на опрос", NO_SHOW: "сказал «Буду», но не пришёл"}
 
 
 class PenaltyStatus:

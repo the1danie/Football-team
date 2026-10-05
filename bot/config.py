@@ -53,6 +53,10 @@ class Config:
     rsvp_reminder_hours: float = field(default_factory=lambda: _float("RSVP_REMINDER_HOURS", 3))
     # Сколько минусов за то, что не ответил на опрос (0 — не начислять).
     penalty_points: int = field(default_factory=lambda: int(_float("PENALTY_POINTS", 1)))
+    # Минус за неявку: отметил «Буду», а админ отметил «не пришёл» (0 — не начислять).
+    no_show_points: int = field(default_factory=lambda: int(_float("NO_SHOW_POINTS", 1)))
+    # Через сколько минут после начала прислать админам список «кто пришёл».
+    attendance_ask_minutes: float = field(default_factory=lambda: _float("ATTENDANCE_ASK_MINUTES", 15))
     # С какого количества минусов предупреждать админов и игрока.
     penalty_limit: int = field(default_factory=lambda: int(_float("PENALTY_LIMIT", 3)))
     # Насколько минус поднимает игрока в очереди на обязанности (в единицах score).

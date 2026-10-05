@@ -508,3 +508,53 @@ async def player_action(
         raise OpError("Неизвестное действие.")
     await session.flush()
     return note
+
+
+# ----------------------------------------------------------------- кто пришёл
+
+
+async def mark_attendance(bot: Bot, session: AsyncSession, game: Game, user: User, present: bool) -> str:
+    if game.status == GameStatus.CANCELLED:
+        raise OpError("Игра отменена.")
+    if config.now() < game.starts_at - timedelta(hours=1):
+        raise OpError("Отмечать, кто пришёл, можно с часа до начала.")
+    result = await svc.set_attendance(session, game, user, present)
+    await notifier.refresh_game(bot, session, game)
+    await notifier.announce_reassignments(bot, game, result.reassigned)
+    if result.penalty_total is not None:
+        await notifier.send_dm(
+            bot, user,
+            f"⚠️ Ты отметил «Буду» на {texts.game_header(game)}, но не пришёл — −{config.no_show_points}. "
+            f"Всего минусов: {result.penalty_total}.\nЕсли это ошибка — напиши админу.",
+        )
+    if result.penalty_removed:
+        await notifier.send_dm(bot, user, f"✅ Минус за неявку ({texts.game_header(game)}) снят.")
+    return f"{user.name}: {'пришёл' if present else 'не пришёл'}"
+
+
+async def attendance_markup(session: AsyncSession, game: Game) -> InlineKeyboardMarkup:
+    """Кнопки «кто пришёл» для админов в боте: нажатие переключает отметку."""
+    marks = await svc.attendance(session, game.id)
+    rows = []
+    for u in (await svc.participants_by_status(session, game.id))[Rsvp.YES] + [
+        u for u in (await svc.participants_by_status(session, game.id))[Rsvp.NO] if marks.get(u.id) is False
+    ]:
+        came = marks.get(u.id) is not False
+        rows.append([InlineKeyboardButton(
+            text=f"{'✅' if came else '❌'} {u.name}", callback_data=f"att:{game.id}:{u.id}:{0 if came else 1}"
+        )])
+    markup = InlineKeyboardMarkup(inline_keyboard=rows)
+    return keyboards.with_app_button(markup, game.id) or markup
+
+
+async def ask_attendance(bot: Bot, session: AsyncSession, game: Game) -> None:
+    game.attendance_asked = True
+    text = (
+        f"👥 <b>Кто пришёл? {texts.game_header(game)}</b>\n\n"
+        "Нажмите на того, кто отметил «Буду», но не пришёл (станет ❌). "
+        f"Ему — минус, а обязанности «после тренировки» достанутся тем, кто был. "
+        "Кого нет в списке, но пришёл, — отметьте в приложении («👥 Кто пришёл»)."
+    )
+    markup = await attendance_markup(session, game)
+    for admin_id in config.all_admin_ids:
+        await notifier.send_raw(bot, admin_id, text, markup)

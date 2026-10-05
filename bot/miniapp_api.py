@@ -87,6 +87,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
     ]
     from bot.actions import after_at
 
+    marks = await svc.attendance(session, game.id)
     before = await svc.active_duties(session, DutyPhase.BEFORE)
     pending_after = await svc.pending_after_duties(session, game)
     view = {
@@ -109,7 +110,10 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         "deadline_at_label": f"{texts.day_word(deadline, now).lower()} в {texts.fmt_time(deadline)}",
         "deadline_passed": now >= deadline,
         "penalty": config.penalty_points if penalties_enabled(game) and not game.penalties_applied else 0,
-        "participants": {s: [_user_brief(u) for u in by_status[s]] for s in Rsvp.ALL},
+        "participants": {
+            s: [{**_user_brief(u), "attended": marks.get(u.id)} for u in by_status[s]] for s in Rsvp.ALL
+        },
+        "attendance_open": game.status != GameStatus.CANCELLED and now >= game.starts_at - timedelta(hours=1),
         "min_players": game.min_players or 0,
         "needs_decision": is_admin and operations.needs_min_decision(game, len(by_status[Rsvp.YES])),
         "waiting_until": texts.fmt_time(game.min_recheck_at) if game.min_recheck_at else None,
@@ -191,7 +195,8 @@ async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict
         "id": user.id, "name": user.name, "car": user.has_car,
         "duties": [{"emoji": d.emoji, "name": d.name, "count": n} for d, n in await svc.player_stats(session, user.id)],
         "minuses": [
-            {"id": p.id, "points": p.points, "game": texts.game_header(p.game) if p.game else ""} for p in penalties
+            {"id": p.id, "points": p.points, "game": texts.game_header(p.game) if p.game else "",
+             "reason": texts.penalty_reason(p.reason)} for p in penalties
             if p.status == PenaltyStatus.OPEN
         ],
     }
@@ -228,7 +233,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel",
 }
 
@@ -345,6 +350,11 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 "whatsapp": {"text": announce, "url": whatsapp.share_url(announce)},
                 "state": await state_view(bot, session, tg, user),
             }
+        elif action == "attendance":
+            note = await operations.mark_attendance(
+                bot, session, await _game(session, body), await _user(session, body.get("user_id")),
+                bool(body.get("present")),
+            )
         elif action == "duties":
             return {"duties": [duty_view(d) for d in await svc.all_duties(session)]}
         elif action == "duty_update":

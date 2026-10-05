@@ -17,6 +17,7 @@ from bot.models import (
     GameParticipant,
     GameStatus,
     Penalty,
+    PenaltyReason,
     PenaltyStatus,
     Rsvp,
     Schedule,
@@ -233,7 +234,11 @@ async def build_candidates(
 ) -> list[Candidate]:
     """Кандидаты — все, кто отметил «Буду», с их историей обязанностей."""
     exclude_user_ids = exclude_user_ids or set()
-    users = [u for u in (await participants_by_status(session, game.id))[Rsvp.YES] if u.id not in exclude_user_ids]
+    absent = await absent_user_ids(session, game.id)
+    users = [
+        u for u in (await participants_by_status(session, game.id))[Rsvp.YES]
+        if u.id not in exclude_user_ids and u.id not in absent
+    ]
     if not users:
         return []
     ids = [u.id for u in users]
@@ -780,3 +785,82 @@ async def refresh_admins(session: AsyncSession) -> None:
         select(User.telegram_id).where(User.is_admin.is_(True), User.status == UserStatus.APPROVED)
     )
     config.extra_admin_ids = set(rows.all())
+
+
+# ---------------------------------------------------------------- кто пришёл
+
+
+async def absent_user_ids(session: AsyncSession, game_id: int) -> set[int]:
+    rows = await session.scalars(
+        select(GameParticipant.user_id).where(
+            GameParticipant.game_id == game_id, GameParticipant.attended.is_(False)
+        )
+    )
+    return set(rows.all())
+
+
+async def attendance(session: AsyncSession, game_id: int) -> dict[int, bool | None]:
+    rows = await session.execute(
+        select(GameParticipant.user_id, GameParticipant.attended).where(GameParticipant.game_id == game_id)
+    )
+    return {uid: att for uid, att in rows.all()}
+
+
+@dataclass
+class AttendanceResult:
+    penalty_total: int | None = None  # начислен минус за неявку — сколько всего у игрока
+    penalty_removed: bool = False
+    reassigned: list[Reassignment] = field(default_factory=list)
+
+
+async def set_attendance(
+    session: AsyncSession, game: Game, user: User, present: bool, rng: random.Random | None = None
+) -> AttendanceResult:
+    """Админ отмечает, был ли игрок. Не пришёл — минус (если говорил «Буду»), обязанности —
+    «до» не засчитываются, «после» уходят другим. Пришёл без отметки — становится «Буду»."""
+    result = AttendanceResult()
+    p = await session.get(GameParticipant, (game.id, user.id))
+    if present:
+        if p is None:
+            p = GameParticipant(game_id=game.id, user_id=user.id, status=Rsvp.YES, user=user)
+            session.add(p)
+        p.status = Rsvp.YES
+        p.attended = True
+        no_show = await session.scalar(
+            select(Penalty).where(
+                Penalty.user_id == user.id, Penalty.game_id == game.id,
+                Penalty.reason == PenaltyReason.NO_SHOW, Penalty.status == PenaltyStatus.OPEN,
+            )
+        )
+        if no_show is not None:
+            no_show.status = PenaltyStatus.CANCELLED
+            result.penalty_removed = True
+        await session.flush()
+        return result
+
+    said_yes = p is not None and p.status == Rsvp.YES
+    if p is None:
+        p = GameParticipant(game_id=game.id, user_id=user.id, status=Rsvp.NO, user=user)
+        session.add(p)
+    p.attended = False
+    await session.flush()
+    for a in await user_assignments(session, game.id, user.id):
+        if a.duty.phase == DutyPhase.AFTER:
+            result.reassigned.append(await reassign(session, game, a, rng=rng))
+        else:
+            a.status = AssignmentStatus.CANCELLED  # не выполнил — в статистику не идёт
+    if said_yes and config.no_show_points > 0:
+        exists = await session.scalar(
+            select(Penalty).where(
+                Penalty.user_id == user.id, Penalty.game_id == game.id, Penalty.reason == PenaltyReason.NO_SHOW
+            )
+        )
+        if exists is None:
+            session.add(Penalty(user_id=user.id, game_id=game.id, points=config.no_show_points,
+                                reason=PenaltyReason.NO_SHOW))
+        elif exists.status == PenaltyStatus.CANCELLED:
+            exists.status = PenaltyStatus.OPEN
+        await session.flush()
+        result.penalty_total = (await open_penalty_points(session, [user.id])).get(user.id, 0)
+    await session.flush()
+    return result

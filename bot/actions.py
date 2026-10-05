@@ -94,10 +94,16 @@ async def send_rsvp_nudge(bot: Bot, session: AsyncSession, game: Game) -> None:
     """Напомнить тем, кто ещё не ответил: лично и списком в общем чате."""
     users = await svc.non_responders(session, game)
     game.rsvp_nudge_sent = True
-    if not users:
-        return
     now, deadline = config.now(), rsvp_deadline(game)
     yes = await svc.yes_count(session, game.id)
+    # «Не знаю» — мягкое напоминание определиться (без минуса).
+    for user in (await svc.participants_by_status(session, game.id))[Rsvp.MAYBE]:
+        await notifier.send_dm(
+            bot, user, texts.maybe_nudge(game, deadline, now, yes),
+            keyboards.with_app_button(keyboards.rsvp(game), game.id),
+        )
+    if not users:
+        return
     for user in users:
         await notifier.send_dm(
             bot, user, texts.rsvp_nudge(game, deadline, now, config.penalty_points, yes),

@@ -35,6 +35,15 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
 
     games = (await session.scalars(select(Game).where(Game.status.in_(GameStatus.ACTIVE)))).all()
     for game in games:
+        # Через 15 минут после начала — админам список «кто пришёл».
+        if (
+            game.status == GameStatus.DISTRIBUTED
+            and not game.attendance_asked
+            and now >= game.starts_at + timedelta(minutes=config.attendance_ask_minutes)
+            and now < game.starts_at + timedelta(hours=config.finish_after_hours)
+        ):
+            await operations.ask_attendance(bot, session, game)
+
         # После тренировки: мячи, манишки, стирка — среди тех, кто был.
         if (
             game.status == GameStatus.DISTRIBUTED

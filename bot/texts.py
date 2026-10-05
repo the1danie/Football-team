@@ -254,6 +254,14 @@ def rsvp_nudge(game: Game, deadline: datetime, now: datetime, penalty_points: in
     return "\n".join(lines)
 
 
+def maybe_nudge(game: Game, deadline: datetime, now: datetime, yes: int = 0) -> str:
+    lines = ["🤔 <b>Ты ответил «Не знаю»</b>", ""] + game_lines(game)
+    lines += ["", f"Определись {until(deadline, now)}, чтобы было понятно, сколько нас."]
+    if game.min_players:
+        lines.append(min_players_line(game, yes))
+    return "\n".join(lines)
+
+
 def group_nudge(game: Game, users: list[User], deadline: datetime, now: datetime, yes: int = 0) -> str:
     names = ", ".join(mention(u) for u in users)
     extra = f"\n{min_players_line(game, yes)}" if game.min_players else ""
@@ -298,3 +306,9 @@ def penalty_redeemed(game: Game, count: int, left: int) -> str:
 def after_line(duties: list[Duty], when: datetime) -> str:
     names = ", ".join(d.title for d in duties)
     return f"🏁 После тренировки (около {fmt_time(when)}) распределим: {names}"
+
+
+def penalty_reason(reason: str) -> str:
+    from bot.models import PenaltyReason
+
+    return PenaltyReason.LABELS.get(reason, "минус")
