@@ -71,3 +71,12 @@ def _all_duties_before(request, monkeypatch):
     # прежняя схема: 4 обязанности (со стиркой), все — до игры
     monkeypatch.setattr(db, "DEFAULT_DUTIES", [d[:6] + ("before", True) for d in db.DEFAULT_DUTIES])
     monkeypatch.setattr(db, "MERGE_LAUNDRY_INTO_BIBS", False)
+
+
+@pytest.fixture(autouse=True)
+def _old_deadlines(monkeypatch):
+    """Тесты писались при закрытии сбора за 5 ч и личном напоминании за 3 ч (сейчас по умолчанию 3 и 2)."""
+    from bot.config import config
+
+    monkeypatch.setattr(config, "auto_distribute_hours", 5.0)
+    monkeypatch.setattr(config, "personal_reminder_hours", 3.0)
