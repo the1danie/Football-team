@@ -41,6 +41,21 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, default_na
     return user
 
 
+async def name_from_telegram(session: AsyncSession, tg_user) -> str:
+    """Имя для команды из профиля Telegram: имя, а если такое уже есть у другого игрока — имя и фамилия."""
+    existing = await get_user_by_tg(session, tg_user.id)
+    if existing is not None and existing.name:
+        return existing.name  # уже создан (например, нажал кнопку в чате) — имя не меняем
+    first = (tg_user.first_name or "").strip()
+    full = " ".join(p for p in (first, (tg_user.last_name or "").strip()) if p)
+    if not first:
+        return full[:64]
+    taken = await session.scalar(
+        select(func.count()).select_from(User).where(User.name == first, User.telegram_id != tg_user.id)
+    )
+    return (full if taken else first)[:64]
+
+
 async def all_users(session: AsyncSession) -> list[User]:
     return list((await session.scalars(select(User).order_by(User.name))).all())
 

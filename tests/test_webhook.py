@@ -75,13 +75,22 @@ async def test_webhook_processes_updates_and_keeps_dialog_state(fake):
     headers = {"X-Telegram-Bot-Api-Secret-Token": SECRET}
     status, body = await call(webhook.webhook_app, "POST", headers=headers, body=start_update(1, "/start"))
     assert status == 200 and body == {"ok": True}
-    assert "Как тебя зовут" in fake.sent(1)[-1].text
+    assert "Привет, Даниял" in fake.sent(1)[-1].text and "Есть ли у тебя машина" in fake.sent(1)[-1].text
 
     # Следующий апдейт — как будто другой вызов функции: состояние диалога берётся из БД.
     webhook._dp = None
     webhook._engine = None
-    await call(webhook.webhook_app, "POST", headers=headers, body=start_update(1, "Даниял", 2))
-    assert "Есть ли у тебя машина" in fake.sent(1)[-1].text
+    click = json.dumps({
+        "update_id": 2,
+        "callback_query": {
+            "id": "c1", "chat_instance": "x", "data": "car:1",
+            "from": {"id": 1, "is_bot": False, "first_name": "Даниял"},
+            "message": {"message_id": 5, "date": 1_700_000_000, "text": "...",
+                        "chat": {"id": 1, "type": "private"}},
+        },
+    }).encode()
+    await call(webhook.webhook_app, "POST", headers=headers, body=click)
+    assert "Профиль сохранён" in fake.edits(1)[-1].text
 
 
 async def test_webhook_survives_handler_errors(fake, monkeypatch):

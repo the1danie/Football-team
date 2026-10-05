@@ -90,9 +90,10 @@ class Harness:
         self.dp, self.bot, self.fake, self.sm = dp, bot, session, sessionmaker
         self.update_ids = itertools.count(1)
         self.msg_ids = itertools.count(10_000)
+        self.names: dict[int, str] = {}  # имя в профиле Telegram
 
     def _user(self, uid):
-        return {"id": uid, "is_bot": False, "first_name": f"U{uid}"}
+        return {"id": uid, "is_bot": False, "first_name": self.names.get(uid, f"U{uid}")}
 
     async def text(self, uid, text, chat_id=None):
         chat_id = chat_id or uid
@@ -122,8 +123,8 @@ class Harness:
         await self.dp.feed_update(self.bot, Update.model_validate(upd, context={"bot": self.bot}))
 
     async def register(self, uid, name, car):
+        self.names[uid] = name  # имя бот берёт из профиля Telegram
         await self.text(uid, "/start")
-        await self.text(uid, name)
         await self.click(uid, f"car:{1 if car else 0}")
 
 
@@ -148,8 +149,12 @@ async def h(tmp_path, monkeypatch):
 async def test_full_flow(h: Harness):
     fake = h.fake
 
-    # --- регистрация
-    await h.register(ADMIN, "Даниял", car=True)
+    # --- регистрация: имя из профиля Telegram, спрашивается только машина
+    h.names[ADMIN] = "Даниял"
+    await h.text(ADMIN, "/start")
+    first = fake.sent(ADMIN)[-1].text
+    assert "Привет, Даниял" in first and "Есть ли у тебя машина" in first and "Как тебя зовут" not in first
+    await h.click(ADMIN, "car:1")
     assert "Привет" not in fake.sent(ADMIN)[-1].text  # после профиля — меню с помощью
     players = {2: ("Арман", False), 3: ("Тимур", True), 4: ("Руслан", False), 5: ("Максим", False)}
     for uid, (name, car) in players.items():
@@ -481,3 +486,20 @@ async def test_no_penalties_for_last_minute_game(h: Harness):
         g = await s.get(Game, game_id)
         assert g.penalties_applied  # сбор фактически закрыт, но ответить было некогда
         assert await svc.open_penalty_points(s) == {}
+
+
+async def test_name_from_telegram(h: Harness):
+    h.names[2] = "Арман"
+    await h.register(2, "Арман", car=False)
+    # второй Арман — бот различает их по фамилии
+    upd = {"id": 3, "is_bot": False, "first_name": "Арман", "last_name": "Сейткали"}
+    h._user = lambda uid, _orig=h._user: upd if uid == 3 else _orig(uid)
+    await h.text(3, "/start")
+    assert "Привет, Арман Сейткали" in h.fake.sent(3)[-1].text
+    await h.click(3, "car:0")
+    # имя можно поменять в профиле
+    await h.click(3, "prof:name")
+    await h.text(3, "Арман С.")
+    async with h.sm() as s:
+        assert (await svc.get_user_by_tg(s, 3)).name == "Арман С."
+        assert (await svc.get_user_by_tg(s, 2)).name == "Арман"

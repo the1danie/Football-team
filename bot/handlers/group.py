@@ -37,7 +37,9 @@ async def on_rsvp(cb: CallbackQuery, session: AsyncSession, bot: Bot):
         await cb.answer("Игра уже началась.", show_alert=True)
         return
 
-    user = await svc.get_or_create_user(session, cb.from_user.id, cb.from_user.first_name)
+    user = await svc.get_user_by_tg(session, cb.from_user.id) or await svc.get_or_create_user(
+        session, cb.from_user.id, await svc.name_from_telegram(session, cb.from_user)
+    )
     had_duties = await svc.user_assignments(session, game.id, user.id)
     result = await svc.set_rsvp(session, game, user, status)
     if not result.changed:

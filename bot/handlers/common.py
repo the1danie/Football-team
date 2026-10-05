@@ -52,12 +52,26 @@ async def show_menu(message: Message, text: str = "Главное меню 👇"
 
 
 async def require_profile(message: Message, session: AsyncSession, state: FSMContext) -> User | None:
-    """Вернуть пользователя или начать заполнение профиля."""
+    """Вернуть пользователя или начать заполнение профиля.
+
+    Имя берём из профиля Telegram, спрашиваем только про машину.
+    """
     user = await svc.get_user_by_tg(session, message.chat.id)
     if user is not None and user.profile_completed:
         return user
-    await state.set_state(ProfileStates.name)
-    await message.answer("Сначала заполним профиль.\n\nКак тебя зовут?\n\nНапример: <i>Даниял</i>")
+    name = await svc.name_from_telegram(session, message.from_user) if message.from_user else ""
+    if not name:  # в Telegram имя пустое (бывает у служебных аккаунтов) — спросим
+        await state.set_state(ProfileStates.name)
+        await message.answer("Сначала заполним профиль.\n\nКак тебя зовут?\n\nНапример: <i>Даниял</i>")
+        return None
+    await state.update_data(name=name)
+    await state.set_state(ProfileStates.car)
+    await message.answer(
+        f"Привет, {texts.h(name)}! 👋\n\nЕсть ли у тебя машина?\n"
+        "<i>Это нужно, чтобы мячи доставались только тем, кто на машине.</i>\n\n"
+        "Имя я взял из Telegram — поменять можно в «👤 Мой профиль».",
+        reply_markup=keyboards.car_choice("car"),
+    )
     return None
 
 
