@@ -498,6 +498,11 @@ function everyWeekday(iso) {
 }
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 
+function afterLabel(m) {
+  if (m === 60) return "час";
+  if (m % 60 === 0) return `${m / 60} ${plural(m / 60, "час", "часа", "часов")}`;
+  return `${m} мин`;
+}
 async function openDuties() {
   const r = await api("duties");
   if (r) openSheet({ type: "duties", duties: r.duties });
@@ -505,7 +510,7 @@ async function openDuties() {
 function dutiesSheet() {
   const upd = async (d, body) => { const r = await api("duty_update", { id: d.id, ...body }); if (r) { S.sheet.duties = r.duties; render(); } };
   return h("div", {}, h("h3", {}, "⚙️ Обязанности"),
-    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "«До» — распределяется при закрытии сбора среди тех, кто придёт. «После» — через полтора часа после начала, среди тех, кто был: забрать и принести на следующую."),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, `«До» — распределяется при закрытии сбора среди тех, кто придёт. «После» — через ${afterLabel(S.data.after_minutes)} после начала, среди тех, кто был: забрать и принести на следующую.`),
     S.sheet.duties.map((d) => h("div", { class: "card", style: d.active ? "" : "opacity:.55" },
       h("div", { class: "row" }, h("span", { style: "font-size:24px" }, d.emoji),
         h("div", { class: "grow" }, h("b", {}, d.name), h("div", { class: "small muted" }, d.action)),

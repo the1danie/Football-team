@@ -78,7 +78,7 @@ async def test_scheduler_after_training(fake, monkeypatch):  # noqa: F811
 
     # тренировка началась 1,5 часа назад
     async with sm() as s:
-        (await s.get(Game, gid)).starts_at = config.now() - timedelta(minutes=91)
+        (await s.get(Game, gid)).starts_at = config.now() - timedelta(minutes=61)  # прошёл час
         await s.commit()
     fake.reset()
     async with sm() as s:
@@ -123,5 +123,7 @@ async def test_miniapp_duty_settings(team):  # noqa: F811
     _, res = await api(ADMIN, "duty_update", id=water["id"], phase="after", requires_car=True)
     water = next(d for d in res["duties"] if d["name"] == "Вода")
     assert water["phase"] == "after" and water["requires_car"] is True
+    _, st = await api(ADMIN, "state")
+    assert st["state"]["after_minutes"] == 60
     status, _ = await api({"id": 55, "first_name": "Игрок"}, "duties")
     assert status == 403

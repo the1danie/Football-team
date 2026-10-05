@@ -71,7 +71,7 @@ class Config:
         or (f"https://{os.environ['VERCEL_PROJECT_PRODUCTION_URL']}" if os.getenv("VERCEL_PROJECT_PRODUCTION_URL") else "")
     )
     # Через сколько минут после начала распределять обязанности «после тренировки».
-    after_duties_minutes: float = field(default_factory=lambda: _float("AFTER_DUTIES_MINUTES", 90))
+    after_duties_minutes: float = field(default_factory=lambda: _float("AFTER_DUTIES_MINUTES", 60))
     # Через сколько часов после начала игра считается завершённой.
     finish_after_hours: float = field(default_factory=lambda: _float("FINISH_AFTER_HOURS", 3))
 

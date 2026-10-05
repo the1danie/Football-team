@@ -131,6 +131,7 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         "user": None,
         "games": [],
         "penalty_points": config.penalty_points,
+        "after_minutes": int(config.after_duties_minutes),
     }
     if user is None or not user.profile_completed:
         data["access"] = "new"
