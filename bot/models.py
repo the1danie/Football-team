@@ -17,8 +17,10 @@ class GameStatus:
     DISTRIBUTED = "distributed"  # обязанности распределены
     FINISHED = "finished"
     CANCELLED = "cancelled"
+    DELETED = "deleted"  # удалена админом из архива (тестовая): нигде не показывается и не считается
 
     ACTIVE = (OPEN, DISTRIBUTED)
+    NOT_PLAYED = (CANCELLED, DELETED)
 
 
 class Rsvp:

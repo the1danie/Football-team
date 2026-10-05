@@ -169,3 +169,23 @@ async def test_rsvp_locked_in_app(team):  # noqa: F811
     assert status == 200 and "Сбор закрыт" in res["note"] and "отправлен админу" in res["note"]
     assert res["state"]["games"][0]["my_rsvp"] == "yes"
     assert any("просит изменить ответ" in m.text for m in fake.sent(1))
+
+
+async def test_delete_test_game_from_archive(team):  # noqa: F811
+    tomorrow = (config.now() + timedelta(days=1)).date().isoformat()
+    _, res = await api(ADMIN_TG, "create_game", date=tomorrow, minutes=20 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    status, body = await api(ADMIN_TG, "delete_game", game_id=gid)
+    assert status == 400 and "сначала отмените" in body["error"]
+    await api(ADMIN_TG, "rsvp", game_id=gid, status="yes")
+    await api(ADMIN_TG, "cancel", game_id=gid)
+    _, arch = await api(ADMIN_TG, "archive")
+    assert [g["id"] for g in arch["archive"]] == [gid]
+    status, _ = await api(tg_user(9, "Чужой"), "delete_game", game_id=gid)
+    assert status in (401, 403)
+    _, res = await api(ADMIN_TG, "delete_game", game_id=gid)
+    assert res["note"] == "🗑 Игра удалена"
+    _, arch = await api(ADMIN_TG, "archive")
+    assert arch["archive"] == []
+    async with webhook._sessionmaker() as s:
+        assert (await s.get(Game, gid)).status == GameStatus.DELETED  # запись осталась — расписание не создаст её снова

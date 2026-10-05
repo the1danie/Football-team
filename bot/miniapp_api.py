@@ -287,7 +287,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for",
+    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game",
 }
 
 
@@ -457,6 +457,12 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 "whatsapp": {"text": announce, "url": whatsapp.share_url(announce)},
                 "state": await state_view(bot, session, tg, user),
             }
+        elif action == "delete_game":
+            game = await _game(session, body)
+            if game.status in GameStatus.ACTIVE and config.now() < game.starts_at + timedelta(hours=PAST_AFTER_HOURS):
+                raise ApiError("Удалить можно отменённую или прошедшую игру. Предстоящую сначала отмените.")
+            await svc.delete_game(session, game)
+            note = "🗑 Игра удалена"
         elif action == "penalize_silent":
             game = await _game(session, body)
             if not game.penalties_applied or not penalties_enabled(game) or config.penalty_points <= 0:

@@ -185,6 +185,20 @@ async def upcoming_games(session: AsyncSession, now: datetime, grace_hours: floa
     return list(rows.all())
 
 
+async def delete_game(session: AsyncSession, game: Game) -> None:
+    """Убрать игру из архива (тестовую): обязанности и минусы по ней не считаются.
+
+    Запись остаётся со статусом DELETED — иначе расписание создало бы эту игру заново.
+    """
+    await cancel_game(session, game)
+    for p in (await session.scalars(
+        select(Penalty).where(Penalty.game_id == game.id, Penalty.status == PenaltyStatus.OPEN)
+    )).all():
+        p.status = PenaltyStatus.CANCELLED
+    game.status = GameStatus.DELETED
+    await session.flush()
+
+
 async def cancel_game(session: AsyncSession, game: Game) -> list[Assignment]:
     """Отменить игру. Возвращает снятые назначения (чтобы уведомить людей)."""
     assignments = await active_assignments(session, game.id)
@@ -291,7 +305,7 @@ async def build_candidates(
         .join(Game, Assignment.game_id == Game.id)
         .where(
             Assignment.status == AssignmentStatus.ACTIVE,
-            Game.status != GameStatus.CANCELLED,
+            Game.status.not_in(GameStatus.NOT_PLAYED),
             Game.id != game.id,
             Assignment.user_id.in_(ids),
         )
@@ -612,7 +626,7 @@ def _counted():
     return (
         select(Assignment.user_id, Assignment.duty_id, func.count().label("cnt"))
         .join(Game, Assignment.game_id == Game.id)
-        .where(Assignment.status == AssignmentStatus.ACTIVE, Game.status != GameStatus.CANCELLED)
+        .where(Assignment.status == AssignmentStatus.ACTIVE, Game.status.not_in(GameStatus.NOT_PLAYED))
         .group_by(Assignment.user_id, Assignment.duty_id)
     )
 
@@ -960,7 +974,7 @@ async def set_attendance(
 
 async def leaderboard(session: AsyncSession, now: datetime, since: datetime | None = None) -> list[dict]:
     """Рейтинги команды: помощь (выполненные обязанности), посещения, минусы — за период."""
-    played = [Game.status != GameStatus.CANCELLED, Game.starts_at <= now]
+    played = [Game.status.not_in(GameStatus.NOT_PLAYED), Game.starts_at <= now]
     if since is not None:
         played.append(Game.starts_at >= since)
 
@@ -1042,6 +1056,7 @@ async def past_games(session: AsyncSession, now: datetime, limit: int = 10, offs
     rows = await session.scalars(
         select(Game)
         .where(or_(Game.starts_at <= now - timedelta(hours=past_after_hours), Game.status.not_in(GameStatus.ACTIVE)))
+        .where(Game.status != GameStatus.DELETED)
         .order_by(Game.starts_at.desc(), Game.id.desc())
         .offset(offset)
         .limit(limit)
@@ -1053,7 +1068,7 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
     """По каждому игроку: сколько игр мог прийти, сколько пришёл, отказался, молчал, не пришёл после «Буду»."""
     from bot.deadlines import MIN_RSVP_WINDOW, rsvp_deadline, to_utc
 
-    q = select(Game).where(Game.status != GameStatus.CANCELLED, Game.starts_at <= now).order_by(Game.starts_at)
+    q = select(Game).where(Game.status.not_in(GameStatus.NOT_PLAYED), Game.starts_at <= now).order_by(Game.starts_at)
     if since is not None:
         q = q.where(Game.starts_at >= since)
     games = list((await session.scalars(q)).all())

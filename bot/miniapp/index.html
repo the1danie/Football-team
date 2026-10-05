@@ -562,9 +562,10 @@ function gameCard(g) {
     add(card, h("div", { class: "small muted", style: "margin-top:8px" }, `🏁 После тренировки (около ${g.after_time}): ${g.after_pending.join(", ")} — среди тех, кто был.`));
 
   if (d.is_admin && g.past) {
-    if (g.status !== "cancelled") add(card, h("div", { class: "admin-bar" },
-      h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "attendance", game: g }) }, "👥 Кто пришёл"),
-      h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp")));
+    add(card, h("div", { class: "admin-bar" },
+      g.status !== "cancelled" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "attendance", game: g }) }, "👥 Кто пришёл") : null,
+      g.status !== "cancelled" ? h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp") : null,
+      h("button", { class: "btn small danger", onclick: () => deleteGame(g) }, "🗑 Удалить")));
   } else if (d.is_admin) {
     add(card, h("div", { class: "admin-bar" },
       h("button", { class: "btn small secondary", onclick: () => adminDistribute(g) }, g.status === "distributed" ? "🔁 Пересчитать" : "🎯 Распределить"),
@@ -575,6 +576,12 @@ function gameCard(g) {
       h("button", { class: "btn small danger", onclick: () => adminCancel(g) }, "Отменить")));
   }
   return card;
+}
+
+async function deleteGame(g) {
+  if (!(await confirmBox(`Удалить «${g.kind_title}, ${g.date_label} ${g.time}» из архива? Она пропадёт из статистики и посещаемости, минусы за неё снимутся.`))) return;
+  const r = await api("delete_game", { game_id: g.id });
+  if (r) { haptic("ok"); S.openPast = null; await loadArchive(); }
 }
 
 async function adminDistribute(g) {
