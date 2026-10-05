@@ -56,6 +56,46 @@ async def get_or_create_user(
     return user
 
 
+async def create_manual_user(session: AsyncSession, name: str, has_car: bool) -> User:
+    """Игрок без Telegram: админ добавил вручную. Получает минусы за молчание, отметки ставит админ
+    (или сам — по личной ссылке на сайт). Когда зайдёт в бота по ссылке-приглашению — аккаунты свяжутся."""
+    lowest = await session.scalar(select(func.min(User.telegram_id)))
+    user = User(
+        telegram_id=min(-1, (lowest or 0) - 1), name=name[:64], has_car=has_car, car_locked=True,
+        profile_completed=True, status=UserStatus.APPROVED,
+    )
+    session.add(user)
+    await session.flush()
+    return user
+
+
+async def has_history(session: AsyncSession, user: User) -> bool:
+    """Есть ли у игрока отметки, обязанности или минусы (такой аккаунт нельзя просто удалить при связке)."""
+    for model in (GameParticipant, Assignment, Penalty):
+        if await session.scalar(select(func.count()).select_from(model).where(model.user_id == user.id)):
+            return True
+    return False
+
+
+async def link_telegram(session: AsyncSession, manual: User, telegram_id: int, username: str | None) -> None:
+    """Привязать Telegram к игроку, добавленному вручную. Пустой аккаунт-дубль (заявка) удаляется."""
+    if not manual.is_manual:
+        raise ValueError("already linked")
+    other = await get_user_by_tg(session, telegram_id)
+    if other is not None:
+        if other.id == manual.id:
+            return
+        if await has_history(session, other):
+            raise ValueError("other has history")
+        manual.is_admin = manual.is_admin or other.is_admin
+        await session.delete(other)
+        await session.flush()
+    manual.telegram_id = telegram_id
+    manual.username = username or manual.username
+    manual.web_version = (manual.web_version or 0) + 1  # старые ссылки на сайт были на заглушку
+    await session.flush()
+
+
 async def name_from_telegram(session: AsyncSession, tg_user) -> str:
     """Имя для команды из профиля Telegram: имя, а если такое уже есть у другого игрока — имя и фамилия."""
     existing = await get_user_by_tg(session, tg_user.id)
@@ -990,3 +1030,68 @@ async def known_place_url(session: AsyncSession, location: str | None) -> str | 
         if p["name"] == location:
             return p["url"]
     return None
+
+
+# ---------------------------------------------------------------- аналитика посещаемости
+
+ATTENDANCE_ICONS = {"came": "✅", "no": "❌", "maybe": "🤔", "silent": "🔇", "no_show": "🚫"}
+
+
+async def past_games(session: AsyncSession, now: datetime, limit: int = 10, offset: int = 0, past_after_hours: float = 2) -> list[Game]:
+    """Прошедшие игры (и отменённые) — новые сверху."""
+    rows = await session.scalars(
+        select(Game)
+        .where(or_(Game.starts_at <= now - timedelta(hours=past_after_hours), Game.status.not_in(GameStatus.ACTIVE)))
+        .order_by(Game.starts_at.desc(), Game.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(rows.all())
+
+
+async def attendance_report(session: AsyncSession, now: datetime, since: datetime | None = None) -> list[dict]:
+    """По каждому игроку: сколько игр мог прийти, сколько пришёл, отказался, молчал, не пришёл после «Буду»."""
+    from bot.deadlines import MIN_RSVP_WINDOW, rsvp_deadline, to_utc
+
+    q = select(Game).where(Game.status != GameStatus.CANCELLED, Game.starts_at <= now).order_by(Game.starts_at)
+    if since is not None:
+        q = q.where(Game.starts_at >= since)
+    games = list((await session.scalars(q)).all())
+    users = [
+        u for u in await all_users(session)
+        if u.status == UserStatus.APPROVED and u.profile_completed and not u.is_staff and u.is_active
+    ]
+    marks: dict[tuple[int, int], GameParticipant] = {}
+    if games:
+        for p in (await session.scalars(
+            select(GameParticipant).where(GameParticipant.game_id.in_([g.id for g in games]))
+        )).all():
+            marks[(p.game_id, p.user_id)] = p
+
+    rows = []
+    for u in users:
+        r = {"id": u.id, "name": u.name, "manual": u.is_manual, "games": 0, "came": 0, "no": 0, "maybe": 0,
+             "silent": 0, "no_show": 0, "history": []}
+        for g in games:
+            p = marks.get((g.id, u.id))
+            if p is None:
+                joined_by = max(g.created_at, to_utc(rsvp_deadline(g) - MIN_RSVP_WINDOW))
+                if u.created_at > joined_by:
+                    continue  # пришёл в команду позже — эту игру не считаем
+                kind = "silent"
+            elif p.attended is True or (p.status == Rsvp.YES and p.attended is None):
+                kind = "came"
+            elif p.status == Rsvp.YES:
+                kind = "no_show"
+            elif p.status == Rsvp.MAYBE:
+                kind = "maybe"
+            else:
+                kind = "no"
+            r["games"] += 1
+            r[kind] += 1
+            r["history"].append(ATTENDANCE_ICONS[kind])
+        r["history"] = "".join(r["history"][-10:])
+        r["rate"] = round(100 * r["came"] / r["games"]) if r["games"] else None
+        rows.append(r)
+    rows.sort(key=lambda r: (r["rate"] if r["rate"] is not None else 101, -r["silent"] - r["no_show"], r["name"]))
+    return rows

@@ -38,7 +38,8 @@ async def player_card(
     car = texts.CAR_YES if user.has_car else texts.CAR_NO
     lines = [
         f"<b>👤 {_who(user)}</b>",
-        f'<a href="tg://user?id={user.telegram_id}">написать в Telegram</a>',
+        "✍️ добавлен вручную — ещё не в Telegram (приглашение — в приложении: Игроки → игрок)"
+        if user.is_manual else f'<a href="tg://user?id={user.telegram_id}">написать в Telegram</a>',
         "",
         f"Статус: {STATUS_TITLES.get(user.status, user.status)}" + (f" · {role_title(user)}" if role_title(user) else ""),
         f"Машина: {car}" + (" — <i>закреплено админом</i>" if user.car_locked else " — <i>указал сам</i>"),
@@ -103,6 +104,8 @@ async def players_list(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup
         icon = "🚫" if u.status == UserStatus.APPROVED and not u.is_active else STATUS_ICONS.get(u.status, "")
         if u.status == UserStatus.APPROVED and u.is_staff:
             icon = "📋"
+        elif u.status == UserStatus.APPROVED and u.is_manual:
+            icon = "✍️"
         crown = " 👑" if config.is_owner(u.telegram_id) or u.is_admin else ""
         b.button(text=f"{icon} {u.name}{crown}{' 🚗' if u.has_car else ''}", callback_data=f"pl:show:{u.id}")
     b.adjust(2)

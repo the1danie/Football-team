@@ -82,6 +82,10 @@
   .countdown .cd-num { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .countdown.urgent { background: var(--no-soft); }
   .countdown.urgent .cd-num { color: var(--no); }
+  .past-item { margin-bottom: 8px; border-radius: 16px; background: var(--card); }
+  .history { letter-spacing: 1px; font-size: 14px; }
+  .rate { font-weight: 800; font-size: 18px; min-width: 52px; text-align: right; }
+  .rate.bad { color: var(--no); } .rate.mid { color: var(--maybe); } .rate.good { color: var(--yes); }
   .gather { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; font-size: 14px;
     font-weight: 600; background: var(--accent-soft); color: var(--link); }
   .banner { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--maybe-soft); font-size: 14px; }
@@ -399,8 +403,39 @@ function gamesTab() {
     d.is_admin ? h("button", { class: "chip accent", style: "padding:7px 12px", onclick: () => openSheet({ type: "schedules" }) },
       `🔁 Расписание${d.schedules && d.schedules.length ? " · " + d.schedules.filter((x) => x.active).length : ""}`) : null);
   if (!d.games.length) return h("div", {}, head, h("div", { class: "card empty" }, h("div", { class: "big" }, "🏟"),
-    h("p", {}, "Запланированных игр нет."), d.is_admin ? h("p", { class: "muted small" }, "Создайте игру кнопкой «＋ Новая игра».") : h("p", { class: "muted small" }, "Когда админ создаст игру, бот пришлёт сообщение.")));
-  return h("div", {}, head, webBanner(), d.games.map(gameCard));
+    h("p", {}, "Запланированных игр нет."), d.is_admin ? h("p", { class: "muted small" }, "Создайте игру кнопкой «＋ Новая игра».") : h("p", { class: "muted small" }, "Когда админ создаст игру, бот пришлёт сообщение.")),
+    archiveSection());
+  return h("div", {}, head, webBanner(), d.games.map(gameCard), archiveSection());
+}
+
+// ---------------------------------------------------------------- прошедшие игры
+async function loadArchive(more) {
+  const r = await api("archive", { offset: more ? (S.archive || []).length : 0 }, { quiet: true });
+  if (r) { S.archive = more ? [...(S.archive || []), ...r.archive] : r.archive; S.archiveMore = r.more; render(); }
+}
+function findGame(id) {
+  return S.data.games.find((x) => x.id === id) || (S.archive || []).find((x) => x.id === id);
+}
+function archiveSection() {
+  if (!S.archiveOpen) return h("button", { class: "btn secondary", style: "margin-top:4px", onclick: () => { S.archiveOpen = true; S.archive = null; render(); loadArchive(); } }, "🗂 Прошедшие игры");
+  if (!S.archive) return h("div", {}, h("h2", {}, "Прошедшие"), h("div", { class: "spinner" }));
+  return h("div", {}, h("div", { class: "head-row" }, h("h2", {}, "Прошедшие"),
+      h("button", { class: "toggle-link", onclick: () => { S.archiveOpen = false; render(); } }, "Скрыть ▲")),
+    S.archive.length ? null : h("div", { class: "card empty muted" }, "Пока нет прошедших игр."),
+    S.archive.map((g) => S.openPast === g.id ? gameCard(g) : h("button", { class: "item past-item", onclick: () => { S.openPast = g.id; render(); } },
+      h("div", { class: "grow" },
+        h("div", { style: "font-weight:600" }, `${g.date_label} · ${g.time}`, g.status === "cancelled" ? h("span", { class: "chip bad", style: "margin-left:8px" }, "отменена") : null),
+        h("div", { class: "small muted" }, [g.kind_title, g.location].filter(Boolean).join(" · ")),
+        g.status === "cancelled" ? null : h("div", { class: "small", style: "margin-top:4px" }, pastSummary(g))),
+      h("span", { class: "muted" }, "›"))),
+    S.archiveMore ? h("button", { class: "btn secondary", style: "margin-top:8px", onclick: () => loadArchive(true) }, "Показать ещё") : null);
+}
+function pastSummary(g) {
+  const yes = g.participants.yes, came = yes.filter((u) => u.attended !== false).length;
+  const noShow = g.participants.no.filter((u) => u.attended === false).length;
+  return [`✅ пришли ${came}`, noShow ? `🚫 неявка ${noShow}` : null, `❌ ${g.participants.no.length - noShow}`,
+    g.participants.maybe.length ? `🤔 ${g.participants.maybe.length}` : null,
+    g.no_answer && g.no_answer.length ? `🔇 молчали ${g.no_answer.length}` : null].filter(Boolean).join(" · ");
 }
 
 // Подсказка про сайт (в Telegram): можно и без Telegram — через браузер.
@@ -426,6 +461,9 @@ function gameCard(g) {
   const relative = g.day_word === "Сегодня" || g.day_word === "Завтра";
   const staff = d.user && d.user.staff;
   const card = h("div", { class: "card", id: "game-" + g.id });
+  if (g.past) add(card, h("div", { class: "head-row", style: "margin-bottom:6px" },
+    h("span", { class: "chip" }, g.status === "cancelled" ? "❌ Отменена" : "🏁 Прошла"),
+    S.openPast === g.id ? h("button", { class: "toggle-link", onclick: () => { S.openPast = null; render(); } }, "Свернуть ▲") : null));
   add(card, 
     h("div", { class: "game-top" },
       h("div", { class: "grow" },
@@ -436,7 +474,8 @@ function gameCard(g) {
       h("span", { class: "chip" }, (g.from_schedule ? "🔁 " : "") + g.kind_title)));
 
   // Подсказка: что от меня нужно
-  if (staff)
+  if (g.past) {}
+  else if (staff)
     add(card, h("div", { class: "banner info" }, `📋 Вы — ${staff.toLowerCase()}: отмечаться не нужно. Ниже — кто идёт, кто нет и кто молчит.`));
   else if (g.status === "open" && !g.my_rsvp && !g.deadline_passed)
     add(card, h("div", { class: "banner" }, `⏰ Ответь ${g.deadline_label}` + (g.penalty ? ` — иначе −${g.penalty}` : "")));
@@ -447,12 +486,13 @@ function gameCard(g) {
   if (mine.length)
     add(card, h("div", { class: "banner info" }, h("b", {}, "Твоя обязанность: "), mine.map((m) => `${m.emoji} ${m.action}`).join(", ")));
 
-  if (!staff) add(card, h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
+  if (!staff && !g.past) add(card, h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
     h("button", { class: `${key}${g.my_rsvp === key ? " on" : ""}`, "aria-pressed": g.my_rsvp === key ? "true" : "false",
       onclick: async () => { if (g.my_rsvp === key) return; haptic(); const r = await api("rsvp", { game_id: g.id, status: key }); if (r) { haptic("ok"); render(); } } },
       h("span", { class: "e" }, e), label))));
 
-  const open = S.open[g.id] ?? !!staff;
+  const open = S.open[g.id] ?? (!!staff || !!g.past);
+  const canMarkFor = d.is_admin && !g.past && g.status !== "cancelled";
   const counts = h("div", { class: "counts" },
     h("span", { class: "chip good" }, yes.length ? `✅ ${yes.length} ${plural(yes.length, "идёт", "идут", "идут")}` : "✅ пока никого"),
     maybe.length ? h("span", { class: "chip warn" }, `🤔 ${maybe.length}`) : null,
@@ -462,7 +502,9 @@ function gameCard(g) {
   add(card, counts, h("button", { class: "toggle-link", onclick: () => { S.open[g.id] = !open; render(); } }, open ? "Скрыть список ▲" : "Кто идёт ▼"));
   if (open) {
     const group = (title, list) => list && list.length ? h("div", { style: "margin-top:10px" },
-      h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
+      h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => canMarkFor
+        ? h("button", { class: "chip", onclick: () => openSheet({ type: "rsvpFor", game: g, user: u }) }, u.name + (u.car ? " 🚗" : ""))
+        : h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
     add(card, group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
       g.no_answer ? group(`🙈 Не ответили (${g.no_answer.length})`, g.no_answer) : null,
       g.silent_unpenalized && g.silent_unpenalized.length ? h("button", { class: "btn small danger", style: "margin-top:10px", onclick: async () => {
@@ -515,7 +557,11 @@ function gameCard(g) {
   if (g.status === "distributed" && g.after_pending.length)
     add(card, h("div", { class: "small muted", style: "margin-top:8px" }, `🏁 После тренировки (около ${g.after_time}): ${g.after_pending.join(", ")} — среди тех, кто был.`));
 
-  if (d.is_admin) {
+  if (d.is_admin && g.past) {
+    if (g.status !== "cancelled") add(card, h("div", { class: "admin-bar" },
+      h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "attendance", game: g }) }, "👥 Кто пришёл"),
+      h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp")));
+  } else if (d.is_admin) {
     add(card, h("div", { class: "admin-bar" },
       h("button", { class: "btn small secondary", onclick: () => adminDistribute(g) }, g.status === "distributed" ? "🔁 Пересчитать" : "🎯 Распределить"),
       h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp"),
@@ -580,7 +626,9 @@ function statsTab() {
       h("div", { class: "podium-num" }, p[board]),
       h("div", { class: "podium-step step-" + Math.min(p.rank, 3) }, p.rank)) : h("div", { class: "podium-col" }))) : null;
 
+  const canReport = S.data.is_admin || (S.data.user && S.data.user.staff);
   return h("div", {}, head,
+    canReport ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openReport() }, "📊 Посещаемость: кто пропускает") : null,
     h("p", { class: "muted small", style: "margin:0 4px 12px" }, BOARDS[board].hint),
     podium || h("div", { class: "card empty muted" }, board === "minuses" ? "Минусов ни у кого нет 👍"
       : period === "month" ? "За последний месяц пока пусто." : "Пока пусто — сыграйте первую игру."),
@@ -610,12 +658,13 @@ function playersTab() {
   return h("div", {}, h("h1", {}, "Игроки"),
     h("div", { class: "seg", style: "margin-bottom:12px" }, seg.map(([id, label]) =>
       h("button", { class: filter === id ? "on" : "", onclick: () => { S.playerFilter = id; render(); } }, label))),
+    h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openSheet({ type: "addPlayer" }) }, "✍️ Добавить игрока вручную (без Telegram)"),
     filter === "pending" && list.length ? h("p", { class: "muted small", style: "margin:0 6px 10px" }, "Эти люди нажали /start в боте. Примите своих — чужих отклоните.") : null,
     list.length ? h("div", { class: "list" }, list.map((p) => h("button", { class: "item", onclick: () => openPlayer(p.id) },
       avatar(p.name, p.id),
       h("div", { class: "grow" },
         h("div", { class: "ellipsis", style: "font-weight:600" }, p.name + (p.admin ? " 👑" : "")),
-        h("div", { class: "small muted ellipsis" }, [p.username ? "@" + p.username : null,
+        h("div", { class: "small muted ellipsis" }, [p.manual ? "✍️ без Telegram" : null, p.username ? "@" + p.username : null,
           p.staff ? "📋 " + p.staff : p.car ? "🚗 есть машина" + (p.car_locked ? " 🔒" : "") : "🚶 нет машины",
           p.status === "approved" && !p.active ? "🚫 не в составе" : null].filter(Boolean).join(" · "))),
       p.minuses ? h("span", { class: "chip bad" }, `−${p.minuses}`) : null,
@@ -701,10 +750,10 @@ function webLinkSheet() {
 }
 
 function attendanceSheet() {
-  const g = S.data.games.find((x) => x.id === S.sheet.game.id) || S.sheet.game;
+  const g = findGame(S.sheet.game.id) || S.sheet.game;
   const mark = async (u, present) => {
     const r = await api("attendance", { game_id: g.id, user_id: u.id, present });
-    if (r) { haptic(present ? "ok" : undefined); render(); }
+    if (r) { haptic(present ? "ok" : undefined); if (g.past) await loadArchive(); render(); }
   };
   const yes = g.participants.yes;
   const absent = g.participants.no.filter((u) => u.attended === false);
@@ -813,7 +862,8 @@ function renderSheet() {
   if (!S.sheet) return;
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
-    scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet }[S.sheet.type]();
+    scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;
@@ -912,6 +962,63 @@ function createSheet() {
       : "Игрокам придёт опрос в Telegram. Анонс для WhatsApp — на следующем шаге."));
 }
 
+function rsvpForSheet() {
+  const { game: g, user: u } = S.sheet;
+  const set = async (status) => {
+    const r = await api("rsvp_for", { game_id: g.id, user_id: u.id, status });
+    if (r) { haptic("ok"); closeSheet(); }
+  };
+  return h("div", {}, h("h3", {}, `Отметить за: ${u.name}`),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Например, ответил в WhatsApp или добавлен вручную без Telegram. Отметка считается как его собственная: минуса за молчание не будет."),
+    h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
+      h("button", { class: key, onclick: () => set(key) }, h("span", { class: "e" }, e), label))),
+    u.manual ? h("button", { class: "btn secondary", style: "margin-top:14px", onclick: () => invitePlayer(u) }, "📤 Пригласить в бота") : null);
+}
+
+function addPlayerSheet() {
+  const st = S.sheet.form || (S.sheet.form = { name: "", car: false });
+  return h("div", {}, h("h3", {}, "✍️ Добавить игрока вручную"),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Для тех, кто не заходит в бота. Он сразу в составе: за молчание получает минусы, отметки можете ставить вы (нажмите на имя в списке «Кто идёт»). Потом отправьте ему приглашение — когда он зайдёт по ссылке, бот свяжет его Telegram с этим профилем."),
+    h("div", { class: "label" }, "Имя"),
+    h("input", { class: "field", id: "newname", value: st.name, maxlength: 64, placeholder: "Например: Нурик", oninput: (e) => { st.name = e.target.value; } }),
+    h("div", { class: "card", style: "margin-top:12px" }, h("div", { class: "switch-row" }, h("div", { class: "grow" }, "🚗 Есть машина"),
+      h("button", { class: "switch" + (st.car ? " on" : ""), role: "switch", "aria-checked": st.car ? "true" : "false", onclick: () => { st.car = !st.car; render(); } }))),
+    h("button", { class: "btn", style: "margin-top:12px", onclick: async () => {
+      const r = await api("player_add", { name: st.name, car: st.car });
+      if (r) { haptic("ok"); S.players = r.players; S.playerFilter = "approved"; await api("state", {}, { quiet: true }); openSheet({ type: "player", player: r.player }); } } }, "Добавить"));
+}
+
+async function invitePlayer(p) {
+  const r = await api("player_invite", { user_id: p.id });
+  if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: `Приглашение для ${p.name} (лично, не в группу)` });
+}
+
+async function openReport(period) {
+  S.reportPeriod = period || S.reportPeriod || "month";
+  const r = await api("attendance_report", { period: S.reportPeriod });
+  if (r) openSheet({ type: "report", rows: r.rows });
+}
+function reportSheet() {
+  const rows = S.sheet.rows.filter((r) => r.games);
+  const cls = (r) => (r.rate < 50 ? "bad" : r.rate < 75 ? "mid" : "good");
+  const problem = rows.filter((r) => r.games >= 2 && (r.rate < 50 || r.silent + r.no_show >= 2));
+  return h("div", {}, h("h3", {}, "📊 Посещаемость"),
+    h("div", { class: "seg", style: "margin-bottom:10px" }, [["month", "За месяц"], ["all", "За всё время"]].map(([k, l]) =>
+      h("button", { class: S.reportPeriod === k ? "on" : "", onclick: () => openReport(k) }, l))),
+    h("p", { class: "muted small", style: "margin:0 2px 10px" }, "Сверху — кто пропускает чаще. ✅ был · ❌ не буду · 🤔 не знаю · 🔇 молчал · 🚫 сказал «Буду» и не пришёл. Последние 10 игр — слева направо."),
+    problem.length ? h("div", { class: "banner", style: "margin-bottom:10px" }, h("b", {}, `⚠️ Требуют внимания: ${problem.length}`),
+      h("div", { class: "small", style: "margin-top:4px" }, problem.map((r) => r.name).join(", "))) : null,
+    rows.length ? h("div", { class: "list" }, rows.map((r) => h("div", { class: "item" },
+      avatar(r.name, r.id),
+      h("div", { class: "grow" },
+        h("div", { style: "font-weight:600" }, r.name + (r.manual ? " ✍️" : "")),
+        h("div", { class: "small muted" }, [`был ${r.came} из ${r.games}`, r.no ? `не буду ${r.no}` : null, r.maybe ? `не знаю ${r.maybe}` : null,
+          r.silent ? `молчал ${r.silent}` : null, r.no_show ? `неявка ${r.no_show}` : null].filter(Boolean).join(" · ")),
+        h("div", { class: "history" }, r.history)),
+      h("div", { class: "rate " + cls(r) }, `${r.rate}%`))))
+      : h("div", { class: "card empty muted" }, "Прошедших игр за этот период нет."));
+}
+
 function createdSheet() {
   const s = S.sheet;
   if (s.scheduled) return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, "🔁"), h("h3", {}, "Расписание сохранено")),
@@ -968,7 +1075,7 @@ function playerSheet() {
   const p = S.sheet.player;
   const statusLabel = { pending: "⏳ ждёт подтверждения", approved: "✅ в команде", blocked: "⛔ удалён" }[p.status]
     + (p.is_owner ? " · 👑 главный админ" : p.is_admin ? " · 👑 админ" : "");
-  const canGrant = S.data.is_owner && p.status === "approved" && !p.is_owner;
+  const canGrant = S.data.is_owner && p.status === "approved" && !p.is_owner && !p.manual;
   return h("div", {},
     h("div", { class: "row", style: "margin-bottom:12px" }, avatar(p.name, p.id),
       h("div", { class: "grow" }, h("h3", { style: "margin:0" }, p.name),
@@ -976,11 +1083,20 @@ function playerSheet() {
     p.status === "pending" ? h("div", { class: "btns", style: "margin-bottom:12px" },
       h("button", { class: "btn", onclick: () => playerOp(p, "approve") }, "✅ Принять"),
       h("button", { class: "btn danger", onclick: () => playerOp(p, "block") }, "Отклонить")) : null,
+    p.status === "pending" && (S.players || []).some((x) => x.manual && x.status === "approved") ? h("div", { class: "card" },
+      h("div", { style: "font-weight:600" }, "🔗 Это кто-то из добавленных вручную?"),
+      h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Нажмите на имя — заявка станет этим игроком: его минусы и отметки сохранятся, отмечаться он будет сам."),
+      h("div", { class: "people" }, S.players.filter((x) => x.manual && x.status === "approved").map((x) => h("button", { class: "chip",
+        onclick: async () => { if (await confirmBox(`${p.name} — это «${x.name}»? Профили объединятся.`)) playerOp(p, "link_to", { target_id: x.id }); } }, "✍️ " + x.name)))) : null,
+    p.manual ? h("div", { class: "card" },
+      h("div", { style: "font-weight:600" }, "✍️ Добавлен вручную — ещё не в Telegram"),
+      h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Получает минусы за молчание. Отмечайте за него в карточке игры (нажмите на имя) или отправьте приглашение: по ссылке он зайдёт в бота, и Telegram привяжется к этому профилю. В приглашении есть и ссылка на сайт — можно без Telegram."),
+      h("button", { class: "btn", onclick: () => invitePlayer(p) }, "📤 Отправить приглашение")) : null,
     h("div", { class: "card" },
       h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🚗 Есть машина"),
         h("div", { class: "small muted" }, p.car_locked ? "Закреплено вами — игрок не может изменить." : "Указал сам. Нажмите, чтобы исправить и закрепить.")),
         h("button", { class: "switch" + (p.car ? " on" : ""), role: "switch", "aria-checked": p.car ? "true" : "false", onclick: () => playerOp(p, p.car ? "car_off" : "car_on") })),
-      p.car_locked ? h("button", { class: "toggle-link", style: "margin:0 0 6px", onclick: () => playerOp(p, "unlock") }, "🔓 Разрешить игроку менять самому") : null,
+      p.car_locked && !p.manual ? h("button", { class: "toggle-link", style: "margin:0 0 6px", onclick: () => playerOp(p, "unlock") }, "🔓 Разрешить игроку менять самому") : null,
       p.status === "approved" && !p.staff ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "В составе"),
         h("div", { class: "small muted" }, "Выключите на время травмы или отъезда — не будет опросов и минусов.")),
         h("button", { class: "switch" + (p.active ? " on" : ""), role: "switch", "aria-checked": p.active ? "true" : "false", onclick: () => playerOp(p, "active") })) : null,
@@ -1008,7 +1124,7 @@ function playerSheet() {
     h("div", { style: "margin-top:16px" },
       p.status === "approved" && !p.is_owner ? h("button", { class: "btn danger", onclick: () => playerOp(p, "block") }, "Удалить из команды") : null,
       p.status === "blocked" ? h("button", { class: "btn secondary", onclick: () => playerOp(p, "approve") }, "♻️ Вернуть в команду") : null),
-    h("a", { class: "toggle-link", href: `tg://user?id=${p.telegram_id}` }, "Написать в Telegram"));
+    p.manual ? null : h("a", { class: "toggle-link", href: `tg://user?id=${p.telegram_id}` }, "Написать в Telegram"));
 }
 
 function playerStatsSheet() {

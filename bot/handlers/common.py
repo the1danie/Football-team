@@ -5,9 +5,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, keyboards, operations, texts
+from bot import actions, keyboards, notifier, operations, texts
 from bot.config import config
-from bot.models import User
+from bot.models import User, UserStatus
 from bot.services import games as svc
 
 router = Router()
@@ -86,6 +86,9 @@ async def require_profile(message: Message, session: AsyncSession, state: FSMCon
 async def start(message: Message, command: CommandObject, session: AsyncSession, state: FSMContext, bot: Bot):
     await state.clear()
     payload = command.args or ""
+    if payload.startswith("link_"):
+        await link_from_invite(message, session, bot, payload)
+        return
     if payload:
         await state.update_data(after_profile=payload)
     user = await require_profile(message, session, state)
@@ -102,6 +105,31 @@ async def start(message: Message, command: CommandObject, session: AsyncSession,
             "🌐 Не пользуешься Telegram каждый день? Есть сайт — кнопка ниже (личная ссылка, не пересылай).",
             reply_markup=app,
         )
+
+
+async def link_from_invite(message: Message, session: AsyncSession, bot: Bot, payload: str) -> None:
+    """Ссылка-приглашение для игрока, которого админ добавил вручную: привязать этот Telegram к нему."""
+    from bot.weblink import parse_link_payload
+
+    user_id = parse_link_payload(payload)
+    manual = await session.get(User, user_id) if user_id else None
+    if manual is None or manual.status != UserStatus.APPROVED:
+        await message.answer("Ссылка-приглашение недействительна. Попроси у админа новую.")
+        return
+    if not manual.is_manual:
+        if manual.telegram_id == message.chat.id:
+            await show_menu(message, f"Ты уже в команде, {texts.h(manual.name)} ⚽")
+        else:
+            await message.answer("По этой ссылке уже зашёл другой человек. Если это ошибка — напиши админу.")
+        return
+    try:
+        await operations.link_account(
+            bot, session, manual, message.chat.id, message.from_user.username if message.from_user else None
+        )
+    except operations.OpError as e:
+        await message.answer(str(e))
+        return
+    await notifier.notify_admins(bot, f"🔗 {texts.h(manual.name)} зашёл в бота по приглашению — Telegram привязан.")
 
 
 async def open_payload(message: Message, session: AsyncSession, user: User, payload: str) -> bool:

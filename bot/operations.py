@@ -43,6 +43,38 @@ async def complete_registration(
     return user
 
 
+async def add_manual_player(session: AsyncSession, name: str, has_car: bool) -> User:
+    name = (name or "").strip()
+    if not (1 <= len(name) <= 64) or name.startswith("/"):
+        raise OpError("Имя — от 1 до 64 символов.")
+    taken = {u.name.lower() for u in await svc.all_users(session) if u.status != UserStatus.BLOCKED}
+    if name.lower() in taken:
+        raise OpError("Игрок с таким именем уже есть — добавьте фамилию или букву.")
+    return await svc.create_manual_user(session, name, has_car)
+
+
+async def link_account(bot: Bot, session: AsyncSession, manual: User, telegram_id: int, username: str | None) -> None:
+    """Связать игрока, добавленного вручную, с его Telegram (по ссылке-приглашению или админом)."""
+    if not manual.is_manual:
+        raise OpError("Этот игрок уже привязан к Telegram.")
+    try:
+        await svc.link_telegram(session, manual, telegram_id, username)
+    except ValueError:
+        raise OpError(
+            "У этого Telegram уже есть свой профиль с отметками — связать нельзя. Удалите лишнего игрока вручную."
+        ) from None
+    await notifier.send_dm(
+        bot, manual,
+        f"✅ Готово, {texts.h(manual.name)}! Ты в команде — теперь можно самому отмечаться на игры.\n"
+        "Минусы и отметки, которые были до этого, сохранились.",
+        keyboards.main_menu(config.is_admin(telegram_id)),
+    )
+    for game in await svc.upcoming_games(session, config.now()):
+        if game.status in GameStatus.ACTIVE:
+            text, markup = await actions.game_card(session, game, manual, False)
+            await notifier.send_dm(bot, manual, text, markup)
+
+
 async def rename_self(session: AsyncSession, user: User, name: str) -> None:
     name = name.strip()
     if not (1 <= len(name) <= 64) or name.startswith("/"):

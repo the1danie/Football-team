@@ -64,6 +64,9 @@ from bot.weblink import WEB_TOKEN_DAYS, make_web_token, verify_web_token, web_li
 # ----------------------------------------------------------------- представления
 
 
+# Через сколько после начала игра уходит из «Игр» в «Прошедшие».
+PAST_AFTER_HOURS = 2
+
 # Главный админ может посмотреть приложение глазами другой роли (данные — настоящие, меняются только права).
 VIEW_AS = {
     "admin": (True, False, None),  # выданный админ: без выдачи прав
@@ -81,7 +84,7 @@ def perms(tg: dict, user: User | None) -> tuple[bool, bool, str | None]:
 
 
 def _user_brief(u: User) -> dict:
-    return {"id": u.id, "name": u.name, "car": u.has_car}
+    return {"id": u.id, "name": u.name, "car": u.has_car, "manual": u.is_manual}
 
 
 async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool, staff: bool = False) -> dict:
@@ -127,6 +130,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "map_url": texts.map_url(game.location, game.location_url),
         "map_label": texts.map_label(texts.map_url(game.location, game.location_url)),
         "status": game.status,
+        "past": game.status not in GameStatus.ACTIVE or now >= game.starts_at + timedelta(hours=PAST_AFTER_HOURS),
         "my_rsvp": await svc.get_rsvp(session, game.id, me.id),
         "deadline_label": texts.until(deadline, now),
         "deadline_at_label": f"{texts.day_word(deadline, now).lower()} в {texts.fmt_time(deadline)}",
@@ -187,7 +191,10 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
     }
     data["access"] = "ok" if (user.is_approved or is_admin) else user.status
     if data["access"] == "ok":
-        games = [g for g in await svc.upcoming_games(session, config.now()) if g.status in GameStatus.ACTIVE]
+        games = [
+            g for g in await svc.upcoming_games(session, config.now(), grace_hours=PAST_AFTER_HOURS)
+            if g.status in GameStatus.ACTIVE
+        ]
         data["games"] = [await game_view(session, g, user, is_admin, bool(staff)) for g in games]
         if is_admin:
             players = await svc.players_for_admin(session)
@@ -247,7 +254,7 @@ async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict
     if is_admin:
         view.update(
             username=user.username, status=user.status, active=user.is_active, car_locked=user.car_locked,
-            staff=user.staff_title,
+            staff=user.staff_title, manual=user.is_manual,
             telegram_id=user.telegram_id, is_admin=bool(user.is_admin), is_owner=config.is_owner(user.telegram_id),
         )
     return view
@@ -260,6 +267,7 @@ async def players_view(session: AsyncSession) -> dict:
             {
                 "id": u.id, "name": u.name, "username": u.username, "car": u.has_car, "car_locked": u.car_locked,
                 "status": u.status, "active": u.is_active, "minuses": minuses.get(u.id, 0), "staff": u.staff_title,
+                "manual": u.is_manual,
                 "admin": bool(u.is_admin) or config.is_owner(u.telegram_id),
             }
             for u in await svc.players_for_admin(session)
@@ -279,7 +287,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel", "penalize_silent",
+    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for",
 }
 
 
@@ -375,6 +383,19 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
         elif action == "web_logout":
             user.web_version = (user.web_version or 0) + 1
             note = "Все личные ссылки отключены. Новую можно получить в боте: /web."
+        elif action == "archive":
+            offset = max(0, int(body.get("offset") or 0))
+            past = await svc.past_games(session, config.now(), limit=11, offset=offset, past_after_hours=PAST_AFTER_HOURS)
+            return {
+                "archive": [await game_view(session, g, user, is_admin, bool(staff_view)) for g in past[:10]],
+                "more": len(past) > 10,
+            }
+        elif action == "attendance_report":
+            if not (is_admin or staff_view):
+                raise ApiError("Только для админа и тренера.", 403)
+            since = config.now() - timedelta(days=30) if body.get("period") == "month" else None
+            return {"rows": await svc.attendance_report(session, config.now(), since),
+                    "period": "month" if since else "all"}
         elif action == "stats":
             return await stats_view(session, body.get("period", "all"))
         elif action == "player_stats":
@@ -532,6 +553,33 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             return await players_view(session)
         elif action == "player_detail":
             return await player_view(session, await _user(session, body.get("user_id")), True)
+        elif action == "player_add":
+            target = await operations.add_manual_player(session, body.get("name", ""), bool(body.get("car")))
+            return {"note": f"✍️ {target.name} добавлен", "player": await player_view(session, target, True),
+                    **await players_view(session)}
+        elif action == "player_invite":
+            target = await _user(session, body.get("user_id"))
+            if not target.is_manual:
+                raise ApiError("Игрок уже в Telegram.")
+            from bot.weblink import link_payload
+
+            tg_link = f"https://t.me/{(await bot.me()).username}?start={link_payload(target)}"
+            text = whatsapp.manual_invite(target.name, tg_link, web_link(target))
+            return {"tg_link": tg_link, "web": web_link(target), "text": text, "url": whatsapp.share_url(text)}
+        elif action == "rsvp_for":
+            target = await _user(session, body.get("user_id"))
+            game = await _game(session, body)
+            await operations.change_rsvp(bot, session, game, target, body.get("status", ""))
+            note = f"{target.name}: {texts.RSVP_LABELS.get(body.get('status'), '')}"
+        elif action == "player" and body.get("op") == "link_to":
+            pending = await _user(session, body.get("user_id"))
+            manual = await _user(session, body.get("target_id"))
+            if pending.is_manual:
+                raise ApiError("Выберите заявку из Telegram.")
+            await operations.link_account(bot, session, manual, pending.telegram_id, pending.username)
+            await session.flush()
+            return {"note": f"🔗 {manual.name} связан с Telegram", "player": await player_view(session, manual, True),
+                    **await players_view(session)}
         elif action == "player":
             target = await _user(session, body.get("user_id"))
             note = await operations.player_action(

@@ -89,9 +89,12 @@ async def send_poll_invites(bot: Bot, session: AsyncSession, game: Game, skip: U
     """Разослать игрокам в личку: открыт сбор, кнопки ответа прямо в сообщении."""
     deadline = rsvp_deadline(game)
     text = texts.poll_invite(game, deadline, config.now(), config.penalty_points)
-    sent, failed = 0, []
+    sent, failed, manual = 0, [], 0
     for user in await svc.roster(session):
         if skip is not None and user.id == skip.id:
+            continue
+        if user.is_manual:
+            manual += 1
             continue
         markup = keyboards.with_web_button(keyboards.with_app_button(keyboards.rsvp(game), game.id), user)
         if await notifier.send_dm(bot, user, text, markup):
@@ -103,6 +106,8 @@ async def send_poll_invites(bot: Bot, session: AsyncSession, game: Game, skip: U
             bot, user, texts.staff_new_game(game, deadline, config.now()), keyboards.with_app_button(None, game.id)
         )
     report = f"📣 Опрос отправлен в личку: {sent} {texts.people_word(sent)}."
+    if manual:
+        report += f"\n✍️ Без Telegram (добавлены вручную): {manual} — отметьте их сами или отправьте им приглашение."
     if failed:
         report += "\nНе доставлено (не писали боту или заблокировали): " + ", ".join(texts.h(n) for n in failed)
     return report

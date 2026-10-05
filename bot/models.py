@@ -89,6 +89,11 @@ class User(Base):
     def is_staff(self) -> bool:
         return bool(self.staff_title)
 
+    @property
+    def is_manual(self) -> bool:
+        """Добавлен админом вручную, ещё не зашёл в бота (telegram_id < 0 — заглушка)."""
+        return self.telegram_id < 0
+
 
 class Game(Base):
     __tablename__ = "games"

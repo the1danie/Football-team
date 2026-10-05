@@ -26,6 +26,8 @@ async def group_chat_id(session: AsyncSession) -> int | None:
 
 async def send_dm(bot: Bot, user: User, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> bool:
     """Личное сообщение. False — пользователь ещё не писал боту или заблокировал его."""
+    if user.telegram_id < 0:  # добавлен вручную, Telegram ещё не привязан
+        return False
     try:
         await bot.send_message(user.telegram_id, text, reply_markup=reply_markup)
         return True

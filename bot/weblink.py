@@ -41,3 +41,22 @@ def web_link(user: User) -> str | None:
     return f"{config.public_url}/app?key={make_web_token(user.telegram_id, user.web_version or 0, config.bot_token)}"
 
 
+
+
+def _link_sig(user_id: int, bot_token: str) -> str:
+    return hmac.new(_web_key(bot_token), f"tg-link:{user_id}".encode(), hashlib.sha256).hexdigest()[:12]
+
+
+def link_payload(user: User) -> str:
+    """Параметр для t.me/<бот>?start=… — привязать Telegram к игроку, добавленному вручную."""
+    return f"link_{user.id}_{_link_sig(user.id, config.bot_token)}"
+
+
+def parse_link_payload(payload: str) -> int | None:
+    try:
+        kind, raw_id, sig = (payload or "").split("_")
+        if kind != "link" or not hmac.compare_digest(_link_sig(int(raw_id), config.bot_token), sig):
+            return None
+        return int(raw_id)
+    except ValueError:
+        return None
