@@ -2,7 +2,8 @@
 
 - webhook_app — Telegram присылает сюда каждое обновление (POST /api/webhook);
 - tick_app    — проверки по расписанию: автораспределение, напоминания (GET /api/tick);
-- setup_app   — один раз после деплоя: таблицы, webhook, меню команд (GET /api/setup).
+- setup_app   — один раз после деплоя: таблицы, webhook, меню команд (GET /api/setup);
+- health_app  — самодиагностика с подсказками (GET /api/health).
 """
 
 import asyncio
@@ -14,6 +15,7 @@ from urllib.parse import parse_qs
 
 from aiogram import Dispatcher
 from aiogram.types import Update
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from bot.app import make_bot, make_dispatcher, set_commands
@@ -156,7 +158,7 @@ async def handle_setup(request: Request) -> tuple[int, Any]:
         return 400, {"ok": False, "error": "не заданы переменные: " + ", ".join(missing)}
 
     await _ensure_ready()
-    base = config.public_url or f"https://{request.headers.get('x-forwarded-host') or request.headers['host']}"
+    base = _current_base(request)
     url = f"{base}/api/webhook"
     bot = make_bot()
     try:
@@ -180,6 +182,87 @@ async def handle_setup(request: Request) -> tuple[int, Any]:
     }
 
 
+def _current_base(request: Request) -> str:
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+    return config.public_url or f"https://{host}"
+
+
+async def handle_health(request: Request) -> tuple[int, Any]:
+    """Самодиагностика: переменные, база, связь с Telegram — и подсказки, что исправить."""
+    env = {
+        "BOT_TOKEN": bool(config.bot_token),
+        "ADMIN_IDS": bool(config.admin_ids),
+        # Без DATABASE_URL бот взял бы локальный SQLite, который на Vercel не работает.
+        "DATABASE_URL": not config.database_url.startswith("sqlite"),
+        "WEBHOOK_SECRET": bool(config.webhook_secret),
+        "CRON_SECRET": bool(config.cron_secret),
+    }
+    hints = [
+        f"Не задана переменная {name}: Settings → Environment Variables, затем Deployments → Redeploy "
+        "(без передеплоя новые переменные не подхватываются)."
+        for name, ok in env.items()
+        if not ok
+    ]
+    if not config.webhook_secret or not _same(request.query.get("secret", ""), config.webhook_secret):
+        if config.webhook_secret:
+            hints.append("Для полной проверки откройте этот адрес с ?secret=<WEBHOOK_SECRET>.")
+        return 200, {"ok": not hints, "env": env, "hints": hints}
+
+    report: dict[str, Any] = {"env": env}
+    try:
+        sessionmaker, _ = await _ensure_ready()
+        async with sessionmaker() as session:
+            await session.execute(text("select 1"))
+        report["database"] = "ok"
+    except Exception as e:  # noqa: BLE001 — показываем причину, без строки подключения
+        report["database"] = f"error: {type(e).__name__}: {str(e)[:200]}"
+        hints.append(
+            "База недоступна: проверьте DATABASE_URL (строка из Neon целиком, с ?sslmode=require) "
+            "и что проект в Neon не удалён."
+        )
+
+    bot = make_bot()
+    try:
+        me = await bot.me()
+        info = await bot.get_webhook_info()
+        report["telegram"] = {
+            "bot": f"@{me.username}",
+            "webhook_url": info.url or None,
+            "pending_updates": info.pending_update_count,
+            "last_error": info.last_error_message,
+        }
+        expected = f"{_current_base(request)}/api/webhook"
+        if not info.url:
+            hints.append(f"Webhook не установлен: откройте {_current_base(request)}/api/setup?secret=<WEBHOOK_SECRET>.")
+        elif info.url != expected:
+            hints.append(
+                f"Webhook указывает на {info.url}, а этот адрес — {expected}. "
+                "Откройте /api/setup?secret=… с основного домена проекта (вида проект.vercel.app)."
+            )
+        error = info.last_error_message or ""
+        if "401" in error:
+            hints.append(
+                "Telegram получает 401: на этот адрес стоит Deployment Protection. Используйте основной домен "
+                "проекта или отключите Settings → Deployment Protection → Vercel Authentication."
+            )
+        elif "404" in error:
+            hints.append("Telegram получает 404: адрес webhook неверный — заново откройте /api/setup с основного домена.")
+        elif error:
+            hints.append(f"Telegram сообщает об ошибке «{error}» — смотрите Vercel → Logs (функция api/webhook).")
+    except Exception as e:  # noqa: BLE001
+        report["telegram"] = f"error: {type(e).__name__}: {str(e)[:200]}"
+        hints.append("Telegram не принимает BOT_TOKEN — проверьте токен у @BotFather.")
+    finally:
+        await bot.session.close()
+
+    if not config.admin_ids:
+        hints.append("ADMIN_IDS пуст — кнопки администратора никому не покажутся.")
+    report["ok"] = not hints
+    report["hints"] = hints or ["Всё в порядке. Напишите боту /start в личку."]
+    return 200, report
+
+
 webhook_app = _endpoint(handle_webhook)
+health_app = _endpoint(handle_health)
 tick_app = _endpoint(handle_tick)
 setup_app = _endpoint(handle_setup)

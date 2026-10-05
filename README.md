@@ -149,8 +149,9 @@ URL `https://<ваш-проект>.vercel.app/api/tick?secret=<CRON_SECRET>`, р
 
 **5.** Добавьте бота в чат команды и отправьте там `/bindchat`.
 
-Проверить, что Telegram доходит до бота: `https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo` —
-поле `last_error_message` должно быть пустым.
+**Если не работает** — откройте `https://<ваш-проект>.vercel.app/api/health?secret=<WEBHOOK_SECRET>`.
+Бот сам проверит переменные, подключение к Neon и связь с Telegram и в поле `hints` напишет, что исправить.
+Без `?secret` покажет только, какие переменные заданы.
 
 > Если позже переедете на сервер, `python -m bot` сам отключит webhook и перейдёт на polling.
 

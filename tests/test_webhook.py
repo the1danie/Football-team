@@ -159,3 +159,29 @@ def test_normalize_neon_url():
     assert normalize_db_url("sqlite+aiosqlite:///x.db") == ("sqlite+aiosqlite:///x.db", {})
     # движок создаётся без ошибок
     make_sessionmaker(make_engine("postgresql://u:p@h/db?sslmode=require", serverless=True))
+
+
+async def test_health(fake, monkeypatch):
+    await webhook._ensure_ready()  # движок уже на тестовой БД; дальше «как на Vercel» — Postgres задан
+    monkeypatch.setattr(config, "database_url", "postgresql://u:p@neon.example/db")
+    # без секрета — только наличие переменных
+    status, body = await call(webhook.health_app)
+    assert status == 200 and body["env"]["BOT_TOKEN"] is True and "telegram" not in body
+
+    # webhook ещё не установлен → подсказка открыть /api/setup
+    _, body = await call(webhook.health_app, query=f"secret={SECRET}", headers={"Host": "fb.vercel.app"})
+    assert body["database"] == "ok" and body["telegram"]["bot"] == "@duty_bot"
+    assert any("/api/setup" in h for h in body["hints"]) and body["ok"] is False
+
+    await call(webhook.setup_app, query=f"secret={SECRET}", headers={"Host": "fb.vercel.app"})
+    _, body = await call(webhook.health_app, query=f"secret={SECRET}", headers={"Host": "fb.vercel.app"})
+    assert body["ok"] is True, body
+
+    # открыли с другого домена (например, адрес конкретного деплоя)
+    _, body = await call(webhook.health_app, query=f"secret={SECRET}", headers={"Host": "fb-abc123.vercel.app"})
+    assert any("указывает на" in h for h in body["hints"])
+
+    # пустая переменная
+    monkeypatch.setattr(config, "cron_secret", "")
+    _, body = await call(webhook.health_app, query=f"secret={SECRET}", headers={"Host": "fb.vercel.app"})
+    assert any("CRON_SECRET" in h and "Redeploy" in h for h in body["hints"])
