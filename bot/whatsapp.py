@@ -49,6 +49,8 @@ def _header(game: Game) -> list[str]:
 
 def announce(game: Game, deadline: datetime, now: datetime, link: str) -> str:
     lines = _header(game) + ["", f"Кто будет? Отметьтесь в боте {texts.until(deadline, now)}:", link]
+    if game.min_players:
+        lines += ["", f"Нужно минимум {game.min_players} {texts.people_word(game.min_players)}, иначе отменим."]
     if config.penalty_points > 0:
         lines += ["", "Кто не ответит — получит минус ⚠️"]
     return "\n".join(lines)
@@ -64,11 +66,12 @@ def status(game: Game, by_status: dict[str, list[User]], link: str) -> str:
     return "\n".join(lines)
 
 
-def nudge(game: Game, users: list[User], deadline: datetime, now: datetime, link: str) -> str:
+def nudge(game: Game, users: list[User], deadline: datetime, now: datetime, link: str, yes: int = 0) -> str:
     names = ", ".join(u.name for u in users)
     lines = _header(game) + [
         "",
         f"⏰ Ещё не отметились ({len(users)}): {names}",
+        *([texts.min_players_line(game, yes)] if game.min_players else []),
         "",
         f"Сбор закрывается {texts.until(deadline, now)}" + (" — потом минус." if config.penalty_points > 0 else "."),
         link,

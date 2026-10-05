@@ -90,7 +90,14 @@ async def change_rsvp(bot: Bot, session: AsyncSession, game: Game, user: User, s
 
 
 async def create_game(
-    bot: Bot, session: AsyncSession, creator: User | None, kind: str, starts_at: datetime, location: str | None
+    bot: Bot,
+    session: AsyncSession,
+    creator: User | None,
+    kind: str,
+    starts_at: datetime,
+    location: str | None,
+    min_players: int | None = None,
+    schedule_id: int | None = None,
 ) -> tuple[Game, str, str, str]:
     """Создать игру, опубликовать в Telegram-группу (если есть), разослать опрос.
 
@@ -100,7 +107,11 @@ async def create_game(
         raise OpError("Выберите: игра или тренировка.")
     if starts_at <= config.now():
         raise OpError("Это время уже прошло.")
-    game = await svc.create_game(session, kind, starts_at, (location or "").strip()[:255] or None, creator)
+    if min_players is not None and not 0 <= min_players <= 100:
+        raise OpError("Минимум игроков — от 0 до 100.")
+    game = await svc.create_game(
+        session, kind, starts_at, (location or "").strip()[:255] or None, creator, min_players, schedule_id
+    )
     chat_id = await notifier.group_chat_id(session)
     if chat_id is not None:
         await notifier.publish_game(bot, session, game, chat_id)
@@ -114,6 +125,8 @@ async def create_game(
         hint.append("Обязанности распределите вручную.")
     if penalties_enabled(game) and config.penalty_points > 0:
         hint.append(f"Кто не ответит к этому времени — получит −{config.penalty_points}.")
+    if game.min_players:
+        hint.append(f"Если «Буду» будет меньше {game.min_players}, игра отменится автоматически.")
 
     announce = whatsapp.announce(game, deadline, now, await whatsapp.game_link(bot, game))
     return game, poll_report, " ".join(hint), announce
@@ -130,22 +143,56 @@ async def distribute(bot: Bot, session: AsyncSession, game: Game) -> str:
     return await actions.distribute_and_announce(bot, session, game)
 
 
-async def cancel_game(bot: Bot, session: AsyncSession, game: Game, admin_chat_id: int) -> None:
+async def cancel_game(
+    bot: Bot, session: AsyncSession, game: Game, admin_chat_id: int | None, reason: str | None = None
+) -> None:
+    """Отменить игру. admin_chat_id=None — отмена автоматическая, текст для WhatsApp — всем админам."""
     _require_active(game)
+    # Сообщить всем, кто собирался прийти, и тем, у кого были обязанности.
+    by_status = await svc.participants_by_status(session, game.id)
+    notify = {u.id: u for u in by_status[Rsvp.YES] + by_status[Rsvp.MAYBE]}
     dropped = await svc.cancel_game(session, game)
+    notify.update({a.user.id: a.user for a in dropped})
+    game.cancel_reason = (reason or "")[:255] or None
     await notifier.refresh_game(bot, session, game)
+
+    why = f": {reason}" if reason else ""
     if game.chat_id:
         await bot.send_message(
-            game.chat_id, f"❌ <b>{texts.game_header(game)} отменена.</b>",
+            game.chat_id, f"❌ <b>{texts.game_header(game)} отменена</b>{texts.h(why)}.",
             reply_to_message_id=game.announce_message_id,
         )
     else:
         await whatsapp.send_draft(
-            bot, f"❌ *{texts.game_header(game)} отменена.*", chat_ids=[admin_chat_id],
+            bot, f"❌ *{texts.game_header(game)} отменена*{why}.",
+            chat_ids=[admin_chat_id] if admin_chat_id else None,
             note="Сообщите команде в WhatsApp 👇",
         )
-    for user in {a.user.id: a.user for a in dropped}.values():
-        await notifier.send_dm(bot, user, f"❌ {texts.game_header(game)} отменена. Обязанности сняты.")
+    for user in notify.values():
+        await notifier.send_dm(bot, user, f"❌ {texts.game_header(game)} отменена{texts.h(why)}.")
+
+
+async def cancel_if_too_few(bot: Bot, session: AsyncSession, game: Game) -> bool:
+    """Сбор закрыт, а «Буду» меньше минимума — отменяем. True, если отменили."""
+    if not game.min_players or game.status not in GameStatus.ACTIVE:
+        return False
+    yes = await svc.yes_count(session, game.id)
+    if yes >= game.min_players:
+        return False
+    await cancel_game(bot, session, game, None, f"не набралось людей — {yes} из {game.min_players}")
+    return True
+
+
+async def create_from_schedule(bot: Bot, session: AsyncSession, schedule, starts_at: datetime) -> Game:
+    """Игра по расписанию: создать, разослать опрос, админам — отчёт и анонс для WhatsApp."""
+    game, poll_report, hint, announce = await create_game(
+        bot, session, None, schedule.kind, starts_at, schedule.location, schedule.min_players, schedule.id
+    )
+    await notifier.notify_admins(
+        bot, f"🔁 По расписанию создана: {texts.game_header(game)}\n\n{poll_report}\n\n<i>{hint}</i>"
+    )
+    await whatsapp.send_draft(bot, announce, note="📤 Анонс для группы WhatsApp 👇")
+    return game
 
 
 async def assign_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty, user: User | None) -> None:

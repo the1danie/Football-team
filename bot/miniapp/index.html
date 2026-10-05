@@ -157,6 +157,11 @@
   .spinner { width: 28px; height: 28px; border: 3px solid var(--soft); border-top-color: var(--accent); border-radius: 50%;
     animation: spin .8s linear infinite; margin: 30vh auto; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .stepper { display: inline-flex; align-items: center; gap: 4px; background: var(--soft); border-radius: 12px; padding: 3px; }
+  .stepper button { width: 38px; height: 38px; border-radius: 10px; font-size: 20px; font-weight: 700; }
+  .stepper button:active { background: var(--card); }
+  .stepper span { min-width: 56px; text-align: center; font-weight: 700; }
+  .head-row { display: flex; align-items: center; justify-content: space-between; }
   ul.rules { margin: 0; padding-left: 20px; } ul.rules li { margin: 6px 0; }
 </style>
 </head>
@@ -287,7 +292,9 @@ function onboarding() {
 // ---------------------------------------------------------------- игры
 function gamesTab() {
   const d = S.data;
-  const head = h("h1", {}, "Игры");
+  const head = h("div", { class: "head-row" }, h("h1", {}, "Игры"),
+    d.is_admin ? h("button", { class: "chip accent", style: "padding:7px 12px", onclick: () => openSheet({ type: "schedules" }) },
+      `🔁 Расписание${d.schedules && d.schedules.length ? " · " + d.schedules.filter((x) => x.active).length : ""}`) : null);
   if (!d.games.length) return h("div", {}, head, h("div", { class: "card empty" }, h("div", { class: "big" }, "🏟"),
     h("p", {}, "Запланированных игр нет."), d.is_admin ? h("p", { class: "muted small" }, "Создайте игру кнопкой «＋ Новая игра».") : h("p", { class: "muted small" }, "Когда админ создаст игру, бот пришлёт сообщение.")));
   return h("div", {}, head, d.games.map(gameCard));
@@ -304,7 +311,7 @@ function gameCard(g) {
       h("div", { class: "grow" },
         h("div", { class: "game-when" }, `${relative ? g.day_word : g.date_label} · ${g.time}`),
         h("div", { class: "game-sub" }, [relative ? g.date_label : null, g.location].filter(Boolean).join(" · ") || null)),
-      h("span", { class: "chip" }, g.kind_title)));
+      h("span", { class: "chip" }, (g.from_schedule ? "🔁 " : "") + g.kind_title)));
 
   // Подсказка: что от меня нужно
   if (g.status === "open" && !g.my_rsvp && !g.deadline_passed)
@@ -329,6 +336,14 @@ function gameCard(g) {
       h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
     card.append(group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
       d.is_admin ? group(`🙈 Не ответили (${(g.no_answer || []).length})`, g.no_answer) : null);
+  }
+
+  if (g.min_players && g.status !== "distributed") {
+    const ok = yes.length >= g.min_players;
+    card.append(h("div", { class: "banner " + (ok ? "ok" : ""), style: "margin-top:10px" },
+      ok ? `✅ Минимум ${g.min_players} набран` : `⚠️ Пока ${yes.length} из минимум ${g.min_players} — иначе ${g.kind === "training" ? "тренировка" : "игра"} отменится`,
+      h("div", { class: "bar", style: "margin-top:8px;background:rgba(0,0,0,.08)" },
+        h("div", { style: `width:${Math.min(100, (yes.length / g.min_players) * 100)}%;background:${ok ? "var(--yes)" : "var(--maybe)"}` }))));
   }
 
   // Обязанности
@@ -444,6 +459,41 @@ function profileTab() {
       S.data.penalty_points ? h("li", {}, `Не ответил до закрытия сбора — минус (−${S.data.penalty_points}).`) : null)));
 }
 
+function stepper(value, min, max, onChange, fmt) {
+  return h("div", { class: "stepper" },
+    h("button", { "aria-label": "меньше", disabled: value <= min, onclick: () => { haptic(); onChange(Math.max(min, value - 1)); } }, "−"),
+    h("span", {}, fmt ? fmt(value) : value),
+    h("button", { "aria-label": "больше", disabled: value >= max, onclick: () => { haptic(); onChange(Math.min(max, value + 1)); } }, "+"));
+}
+function everyWeekday(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const names = ["каждое воскресенье", "каждый понедельник", "каждый вторник", "каждую среду", "каждый четверг", "каждую пятницу", "каждую субботу"];
+  return names[new Date(y, m - 1, d).getDay()];
+}
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+function schedulesSheet() {
+  const list = S.data.schedules || [];
+  const upd = async (x, body) => { const r = await api("schedule_update", { id: x.id, ...body }); if (r) render(); };
+  return h("div", {}, h("h3", {}, "🔁 Расписание"),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Повторяющиеся игры и тренировки. Бот сам создаёт их заранее и рассылает опрос."),
+    list.length ? list.map((x) => h("div", { class: "card", style: x.active ? "" : "opacity:.6" },
+      h("div", { class: "row" },
+        h("div", { class: "grow" }, h("div", { style: "font-weight:700;font-size:17px" }, `${cap(x.every_label)} · ${x.time}`),
+          h("div", { class: "small muted" }, [x.kind_title, x.location].filter(Boolean).join(" · "))),
+        h("button", { class: "switch" + (x.active ? " on" : ""), role: "switch", "aria-checked": x.active ? "true" : "false", onclick: () => upd(x, { active: !x.active }) })),
+      h("div", { class: "small muted", style: "margin-top:6px" }, x.active ? `Следующая: ${x.next_label}` : "На паузе — новые не создаются"),
+      h("div", { class: "switch-row" }, h("div", { class: "grow small" }, "Минимум игроков"),
+        stepper(x.min_players, 0, 30, (v) => upd(x, { min_players: v }), (v) => (v ? v : "нет"))),
+      h("div", { class: "switch-row" }, h("div", { class: "grow small" }, "Опрос за"),
+        stepper(x.open_days_before, 1, 6, (v) => upd(x, { open_days_before: v }), (v) => `${v} ${plural(v, "день", "дня", "дней")}`)),
+      h("button", { class: "toggle-link", style: "color:var(--danger)", onclick: async () => {
+        if (await confirmBox(`Удалить расписание «${x.every_label} ${x.time}»? Уже созданные игры останутся.`)) {
+          const r = await api("schedule_delete", { id: x.id }); if (r) render(); } } }, "Удалить расписание")))
+    : h("div", { class: "card empty muted" }, "Расписания пока нет."),
+    h("button", { class: "btn", onclick: () => openSheet({ type: "create", repeat: true }) }, "＋ Добавить повторяющуюся тренировку"));
+}
+
 // ---------------------------------------------------------------- нижние листы
 function openSheet(sheet) { S.sheet = sheet; haptic(); render(); }
 function closeSheet() { S.sheet = null; render(); }
@@ -453,14 +503,15 @@ function renderSheet() {
   document.querySelectorAll(".sheet-bg").forEach((x) => x.remove());
   if (!S.sheet) return;
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
-    playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet }[S.sheet.type]();
+    playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet }[S.sheet.type]();
   const bg = h("div", { class: "sheet-bg", onclick: (e) => { if (e.target === bg) closeSheet(); } },
     h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content));
   document.body.append(bg);
 }
 
 function createSheet() {
-  const st = S.sheet.form || (S.sheet.form = { date: null, minutes: null, kind: "game", location: "", custom: false });
+  const st = S.sheet.form || (S.sheet.form = { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", custom: false,
+    min: 0, repeat: !!S.sheet.repeat, openDays: 2 });
   const days = [];
   const now = new Date();
   for (let i = 0; i < 14; i++) {
@@ -491,10 +542,23 @@ function createSheet() {
     h("div", { class: "label" }, "Место (необязательно)"),
     h("input", { class: "field", placeholder: "Например: Стадион Динамо", value: st.location, maxlength: 255, oninput: (e) => { st.location = e.target.value; } }),
     places.length ? h("div", { class: "people" }, places.map((p) => h("button", { class: "chip", onclick: () => { st.location = p; render(); } }, p))) : null,
+    h("div", { class: "card", style: "margin-top:16px" },
+      h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Минимум игроков"),
+        h("div", { class: "small muted" }, st.min ? `Если «Буду» меньше ${st.min} к закрытию сбора — отменится автоматически.` : "Без минимума — состоится при любом количестве.")),
+        stepper(st.min, 0, 30, (v) => { st.min = v; render(); }, (v) => (v ? v : "нет"))),
+      h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🔁 Повторять каждую неделю"),
+        h("div", { class: "small muted" }, st.repeat && st.date
+          ? `${cap(everyWeekday(st.date))}${st.minutes !== null ? " в " + label(st.minutes) : ""} — бот сам создаст и разошлёт опрос.`
+          : "Например, тренировки по понедельникам и пятницам.")),
+        h("button", { class: "switch" + (st.repeat ? " on" : ""), role: "switch", "aria-checked": st.repeat ? "true" : "false", onclick: () => { st.repeat = !st.repeat; render(); } })),
+      st.repeat ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Опрос открывать за"),
+        h("div", { class: "small muted" }, "Сколько дней до тренировки бот создаёт её и присылает опрос.")),
+        stepper(st.openDays, 1, 6, (v) => { st.openDays = v; render(); }, (v) => `${v} ${plural(v, "день", "дня", "дней")}`)) : null),
     h("button", { class: "btn", style: "margin-top:18px", disabled: !ready,
       onclick: async (e) => {
         e.target.disabled = true;
-        const r = await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location });
+        const r = await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location,
+          min_players: st.min, repeat: st.repeat, open_days_before: st.openDays });
         if (r) { haptic("ok"); S.sheet = { type: "created", note: r.note, wa: r.whatsapp }; render(); } else e.target.disabled = false;
       } }, ready ? `Создать: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}` : "Выберите день и время"),
     h("p", { class: "muted small", style: "margin:8px 4px 0" }, "Игрокам придёт опрос в Telegram. Анонс для WhatsApp — на следующем шаге."));

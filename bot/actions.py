@@ -63,17 +63,21 @@ async def send_rsvp_nudge(bot: Bot, session: AsyncSession, game: Game) -> None:
     if not users:
         return
     now, deadline = config.now(), rsvp_deadline(game)
+    yes = await svc.yes_count(session, game.id)
     for user in users:
-        await notifier.send_dm(bot, user, texts.rsvp_nudge(game, deadline, now, config.penalty_points), keyboards.rsvp(game))
+        await notifier.send_dm(
+            bot, user, texts.rsvp_nudge(game, deadline, now, config.penalty_points, yes),
+            keyboards.with_app_button(keyboards.rsvp(game), game.id),
+        )
     if game.chat_id:
         await bot.send_message(
-            game.chat_id, texts.group_nudge(game, users, deadline, now),
+            game.chat_id, texts.group_nudge(game, users, deadline, now, yes),
             reply_to_message_id=game.announce_message_id, allow_sending_without_reply=True,
         )
     else:
         link = await whatsapp.game_link(bot, game)
         await whatsapp.send_draft(
-            bot, whatsapp.nudge(game, users, deadline, now, link),
+            bot, whatsapp.nudge(game, users, deadline, now, link, yes),
             note="⏰ Не все отметились — напомните в группе WhatsApp 👇",
         )
 

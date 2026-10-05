@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot import actions, operations, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline
-from bot.models import Duty, Game, GameStatus, PenaltyStatus, Rsvp, User, UserStatus
+from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
 from bot.services import games as svc
 
 INIT_DATA_MAX_AGE = 24 * 3600
@@ -100,6 +100,8 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         "deadline_passed": now >= deadline,
         "penalty": config.penalty_points if penalties_enabled(game) and not game.penalties_applied else 0,
         "participants": {s: [_user_brief(u) for u in by_status[s]] for s in Rsvp.ALL},
+        "min_players": game.min_players or 0,
+        "from_schedule": game.schedule_id is not None,
         "duties": duties,
     }
     if is_admin:
@@ -133,7 +135,19 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         if is_admin:
             players = await svc.players_for_admin(session)
             data["pending_count"] = sum(p.status == UserStatus.PENDING for p in players)
+            data["schedules"] = [schedule_view(x) for x in await svc.schedules(session)]
     return data
+
+
+def schedule_view(x: Schedule) -> dict:
+    nxt = svc.next_occurrence(x, config.now())
+    return {
+        "id": x.id, "kind": x.kind, "kind_title": texts.KIND_TITLES.get(x.kind, ""),
+        "weekday": x.weekday, "weekday_label": WEEKDAYS_FULL[x.weekday], "every_label": EVERY_WEEKDAY[x.weekday],
+        "time": x.time_label,
+        "location": x.location, "min_players": x.min_players or 0, "open_days_before": x.open_days_before,
+        "active": x.is_active, "next_label": texts.fmt_date(nxt, weekday=True),
+    }
 
 
 def _tg_ns(tg: dict) -> SimpleNamespace:
@@ -192,7 +206,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "create_game", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel",
 }
 
@@ -282,15 +296,48 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             if not 0 <= minutes <= 24 * 60:
                 raise ApiError("Выберите время.")
             starts_at = datetime.combine(day, datetime.min.time()) + timedelta(minutes=minutes)
+            min_players = int(body.get("min_players") or 0)
+            schedule = None
+            if body.get("repeat"):
+                # Каждую неделю в этот день и время; первая игра — эта.
+                schedule = Schedule(
+                    kind=body.get("kind", "training"), weekday=day.weekday(), minutes=minutes,
+                    location=(body.get("location") or "").strip()[:255] or None, min_players=min_players or None,
+                    open_days_before=max(1, min(6, int(body.get("open_days_before") or 2))),
+                )
+                session.add(schedule)
+                await session.flush()
             game, poll_report, hint, announce = await operations.create_game(
-                bot, session, user, body.get("kind", "game"), starts_at, body.get("location")
+                bot, session, user, body.get("kind", "game"), starts_at, body.get("location"),
+                min_players, schedule.id if schedule else None,
             )
+            if schedule:
+                hint += (
+                    f" 🔁 Дальше — {EVERY_WEEKDAY[schedule.weekday]} в {schedule.time_label}, "
+                    f"опрос за {schedule.open_days_before} дн."
+                )
             await session.flush()
             return {
                 "game_id": game.id, "note": f"{poll_report}\n{hint}",
                 "whatsapp": {"text": announce, "url": whatsapp.share_url(announce)},
                 "state": await state_view(bot, session, tg, user),
             }
+        elif action == "schedule_update":
+            x = await session.get(Schedule, int(body.get("id", 0)))
+            if x is None:
+                raise ApiError("Расписание не найдено.", 404)
+            if "active" in body:
+                x.is_active = bool(body["active"])
+                note = "Расписание включено" if x.is_active else "Расписание на паузе"
+            if "min_players" in body:
+                x.min_players = max(0, min(100, int(body["min_players"]))) or None
+            if "open_days_before" in body:
+                x.open_days_before = max(1, min(6, int(body["open_days_before"])))
+        elif action == "schedule_delete":
+            x = await session.get(Schedule, int(body.get("id", 0)))
+            if x is not None:
+                await session.delete(x)
+                note = "Расписание удалено. Уже созданные игры остались."
         elif action == "distribute":
             report = await operations.distribute(bot, session, await _game(session, body))
             note = report.split("\n")[0]

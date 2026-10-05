@@ -94,8 +94,45 @@ class Game(Base):
     rsvp_nudge_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     penalties_applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
+    # Повторяющаяся тренировка: из какого расписания создана.
+    schedule_id: Mapped[int | None] = mapped_column(
+        ForeignKey("schedules.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Минимум «Буду» к закрытию сбора, иначе игра отменяется (None/0 — без минимума).
+    min_players: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+WEEKDAYS_FULL = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+WEEKDAYS_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+EVERY_WEEKDAY = [
+    "каждый понедельник", "каждый вторник", "каждую среду", "каждый четверг",
+    "каждую пятницу", "каждую субботу", "каждое воскресенье",
+]
+
+
+class Schedule(Base):
+    """Повторяющаяся игра/тренировка: каждую неделю в этот день и время."""
+
+    __tablename__ = "schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), default="training")
+    weekday: Mapped[int] = mapped_column(Integer)  # 0 — понедельник
+    minutes: Mapped[int] = mapped_column(Integer)  # время начала в минутах от полуночи (до 1440)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    min_players: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # За сколько дней до начала создать игру и разослать опрос.
+    open_days_before: Mapped[int] = mapped_column(Integer, default=2)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    @property
+    def time_label(self) -> str:
+        return f"{self.minutes // 60:02d}:{self.minutes % 60:02d}"
 
 
 class GameParticipant(Base):

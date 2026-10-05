@@ -18,6 +18,7 @@ from bot.models import (
     Penalty,
     PenaltyStatus,
     Rsvp,
+    Schedule,
     Setting,
     SwapRequest,
     SwapStatus,
@@ -107,6 +108,8 @@ async def create_game(
     starts_at: datetime,
     location: str | None,
     created_by: User | None,
+    min_players: int | None = None,
+    schedule_id: int | None = None,
 ) -> Game:
     game = Game(
         kind=kind,
@@ -114,6 +117,8 @@ async def create_game(
         location=location,
         status=GameStatus.OPEN,
         created_by=created_by.id if created_by else None,
+        min_players=min_players or None,
+        schedule_id=schedule_id,
     )
     session.add(game)
     await session.flush()
@@ -682,3 +687,48 @@ async def set_car(
     if had_car and not has_car:
         return await drop_car_duties(session, user, now)
     return []
+
+
+# ---------------------------------------------------------------- расписание
+
+
+async def schedules(session: AsyncSession) -> list[Schedule]:
+    rows = await session.scalars(select(Schedule).order_by(Schedule.weekday, Schedule.minutes))
+    return list(rows.all())
+
+
+def next_occurrence(schedule: Schedule, now: datetime) -> datetime:
+    """Ближайшее будущее начало по расписанию."""
+    day = now.date() + timedelta(days=(schedule.weekday - now.weekday()) % 7)
+    start = datetime.combine(day, datetime.min.time()) + timedelta(minutes=schedule.minutes)
+    if start <= now:
+        start += timedelta(days=7)
+    return start
+
+
+async def due_schedule_games(session: AsyncSession, now: datetime) -> list[tuple[Schedule, datetime]]:
+    """Какие игры по расписанию пора создать (открылось окно и игры ещё нет)."""
+    result = []
+    for schedule in await schedules(session):
+        if not schedule.is_active:
+            continue
+        start = next_occurrence(schedule, now)
+        if now < start - timedelta(days=schedule.open_days_before):
+            continue
+        exists = await session.scalar(
+            select(func.count()).select_from(Game).where(Game.schedule_id == schedule.id, Game.starts_at == start)
+        )
+        if not exists:
+            result.append((schedule, start))
+    return result
+
+
+async def yes_count(session: AsyncSession, game_id: int) -> int:
+    return int(
+        await session.scalar(
+            select(func.count())
+            .select_from(GameParticipant)
+            .where(GameParticipant.game_id == game_id, GameParticipant.status == Rsvp.YES)
+        )
+        or 0
+    )

@@ -12,7 +12,7 @@ from aiogram import Bot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from bot import actions, notifier, texts, whatsapp
+from bot import actions, notifier, operations, texts, whatsapp
 from bot.config import config
 from bot.deadlines import distribute_at, rsvp_deadline, rsvp_reminder_at
 from bot.models import Game, GameStatus
@@ -24,6 +24,14 @@ TICK_SECONDS = 60
 
 async def tick(bot: Bot, session: AsyncSession) -> None:
     now = config.now()
+    # Повторяющиеся тренировки: создать очередную, когда открылось окно опроса.
+    for schedule, starts_at in await svc.due_schedule_games(session, now):
+        try:
+            await operations.create_from_schedule(bot, session, schedule, starts_at)
+        except operations.OpError:
+            log.exception("Schedule %s: game not created", schedule.id)
+    await session.flush()
+
     games = (await session.scalars(select(Game).where(Game.status.in_(GameStatus.ACTIVE)))).all()
     for game in games:
         if now >= game.starts_at + timedelta(hours=config.finish_after_hours):
@@ -38,6 +46,10 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
             report = await actions.apply_penalties_and_announce(bot, session, game)
             if report:
                 await notifier.notify_admins(bot, report)
+            # Не набралось минимума — отменяем (после минусов: молчуны и сорвали сбор).
+            if await operations.cancel_if_too_few(bot, session, game):
+                await notifier.notify_admins(bot, f"❌ {texts.game_header(game)} отменена: {texts.h(game.cancel_reason)}.")
+                continue
         if now >= game.starts_at:
             continue
 

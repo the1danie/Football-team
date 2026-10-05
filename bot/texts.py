@@ -84,6 +84,8 @@ def announce_text(game: Game, by_status: dict[str, list[User]]) -> str:
         lines.append(f"📍 {h(game.location)}")
 
     if game.status == GameStatus.CANCELLED:
+        if game.cancel_reason:
+            lines.append(f"Причина: {h(game.cancel_reason)}")
         return "\n".join(lines)
 
     lines += ["", "Кто будет?", ""]
@@ -93,6 +95,8 @@ def announce_text(game: Game, by_status: dict[str, list[User]]) -> str:
         lines.append(f"{RSVP_LABELS[status]} ({len(users)})" + (f": {names}" if names else ""))
     yes = len(by_status.get(Rsvp.YES, []))
     lines += ["", f"<b>Подтвердили: {yes} {people_word(yes)}</b>"]
+    if game.min_players:
+        lines.append(min_players_line(game, yes))
     if game.status == GameStatus.FINISHED:
         lines.append("\n🏁 Игра прошла.")
     return "\n".join(lines)
@@ -204,24 +208,35 @@ def game_lines(game: Game) -> list[str]:
 def poll_invite(game: Game, deadline: datetime, now: datetime, penalty_points: int) -> str:
     lines = ["📣 <b>Открыт сбор на игру — кто придёт?</b>", ""] + game_lines(game)
     lines += ["", f"Отметься {until(deadline, now)} кнопками ниже."]
+    if game.min_players:
+        lines.append(f"Нужно минимум {game.min_players} {people_word(game.min_players)}, иначе отменим.")
     if penalty_points > 0:
         lines.append(f"Кто не ответит — получит {penalty_points} {minus_word(penalty_points)} ⚠️")
     return "\n".join(lines)
 
 
-def rsvp_nudge(game: Game, deadline: datetime, now: datetime, penalty_points: int) -> str:
+def min_players_line(game: Game, yes: int) -> str:
+    if yes >= game.min_players:
+        return f"✅ Минимум {game.min_players} набран."
+    return f"⚠️ Пока {yes} из минимум {game.min_players} — иначе {KIND_WORDS.get(game.kind, 'игра')} отменится."
+
+
+def rsvp_nudge(game: Game, deadline: datetime, now: datetime, penalty_points: int, yes: int = 0) -> str:
     lines = ["⏰ <b>Ты ещё не ответил, придёшь ли</b>", ""] + game_lines(game)
+    if game.min_players:
+        lines += ["", min_players_line(game, yes)]
     lines += ["", f"Сбор закрывается {until(deadline, now)}."]
     if penalty_points > 0:
         lines.append(f"Не ответишь — {penalty_points} {minus_word(penalty_points)}. Достаточно нажать «❌ Не буду».")
     return "\n".join(lines)
 
 
-def group_nudge(game: Game, users: list[User], deadline: datetime, now: datetime) -> str:
+def group_nudge(game: Game, users: list[User], deadline: datetime, now: datetime, yes: int = 0) -> str:
     names = ", ".join(mention(u) for u in users)
+    extra = f"\n{min_players_line(game, yes)}" if game.min_players else ""
     return (
         f"⏰ <b>{game_header(game)}</b>\n\n"
-        f"Ещё не отметились ({len(users)}): {names}\n\n"
+        f"Ещё не отметились ({len(users)}): {names}{extra}\n\n"
         f"Сбор закрывается {until(deadline, now)} — потом минус. Кнопки — в сообщении об игре выше."
     )
 
