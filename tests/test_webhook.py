@@ -164,24 +164,49 @@ def test_normalize_neon_url():
 async def test_health(fake, monkeypatch):
     await webhook._ensure_ready()  # движок уже на тестовой БД; дальше «как на Vercel» — Postgres задан
     monkeypatch.setattr(config, "database_url", "postgresql://u:p@neon.example/db")
+
     # без секрета — только наличие переменных
     status, body = await call(webhook.health_app)
     assert status == 200 and body["env"]["BOT_TOKEN"] is True and "telegram" not in body
 
-    # webhook ещё не установлен → подсказка открыть /api/setup
-    _, body = await call(webhook.health_app, query=f"secret={SECRET}", headers={"Host": "fb.vercel.app"})
+    # webhook не установлен — health ставит его сам
+    _, body = await call(webhook.health_app, query=f"secret={CRON}", headers={"Host": "fb.vercel.app"})
     assert body["database"] == "ok" and body["telegram"]["bot"] == "@duty_bot"
-    assert any("/api/setup" in h for h in body["hints"]) and body["ok"] is False
-
-    await call(webhook.setup_app, query=f"secret={SECRET}", headers={"Host": "fb.vercel.app"})
-    _, body = await call(webhook.health_app, query=f"secret={SECRET}", headers={"Host": "fb.vercel.app"})
+    assert body["telegram"]["webhook_just_installed"] is True
+    assert body["telegram"]["webhook_url"] == "https://fb.vercel.app/api/webhook"
     assert body["ok"] is True, body
 
-    # открыли с другого домена (например, адрес конкретного деплоя)
-    _, body = await call(webhook.health_app, query=f"secret={SECRET}", headers={"Host": "fb-abc123.vercel.app"})
-    assert any("указывает на" in h for h in body["hints"])
+    # повторно — уже всё в порядке, ничего не трогает
+    fake.reset()
+    _, body = await call(webhook.health_app, query=f"secret={CRON}", headers={"Host": "fb.vercel.app"})
+    assert body["telegram"]["webhook_just_installed"] is False
+    assert not any(isinstance(c, SetWebhook) for c in fake.calls)
 
     # пустая переменная
     monkeypatch.setattr(config, "cron_secret", "")
     _, body = await call(webhook.health_app, query=f"secret={SECRET}", headers={"Host": "fb.vercel.app"})
     assert any("CRON_SECRET" in h and "Redeploy" in h for h in body["hints"])
+
+
+async def test_tick_installs_webhook_itself(fake, monkeypatch):
+    """Достаточно настроить cron: первый же вызов /api/tick подключит бота к Telegram."""
+    monkeypatch.setattr(config, "public_url", "https://football.vercel.app")  # VERCEL_PROJECT_PRODUCTION_URL
+    status, body = await call(webhook.tick_app, query=f"secret={CRON}", headers={"Host": "football-abc123.vercel.app"})
+    assert status == 200 and body["webhook_installed"] is True
+    hook = next(c for c in fake.calls if isinstance(c, SetWebhook))
+    assert hook.url == "https://football.vercel.app/api/webhook"  # основной домен, а не адрес деплоя
+    assert hook.secret_token == config.webhook_secret
+    _, body = await call(webhook.tick_app, query=f"secret={CRON}")
+    assert body["webhook_installed"] is False
+
+
+def test_webhook_secret_derived_from_token(monkeypatch):
+    from bot.config import Config
+
+    monkeypatch.delenv("WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("BOT_TOKEN", "123:abc")
+    a, b = Config(), Config()
+    assert a.webhook_secret == b.webhook_secret and len(a.webhook_secret) == 48
+    assert set(a.webhook_secret) <= set("0123456789abcdef")  # допустимые для Telegram символы
+    monkeypatch.setenv("WEBHOOK_SECRET", "own")
+    assert Config().webhook_secret == "own"

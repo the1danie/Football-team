@@ -8,6 +8,7 @@ from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.methods import (
     AnswerCallbackQuery,
+    DeleteWebhook,
     EditMessageReplyMarkup,
     EditMessageText,
     GetMe,
@@ -37,6 +38,7 @@ class FakeSession(BaseSession):
         super().__init__()
         self.calls: list[TelegramMethod] = []
         self.ids = itertools.count(100)
+        self.webhook_url = ""
 
     async def close(self):
         pass
@@ -54,9 +56,12 @@ class FakeSession(BaseSession):
                 message_id=next(self.ids), date=datetime.now(), chat=Chat(id=method.chat_id, type=chat_type),
                 from_user=BOT_USER, text=method.text,
             )
+        if isinstance(method, SetWebhook):
+            self.webhook_url = method.url
+        if isinstance(method, DeleteWebhook):
+            self.webhook_url = ""
         if isinstance(method, GetWebhookInfo):
-            url = next((c.url for c in reversed(self.calls) if isinstance(c, SetWebhook)), "")
-            return WebhookInfo(url=url, has_custom_certificate=False, pending_update_count=0)
+            return WebhookInfo(url=self.webhook_url, has_custom_certificate=False, pending_update_count=0)
         if isinstance(method, (EditMessageText, EditMessageReplyMarkup, AnswerCallbackQuery)):
             return True
         return True

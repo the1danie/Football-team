@@ -1,3 +1,4 @@
+import hashlib
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -54,10 +55,20 @@ class Config:
     webhook_secret: str = field(default_factory=lambda: os.getenv("WEBHOOK_SECRET", ""))
     # Секрет для /api/tick (Vercel Cron присылает его как «Authorization: Bearer …»).
     cron_secret: str = field(default_factory=lambda: os.getenv("CRON_SECRET", ""))
-    # Публичный адрес, например https://football-bot.vercel.app (по умолчанию — из запроса).
-    public_url: str = field(default_factory=lambda: os.getenv("PUBLIC_URL", "").rstrip("/"))
+    # Публичный адрес, например https://football-bot.vercel.app. По умолчанию — основной домен
+    # проекта, который Vercel сообщает сам (VERCEL_PROJECT_PRODUCTION_URL), иначе — из запроса.
+    public_url: str = field(
+        default_factory=lambda: os.getenv("PUBLIC_URL", "").rstrip("/")
+        or (f"https://{os.environ['VERCEL_PROJECT_PRODUCTION_URL']}" if os.getenv("VERCEL_PROJECT_PRODUCTION_URL") else "")
+    )
     # Через сколько часов после начала игра считается завершённой.
     finish_after_hours: float = field(default_factory=lambda: _float("FINISH_AFTER_HOURS", 3))
+
+    def __post_init__(self) -> None:
+        # WEBHOOK_SECRET можно не задавать — выводим его из токена (Telegram передаёт его в заголовке,
+        # снаружи он не виден, а при смене токена меняется сам).
+        if not self.webhook_secret and self.bot_token:
+            self.webhook_secret = hashlib.sha256(f"webhook:{self.bot_token}".encode()).hexdigest()[:48]
 
     @property
     def tz(self) -> ZoneInfo:
