@@ -99,6 +99,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         "date_label": texts.fmt_date(game.starts_at, weekday=True),
         "day_word": texts.day_word(game.starts_at, now),
         "time": texts.fmt_time(game.starts_at),
+        "gather_time": texts.gather_time(game),
         "date_iso": game.starts_at.date().isoformat(),
         "minutes": game.starts_at.hour * 60 + game.starts_at.minute,
         "location": game.location,

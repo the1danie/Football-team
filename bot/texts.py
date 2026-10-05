@@ -58,6 +58,22 @@ def day_word(dt: datetime, now: datetime) -> str:
     return fmt_date(dt).capitalize()
 
 
+def gather_time(game: Game) -> str | None:
+    """Время сбора («22:30») или None, если не показываем."""
+    from datetime import timedelta
+
+    from bot.config import config
+
+    if config.gather_minutes <= 0:
+        return None
+    return fmt_time(game.starts_at - timedelta(minutes=config.gather_minutes))
+
+
+def gather_suffix(game: Game) -> str:
+    g = gather_time(game)
+    return f", сбор в {g}" if g else ""
+
+
 def kind_title(game: Game) -> str:
     return KIND_TITLES.get(game.kind, KIND_TITLES["game"])
 
@@ -79,7 +95,7 @@ def announce_text(game: Game, by_status: dict[str, list[User]]) -> str:
     if game.status == GameStatus.CANCELLED:
         lines = [f"<b>❌ ОТМЕНЕНА — {KIND_WORDS.get(game.kind, 'игра')}</b>", f"<s>{kind_title(game)}</s>"]
     lines.append(f"📅 {fmt_date(game.starts_at, weekday=True)}")
-    lines.append(f"🕗 {fmt_time(game.starts_at)}")
+    lines.append(f"🕗 {fmt_time(game.starts_at)}" + (f" (сбор в {gather_time(game)})" if gather_time(game) else ""))
     if game.location:
         lines.append(f"📍 {h(game.location)}")
 
@@ -154,7 +170,7 @@ def unassigned_warning(duties: list[Duty]) -> str:
 
 def personal_reminder(game: Game, now: datetime, duties: list[Duty]) -> str:
     word = KIND_WORDS.get(game.kind, "игра")
-    lines = [f"{day_word(game.starts_at, now)} {word} в {fmt_time(game.starts_at)}."]
+    lines = [f"{day_word(game.starts_at, now)} {word} в {fmt_time(game.starts_at)}{gather_suffix(game)}."]
     if game.location:
         lines.append(f"📍 {h(game.location)}")
     lines += ["", "Твоя обязанность:" if len(duties) == 1 else "Твои обязанности:"]
@@ -165,7 +181,7 @@ def personal_reminder(game: Game, now: datetime, duties: list[Duty]) -> str:
 def group_reminder(game: Game, now: datetime, assignments: list[Assignment]) -> str:
     word = KIND_WORDS.get(game.kind, "игра")
     emoji = kind_title(game).split()[0]
-    lines = [f"{emoji} <b>{day_word(game.starts_at, now)} {word} в {fmt_time(game.starts_at)}.</b>"]
+    lines = [f"{emoji} <b>{day_word(game.starts_at, now)} {word} в {fmt_time(game.starts_at)}{gather_suffix(game)}.</b>"]
     if game.location:
         lines.append(f"📍 {h(game.location)}")
     lines += ["", "Ответственные:"]
@@ -202,7 +218,11 @@ def until(deadline: datetime, now: datetime) -> str:
 
 
 def game_lines(game: Game) -> list[str]:
-    lines = [f"<b>{kind_title(game)}</b>", f"📅 {fmt_date(game.starts_at, weekday=True)}", f"🕗 {fmt_time(game.starts_at)}"]
+    lines = [
+        f"<b>{kind_title(game)}</b>",
+        f"📅 {fmt_date(game.starts_at, weekday=True)}",
+        f"🕗 {fmt_time(game.starts_at)}" + (f" (сбор в {gather_time(game)})" if gather_time(game) else ""),
+    ]
     if game.location:
         lines.append(f"📍 {h(game.location)}")
     return lines

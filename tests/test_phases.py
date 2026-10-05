@@ -127,3 +127,25 @@ async def test_miniapp_duty_settings(team):  # noqa: F811
     assert st["state"]["after_minutes"] == 60
     status, _ = await api({"id": 55, "first_name": "Игрок"}, "duties")
     assert status == 403
+
+
+def test_gather_time(monkeypatch):
+    from datetime import datetime
+
+    from bot import texts, whatsapp
+
+    game = Game(kind="training", starts_at=datetime(2026, 10, 5, 23, 0), location="Жас Оркен", status="open")
+    now = datetime(2026, 10, 5, 12, 0)
+    assert texts.gather_time(game) == "22:30"
+    assert "23:00 (сбор в 22:30)" in "\n".join(texts.game_lines(game))  # опрос и напоминания в личку
+    assert "Сегодня тренировка в 23:00, сбор в 22:30." in texts.personal_reminder(game, now, [])
+    assert "🕢 Сбор в 22:30" in whatsapp.announce(game, now, now, "https://t.me/x")
+    assert "*Сегодня тренировка в 23:00, сбор в 22:30*" in whatsapp.reminder(game, now, [])
+    monkeypatch.setattr(config, "gather_minutes", 0)
+    assert texts.gather_time(game) is None and "сбор" not in texts.personal_reminder(game, now, [])
+
+
+async def test_gather_time_in_app(team):  # noqa: F811
+    tomorrow = config.now() + timedelta(days=1)
+    _, res = await api(ADMIN, "create_game", date=tomorrow.date().isoformat(), minutes=23 * 60, kind="training")
+    assert res["state"]["games"][0]["gather_time"] == "22:30"

@@ -42,6 +42,8 @@ async def game_link(bot: Bot, game: Game) -> str:
 
 def _header(game: Game) -> list[str]:
     lines = [f"*{texts.kind_title(game)} — {texts.fmt_date(game.starts_at, weekday=True)}, {texts.fmt_time(game.starts_at)}*"]
+    if texts.gather_time(game):
+        lines.append(f"🕢 Сбор в {texts.gather_time(game)}")
     if game.location:
         lines.append(f"📍 {game.location}")
     return lines
@@ -99,7 +101,7 @@ def penalties(game: Game, users: list[User], points: int) -> str:
 
 def reminder(game: Game, now: datetime, assignments: list[Assignment]) -> str:
     word = texts.KIND_WORDS.get(game.kind, "игра")
-    lines = [f"*{texts.day_word(game.starts_at, now)} {word} в {texts.fmt_time(game.starts_at)}*"]
+    lines = [f"*{texts.day_word(game.starts_at, now)} {word} в {texts.fmt_time(game.starts_at)}{texts.gather_suffix(game)}*"]
     if game.location:
         lines.append(f"📍 {game.location}")
     lines += ["", "Ответственные:"]

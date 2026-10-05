@@ -61,6 +61,8 @@
   .game-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .game-when { font-size: 20px; font-weight: 700; line-height: 1.2; }
   .game-sub { color: var(--hint); margin-top: 2px; }
+  .gather { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; font-size: 14px;
+    font-weight: 600; background: var(--accent-soft); color: var(--link); }
   .banner { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--maybe-soft); font-size: 14px; }
   .banner.info { background: var(--accent-soft); }
   .banner.ok { background: var(--yes-soft); }
@@ -316,7 +318,8 @@ function gameCard(g) {
     h("div", { class: "game-top" },
       h("div", { class: "grow" },
         h("div", { class: "game-when" }, `${relative ? g.day_word : g.date_label} · ${g.time}`),
-        h("div", { class: "game-sub" }, [relative ? g.date_label : null, g.location].filter(Boolean).join(" · ") || null)),
+        h("div", { class: "game-sub" }, [relative ? g.date_label : null, g.location].filter(Boolean).join(" · ") || null),
+        g.gather_time ? h("div", { class: "gather" }, `🕢 Сбор в ${g.gather_time}`) : null),
       h("span", { class: "chip" }, (g.from_schedule ? "🔁 " : "") + g.kind_title)));
 
   // Подсказка: что от меня нужно
