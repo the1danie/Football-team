@@ -116,6 +116,14 @@ def game_header(game: Game) -> str:
     return f"{kind_title(game)} — {fmt_date(game.starts_at)}, {fmt_time(game.starts_at)}"
 
 
+def days_word(n: int) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return "день"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "дня"
+    return "дней"
+
+
 def people_word(n: int) -> str:
     if n % 10 == 1 and n % 100 != 11:
         return "человек"

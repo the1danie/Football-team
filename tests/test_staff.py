@@ -70,3 +70,24 @@ async def test_coach_sees_but_does_not_play(team):  # noqa: F811
     assert res["player"]["staff"] is None
     status, _ = await api(COACH, "rsvp", game_id=gid, status="yes")
     assert status == 200
+
+
+async def test_owner_view_as(team):  # noqa: F811
+    await _join(ARMAN)
+    tomorrow = (config.now() + timedelta(days=1)).date().isoformat()
+    await api(ADMIN, "create_game", date=tomorrow, minutes=20 * 60, kind="game")
+    _, st = await api(ADMIN, "state", view_as="player")
+    s = st["state"]
+    assert s["view_as"] == "player" and s["is_admin"] is False and s["real_owner"] is True
+    assert "no_answer" not in s["games"][0] and "schedules" not in s
+    status, _ = await api(ADMIN, "players", view_as="player")
+    assert status == 403  # права — как у игрока
+    _, st = await api(ADMIN, "state", view_as="admin")
+    assert st["state"]["is_admin"] is True and st["state"]["is_owner"] is False
+    _, st = await api(ADMIN, "state", view_as="staff")
+    assert st["state"]["user"]["staff"] and "no_answer" in st["state"]["games"][0]
+    status, _ = await api(ADMIN, "rsvp", game_id=st["state"]["games"][0]["id"], status="yes", view_as="staff")
+    assert status == 400
+    # обычный игрок не может притвориться админом
+    _, st = await api(ARMAN, "state", view_as="admin")
+    assert st["state"]["is_admin"] is False and st["state"]["view_as"] is None

@@ -64,11 +64,27 @@ from bot.weblink import WEB_TOKEN_DAYS, make_web_token, verify_web_token, web_li
 # ----------------------------------------------------------------- представления
 
 
+# Главный админ может посмотреть приложение глазами другой роли (данные — настоящие, меняются только права).
+VIEW_AS = {
+    "admin": (True, False, None),  # выданный админ: без выдачи прав
+    "player": (False, False, None),
+    "staff": (False, False, "Тренер"),
+}
+
+
+def perms(tg: dict, user: User | None) -> tuple[bool, bool, str | None]:
+    """(админ, главный админ, роль в штабе) — с учётом режима «посмотреть как»."""
+    tg_id = int(tg["id"])
+    if config.is_owner(tg_id) and tg.get("view_as") in VIEW_AS:
+        return VIEW_AS[tg["view_as"]]
+    return config.is_admin(tg_id), config.is_owner(tg_id), user.staff_title if user else None
+
+
 def _user_brief(u: User) -> dict:
     return {"id": u.id, "name": u.name, "car": u.has_car}
 
 
-async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool) -> dict:
+async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool, staff: bool = False) -> dict:
     now = config.now()
     by_status = await svc.participants_by_status(session, game.id)
     deadline = rsvp_deadline(game)
@@ -126,18 +142,20 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool)
         "from_schedule": game.schedule_id is not None,
         "duties": duties,
     }
-    if is_admin or me.is_staff:
+    if is_admin or staff:
         view["no_answer"] = [_user_brief(u) for u in await svc.non_responders(session, game)]
     return view
 
 
 async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | None) -> dict:
-    is_admin = config.is_admin(int(tg["id"]))
+    is_admin, is_owner, staff = perms(tg, user)
     me = await bot.me()
     data: dict[str, Any] = {
         "bot_username": me.username,
         "is_admin": is_admin,
-        "is_owner": config.is_owner(int(tg["id"])),
+        "is_owner": is_owner,
+        "real_owner": config.is_owner(int(tg["id"])),
+        "view_as": tg.get("view_as") if config.is_owner(int(tg["id"])) and tg.get("view_as") in VIEW_AS else None,
         "tg_name": await svc.name_from_telegram(session, _tg_ns(tg)),
         "user": None,
         "games": [],
@@ -150,13 +168,13 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         return data
     data["user"] = {
         "id": user.id, "name": user.name, "car": user.has_car, "car_locked": user.car_locked,
-        "status": user.status, "active": user.is_active, "staff": user.staff_title,
+        "status": user.status, "active": user.is_active, "staff": staff,
         "minuses": (await svc.open_penalty_points(session, [user.id])).get(user.id, 0),
     }
     data["access"] = "ok" if (user.is_approved or is_admin) else user.status
     if data["access"] == "ok":
         games = [g for g in await svc.upcoming_games(session, config.now()) if g.status in GameStatus.ACTIVE]
-        data["games"] = [await game_view(session, g, user, is_admin) for g in games]
+        data["games"] = [await game_view(session, g, user, is_admin, bool(staff)) for g in games]
         if is_admin:
             players = await svc.players_for_admin(session)
             data["pending_count"] = sum(p.status == UserStatus.PENDING for p in players)
@@ -270,8 +288,10 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
     action = body.get("action", "state")
     tg_id = int(tg["id"])
     await svc.refresh_admins(session)
-    is_admin = config.is_admin(tg_id)
     user = await svc.get_user_by_tg(session, tg_id)
+    if body.get("view_as") in VIEW_AS and config.is_owner(tg_id):
+        tg = {**tg, "view_as": body["view_as"]}
+    is_admin, _, staff_view = perms(tg, user)
     if "web_version" in tg:  # вход по личной ссылке из браузера
         if user is None or (user.web_version or 0) != tg["web_version"]:
             raise ApiError("Ссылка устарела. Попросите новую в боте командой /web.", 401)
@@ -279,7 +299,7 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
             raise ApiError("Регистрация — через бота в Telegram (/start).", 403)
     if user is not None:
         user.username = tg.get("username") or user.username
-        if is_admin and user.status != UserStatus.APPROVED:
+        if config.is_admin(tg_id) and user.status != UserStatus.APPROVED:
             user.status = UserStatus.APPROVED
 
     if action not in PUBLIC_ACTIONS:
@@ -304,6 +324,8 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 bot, session, tg_id, name[:64], tg.get("username"), bool(body.get("car"))
             )
         elif action == "rsvp":
+            if staff_view and not user.is_staff:
+                raise ApiError("Тренер не отмечается — это просмотр глазами штаба.")
             game = await _game(session, body)
             result = await operations.change_rsvp(bot, session, game, user, body.get("status", ""))
             if result.reassigned:
@@ -362,6 +384,23 @@ async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
                 )
                 session.add(schedule)
                 await session.flush()
+                # Опрос — только когда откроется окно (за open_days_before дней), а не сразу.
+                first = svc.next_occurrence(schedule, config.now())
+                opens_at = first - timedelta(days=schedule.open_days_before)
+                if config.now() < opens_at:
+                    schedule.location_url = schedule.location_url or await svc.known_place_url(session, schedule.location)
+                    await session.flush()
+                    return {
+                        "scheduled": True,
+                        "message": (
+                            f"🔁 Расписание сохранено: {EVERY_WEEKDAY[schedule.weekday]} в {schedule.time_label}.\n"
+                            f"Ближайшая — {texts.fmt_date(first, weekday=True)}. Опрос игрокам уйдёт "
+                            f"{texts.fmt_date(opens_at, weekday=True)} в {texts.fmt_time(opens_at)} "
+                            f"(за {schedule.open_days_before} {texts.days_word(schedule.open_days_before)}) — "
+                            "тогда же придёт анонс для WhatsApp."
+                        ),
+                        "state": await state_view(bot, session, tg, user),
+                    }
             game, poll_report, hint, announce = await operations.create_game(
                 bot, session, user, body.get("kind", "game"), starts_at, body.get("location"),
                 min_players, schedule.id if schedule else None, body.get("location_url"),

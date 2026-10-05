@@ -71,6 +71,9 @@
   .game-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
   .game-when { font-size: 20px; font-weight: 700; line-height: 1.2; }
   .game-sub { color: var(--hint); margin-top: 2px; }
+  .view-as { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 16px; background: #7b5cff; color: #fff; font-weight: 600; font-size: 15px; }
+  .view-as button { background: rgba(255,255,255,.22); color: #fff; border-radius: 10px; padding: 6px 12px; font-weight: 700; }
   .place-link { display: block; margin-top: 4px; color: var(--text); font-size: 16px; text-align: left; }
   .place-link span { color: var(--link); font-weight: 600; }
   .gather { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; font-size: 14px;
@@ -218,7 +221,18 @@ if (!inTg) {
 }
 function webLogoutLocal() { try { localStorage.removeItem(WEB_KEY); } catch (e) {} location.reload(); }
 
-const S = { data: null, tab: "games", stats: null, players: null, playerFilter: null, sheet: null, open: {} };
+const S = { data: null, tab: "games", stats: null, players: null, playerFilter: null, sheet: null, open: {}, viewAs: null };
+const VIEW_KEY = "fb_view_as";
+try { S.viewAs = sessionStorage.getItem(VIEW_KEY) || null; } catch (e) {}
+const VIEW_TITLES = { admin: "админ (выданные права)", player: "игрок", staff: "тренер" };
+async function setViewAs(role) {
+  S.viewAs = role;
+  try { role ? sessionStorage.setItem(VIEW_KEY, role) : sessionStorage.removeItem(VIEW_KEY); } catch (e) {}
+  S.open = {}; S.players = null; S.stats = null;
+  if (role !== "admin" && S.tab === "players") S.tab = "games";
+  window.scrollTo(0, 0);
+  await api("state", {}, { quiet: true }); render();
+}
 const RSVP = { yes: ["✅", "Буду"], maybe: ["🤔", "Не знаю"], no: ["❌", "Не буду"] };
 const COLORS = ["#e17076", "#7bc862", "#65aadd", "#a695e7", "#ee7aae", "#6ec9cb", "#faa774", "#5aa0d8"];
 const params = new URLSearchParams(location.search);
@@ -273,7 +287,7 @@ async function api(action, body = {}, { quiet } = {}) {
       headers: inTg
         ? { "Content-Type": "application/json", "X-Telegram-Init-Data": tg.initData }
         : { "Content-Type": "application/json", "X-Web-Token": webKey || "" },
-      body: JSON.stringify({ action, ...body }),
+      body: JSON.stringify({ action, ...(S.viewAs ? { view_as: S.viewAs } : {}), ...body }),
     });
     const json = await res.json().catch(() => ({ ok: false, error: "Сервер не ответил" }));
     if (!json.ok) {
@@ -310,6 +324,8 @@ function screen() {
   document.body.classList.toggle("has-fab", S.tab === "games" && d.is_admin);
   const body = { games: gamesTab, stats: statsTab, players: playersTab, profile: profileTab }[S.tab]();
   return h("div", {},
+    d.view_as ? h("div", { class: "view-as" }, `👁 Вы смотрите как ${VIEW_TITLES[d.view_as]}`,
+      h("button", { onclick: () => setViewAs(null) }, "Выйти")) : null,
     h("div", { class: "wrap" }, body),
     S.tab === "games" && d.is_admin ? h("button", { class: "btn fab", onclick: () => openSheet({ type: "create" }) }, "＋ Новая игра") : null,
     h("nav", { class: "tabs" }, tabs.map(([id, e, label]) =>
@@ -588,6 +604,11 @@ function profileTab() {
           onclick: async () => { haptic(); const r = await api("profile", { car: !u.car }); if (r) render(); } }))),
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
       h("div", { class: "small muted", style: "margin-top:4px" }, "За неответ на опрос или неявку после «Буду». Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
+    S.data.real_owner ? h("div", { class: "card" },
+      h("div", { style: "font-weight:600" }, "👁 Посмотреть как…"),
+      h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Приложение глазами другой роли — данные настоящие, меняются только права. Ваши ответы «Буду/Не буду» сохраняются как обычно."),
+      h("div", { class: "seg" }, [[null, "Я"], ["admin", "Админ"], ["player", "Игрок"], ["staff", "Тренер"]].map(([id, label]) =>
+        h("button", { class: (S.data.view_as || null) === id ? "on" : "", onclick: () => setViewAs(id) }, label)))) : null,
     S.data.is_admin ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: openDuties }, "⚙️ Обязанности: что, когда, нужна ли машина") : null,
     S.data.is_admin ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
       const r = await api("team_invite"); if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: "Инструкция для команды" }); } },
@@ -777,6 +798,16 @@ function createSheet() {
   const label = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   const places = S.data.places || [...new Set(S.data.games.map((g) => g.location).filter(Boolean))].map((name) => ({ name, url: null }));
   const ready = st.date && st.minutes !== null;
+  // Повтор: если до ближайшей тренировки больше «за сколько дней открывать опрос» — опрос уйдёт позже.
+  let pollLater = null;
+  if (!ed && st.repeat && ready) {
+    const [y, m, dd] = st.date.split("-").map(Number);
+    const wd = new Date(y, m - 1, dd).getDay();
+    const occ = new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((wd - now.getDay() + 7) % 7), 0, st.minutes);
+    if (occ <= now) occ.setDate(occ.getDate() + 7);
+    const opens = new Date(occ); opens.setDate(opens.getDate() - st.openDays);
+    if (now < opens) pollLater = opens.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" }) + " в " + label(st.minutes);
+  }
   return h("div", {},
     h("h3", {}, ed ? "Изменить игру" : "Новая игра"),
     h("div", { class: "label" }, "Что"),
@@ -821,15 +852,19 @@ function createSheet() {
           ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, min_players: st.min })
           : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url,
               min_players: st.min, repeat: st.repeat, open_days_before: st.openDays });
-        if (r) { haptic("ok"); S.sheet = { type: "created", edited: !!ed, note: r.note, wa: r.whatsapp }; render(); } else e.target.disabled = false;
-      } }, ready ? `${ed ? "Сохранить" : "Создать"}: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}` : "Выберите день и время"),
+        if (r) { haptic("ok"); S.sheet = { type: "created", edited: !!ed, scheduled: !!r.scheduled, note: r.note || r.message, wa: r.whatsapp }; render(); } else e.target.disabled = false;
+      } }, ready ? (pollLater ? "Сохранить расписание" : `${ed ? "Сохранить" : "Создать"}: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}`) : "Выберите день и время"),
     h("p", { class: "muted small", style: "margin:8px 4px 0" }, ed
       ? "Всем, кто отметился, бот напишет, что изменилось. Текст для WhatsApp — на следующем шаге."
+      : pollLater ? `🔁 Сейчас ничего не уйдёт: опрос игрокам бот пришлёт ${pollLater}.`
       : "Игрокам придёт опрос в Telegram. Анонс для WhatsApp — на следующем шаге."));
 }
 
 function createdSheet() {
   const s = S.sheet;
+  if (s.scheduled) return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, "🔁"), h("h3", {}, "Расписание сохранено")),
+    h("div", { class: "card small", style: "white-space:pre-line" }, s.note || ""),
+    h("button", { class: "btn secondary", style: "margin-top:8px", onclick: closeSheet }, "Готово"));
   return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, "✅"), h("h3", {}, s.edited ? "Изменения сохранены" : "Игра создана")),
     h("div", { class: "card small", style: "white-space:pre-line" }, s.note || ""),
     h("button", { class: "btn", onclick: () => openLink(s.wa.url) }, s.edited ? "📤 Сообщить в WhatsApp" : "📤 Отправить анонс в WhatsApp"),

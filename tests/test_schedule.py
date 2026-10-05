@@ -284,3 +284,20 @@ async def test_schedule_edit_day_time_place(team):  # noqa: F811
     x = res["state"]["schedules"][0]
     assert x["weekday"] == 4 and x["time"] == "19:30" and x["location"] == "Жас Оркен"
     assert x["every_label"] == "каждую пятницу" and "каждую пятницу в 19:30" in res["note"]
+
+
+async def test_repeat_far_away_waits_for_poll_window(team):  # noqa: F811
+    """Создали в понедельник тренировку на пятницу (опрос за 2 дня) — опрос уйдёт в среду, а не сразу."""
+    fake = team  # noqa: F811
+    friday = config.now() + timedelta(days=4)
+    before = len(fake.sent(1))
+    status, res = await api(ADMIN, "create_game", date=friday.date().isoformat(), minutes=21 * 60 + 30,
+                            kind="training", location="Арена", repeat=True, open_days_before=2)
+    assert status == 200, res
+    assert res["scheduled"] is True and "Опрос игрокам уйдёт" in res["message"] and "21:30" in res["message"]
+    assert res["state"]["games"] == [] and len(res["state"]["schedules"]) == 1
+    assert not any("Открыт сбор" in m.text for m in fake.sent(1)[before:])
+    async with webhook._sessionmaker() as s:
+        assert await svc.due_schedule_games(s, config.now()) == []
+        due = await svc.due_schedule_games(s, config.now() + timedelta(days=2, hours=1))
+        assert len(due) == 1 and due[0][1].weekday() == friday.weekday()
