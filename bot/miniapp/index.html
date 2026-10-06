@@ -1344,7 +1344,8 @@ async function pushDisable() {
 }
 function pushCard() {
   if (!S.data.web) return null;
-  if (!pushSupported) return h("div", { class: "card small muted" }, "🔕 Этот браузер не умеет уведомления. Откройте сайт в Chrome или Safari.");
+  if (isIOS && standalone && !pushSupported) return h("div", { class: "card small muted" }, "🔕 Уведомления на iPhone работают с iOS 16.4. Обновите iPhone: Настройки → Основные → Обновление ПО.");
+  if (!pushSupported && !isIOS) return h("div", { class: "card small muted" }, "🔕 Этот браузер не умеет уведомления. Откройте сайт в Chrome.");
   if (!pushPossible) return h("div", { class: "card" }, h("div", { style: "font-weight:700" }, "🔔 Уведомления на iPhone"),
     h("div", { class: "small muted", style: "margin-top:4px" }, "На iPhone уведомления работают, только когда сайт сохранён на экран «Домой» (iOS 16.4 и новее). Сохраните его, откройте с иконки и включите уведомления здесь."),
     h("button", { class: "btn secondary", style: "margin-top:10px", onclick: () => openSheet({ type: "save" }) }, "📌 Как сохранить"));
