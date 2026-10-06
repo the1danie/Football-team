@@ -93,8 +93,11 @@ async def send_poll_invites(bot: Bot, session: AsyncSession, game: Game, skip: U
     for user in await svc.roster(session):
         if skip is not None and user.id == skip.id:
             continue
-        if user.is_manual:
-            manual += 1
+        if user.is_manual:  # без Telegram: дойдёт, только если включил уведомления на сайте
+            if await notifier.send_dm(bot, user, text):
+                sent += 1
+            else:
+                manual += 1
             continue
         markup = keyboards.with_web_button(keyboards.with_app_button(keyboards.rsvp(game), game.id), user)
         if await notifier.send_dm(bot, user, text, markup):

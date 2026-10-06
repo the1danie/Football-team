@@ -428,7 +428,13 @@ function gamesTab() {
 
 // ---------------------------------------------------------------- сайт: сохранить на телефон
 function saveBanner() {
-  if (!S.data.web || standalone) return null;
+  if (!S.data.web) return null;
+  if (pushPossible) { pushCheck(); if (S.push && !S.push.on) return h("div", { class: "card row", style: "background:var(--accent-soft)" },
+    h("div", { style: "font-size:30px" }, "🔔"),
+    h("div", { class: "grow" }, h("div", { style: "font-weight:700" }, "Включите уведомления"),
+      h("div", { class: "small muted" }, "Опрос откроется — телефон сразу сообщит. Без минусов за пропуск.")),
+    h("button", { class: "btn small", onclick: pushEnable }, "Включить")); }
+  if (standalone) return null;
   let closed = false;
   try { closed = localStorage.getItem("fb_save_banner") === "closed"; } catch (e) {}
   if (closed) return null;
@@ -468,6 +474,7 @@ function saveSheet() {
       h("div", { class: "btns" },
         h("button", { class: "btn secondary", onclick: copy }, "📋 Скопировать"),
         h("button", { class: "btn secondary", onclick: () => openLink("https://wa.me/?text=" + encodeURIComponent("Мой вход в бот команды (не пересылать): " + myLink())) }, "💬 Себе в WhatsApp"))),
+    ios ? h("p", { class: "small muted", style: "margin:4px 2px" }, "🔔 После этого откройте сайт с иконки → «Профиль» → включите уведомления.") : null,
     h("p", { class: "small muted", style: "margin:4px 2px" }, "⚠️ Ссылка и иконка личные: по ним отмечаются от вашего имени. Не отправляйте их в общий чат."));
 }
 
@@ -783,6 +790,7 @@ function profileTab() {
     S.data.is_admin ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
       const r = await api("team_invite"); if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: "Инструкция для команды" }); } },
       "📤 Инструкция для команды (WhatsApp)") : null,
+    pushCard(),
     S.data.web ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openSheet({ type: "save" }) }, "📌 Сохранить на телефон / в закладки") : null,
     S.data.web
       ? h("div", { class: "btns", style: "margin:0 0 12px" },
@@ -1222,6 +1230,11 @@ function playerSheet() {
       const r = await api("player_web_link", { user_id: p.id });
       if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: `Ссылка на сайт для ${p.name} (лично, не в группу)` }); } },
       "🌐 Отправить ему ссылку на сайт") : null,
+    p.status === "approved" ? h("button", { class: "btn secondary", style: "margin-top:8px", onclick: async () => {
+      if (!(await confirmBox(`Выдать ${p.name} новый PIN для входа на сайт? Старый PIN перестанет работать.`))) return;
+      const r = await api("player_pin", { user_id: p.id });
+      if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: `PIN ${p.name}: ${r.pin} (отправьте лично)` }); } },
+      "🔢 Выдать PIN для входа на сайт") : null,
     h("div", { class: "label" }, "Имя"),
     h("div", { class: "row" }, h("input", { class: "field grow", id: "pname", value: p.name, maxlength: 64 }),
       h("button", { class: "btn small", onclick: () => playerOp(p, "rename", { name: document.getElementById("pname").value }) }, "Сохранить")),
@@ -1251,10 +1264,87 @@ function renameSheet() {
       if (r) { haptic("ok"); closeSheet(); } } }, "Сохранить"));
 }
 
+// ---------------------------------------------------------------- вход без Telegram: имя + PIN
+function pinLoginScreen() {
+  const err = h("div", { class: "small", style: "color:var(--danger);min-height:20px;margin:8px 2px 0" }, S.authError || "");
+  const name = h("input", { class: "field", placeholder: "Имя, как в команде", autocomplete: "username", maxlength: 64 });
+  const pin = h("input", { class: "field", placeholder: "PIN — 4 цифры", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 8 });
+  const go = h("button", { class: "btn", style: "margin-top:12px", onclick: async () => {
+    go.disabled = true; err.textContent = "";
+    try {
+      const res = await fetch("/api/miniapp", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pin_login", name: name.value, pin: pin.value }) });
+      const json = await res.json().catch(() => ({ ok: false, error: "Сервер не ответил" }));
+      if (json.ok) { try { localStorage.setItem(WEB_KEY, json.key); } catch (e) {} location.href = "/app?key=" + encodeURIComponent(json.key); return; }
+      err.textContent = json.error || "Не получилось войти";
+    } catch (e) { err.textContent = "Нет связи с сервером"; }
+    go.disabled = false;
+  } }, "Войти");
+  return h("div", { class: "wrap" }, h("div", { class: "empty", style: "padding:24px 8px 8px" }, h("div", { class: "big" }, "⚽"), h("h2", {}, "Вход в бот команды")),
+    h("div", { class: "card" },
+      h("div", { style: "font-weight:700" }, "Войти по имени и PIN"),
+      h("div", { class: "small muted", style: "margin:4px 0 10px" }, "PIN выдаёт админ команды — попросите в WhatsApp."),
+      name, h("div", { style: "height:8px" }), pin, err, go),
+    h("div", { class: "card small muted" }, "Есть личная ссылка от админа или от бота (/web в Telegram)? Просто откройте её — вход запомнится."));
+}
+
+// ---------------------------------------------------------------- уведомления на сайте (Web Push)
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent || "") || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const pushSupported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const pushPossible = pushSupported && (!isIOS || standalone);
+async function pushCheck() {
+  if (!pushPossible || S.push) return;
+  S.push = { on: false };
+  try {
+    const reg = await navigator.serviceWorker.getRegistration("/");
+    const sub = reg && (await reg.pushManager.getSubscription());
+    S.push = { on: !!sub && Notification.permission === "granted", endpoint: sub && sub.endpoint };
+  } catch (e) {}
+  render();
+}
+function b64ToBytes(b64) {
+  const s = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+async function pushEnable() {
+  try {
+    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.ready;
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { toast("Уведомления запрещены — разрешите их в настройках браузера для этого сайта"); return; }
+    const k = await api("push_key", {}, { quiet: true });
+    if (!k) { toast("Не получилось включить"); return; }
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(k.key) });
+    const r = await api("push_subscribe", { subscription: sub.toJSON() });
+    if (r) { S.push = { on: true, endpoint: sub.endpoint }; haptic("ok"); render(); }
+  } catch (e) { toast("Не получилось включить уведомления: " + (e.message || e)); }
+}
+async function pushDisable() {
+  try {
+    const reg = await navigator.serviceWorker.getRegistration("/");
+    const sub = reg && (await reg.pushManager.getSubscription());
+    if (sub) { await api("push_unsubscribe", { endpoint: sub.endpoint }, { quiet: true }); await sub.unsubscribe(); }
+  } catch (e) {}
+  S.push = { on: false }; toast("Уведомления выключены"); render();
+}
+function pushCard() {
+  if (!S.data.web) return null;
+  if (!pushSupported) return h("div", { class: "card small muted" }, "🔕 Этот браузер не умеет уведомления. Откройте сайт в Chrome или Safari.");
+  if (!pushPossible) return h("div", { class: "card" }, h("div", { style: "font-weight:700" }, "🔔 Уведомления на iPhone"),
+    h("div", { class: "small muted", style: "margin-top:4px" }, "На iPhone уведомления работают, только когда сайт сохранён на экран «Домой» (iOS 16.4 и новее). Сохраните его, откройте с иконки и включите уведомления здесь."),
+    h("button", { class: "btn secondary", style: "margin-top:10px", onclick: () => openSheet({ type: "save" }) }, "📌 Как сохранить"));
+  pushCheck();
+  return h("div", { class: "card" },
+    h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", { style: "font-weight:700" }, "🔔 Уведомления"),
+      h("div", { class: "small muted" }, S.push && S.push.on ? "Включены: опросы, напоминания, обязанности — как в Telegram." : "Опросы на игры, напоминания и обязанности — чтобы не получать минусы за пропущенный опрос.")),
+      h("button", { class: "switch" + (S.push && S.push.on ? " on" : ""), role: "switch", "aria-checked": S.push && S.push.on ? "true" : "false",
+        onclick: () => (S.push && S.push.on ? pushDisable() : pushEnable()) })));
+}
+
 // ---------------------------------------------------------------- старт
 (async function start() {
-  const loginHelp = () => info("⚽", "Вход по личной ссылке",
-    (S.authError ? S.authError + " " : "") + "Откройте чат с ботом команды в Telegram и отправьте /web — бот пришлёт личную ссылку. Откройте её в этом браузере, и он запомнит вход.");
+  const loginHelp = () => pinLoginScreen();
   if (!inTg && !webKey) { document.getElementById("app").replaceChildren(loginHelp()); return; }
   const r = await api("state", {}, { quiet: !inTg });
   if (!r) {

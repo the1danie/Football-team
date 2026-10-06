@@ -23,6 +23,10 @@
     {
       "source": "/app",
       "destination": "/api/app"
+    },
+    {
+      "source": "/sw.js",
+      "destination": "/api/app?asset=sw.js"
     }
   ]
 }

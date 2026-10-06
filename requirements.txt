@@ -4,3 +4,4 @@ asyncpg>=0.29
 aiosqlite>=0.20
 python-dotenv>=1.0
 tzdata
+cryptography>=42

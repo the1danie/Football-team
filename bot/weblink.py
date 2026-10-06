@@ -60,3 +60,17 @@ def parse_link_payload(payload: str) -> int | None:
         return int(raw_id)
     except ValueError:
         return None
+
+
+PIN_MAX_FAILS = 5
+PIN_LOCK_MINUTES = 15
+
+
+def pin_hash(user_id: int, pin: str) -> str:
+    return hmac.new(_web_key(config.bot_token), f"pin:{user_id}:{pin}".encode(), hashlib.sha256).hexdigest()
+
+
+def new_pin() -> str:
+    import secrets  # noqa: PLC0415
+
+    return f"{secrets.randbelow(10000):04d}"

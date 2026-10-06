@@ -81,6 +81,10 @@ class User(Base):
     staff_title: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Версия личных веб-ссылок: увеличение делает все выданные ссылки недействительными.
     web_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Вход на сайт по имени и PIN (выдаёт админ): хэш PIN, неудачные попытки, блокировка.
+    pin_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pin_fails: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    pin_locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     @property
@@ -295,3 +299,16 @@ class AuditLog(Base):
     actor_name: Mapped[str] = mapped_column(String(64))
     text: Mapped[str] = mapped_column(String(500))
     game_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class PushSubscription(Base):
+    """Подписка браузера на уведомления (Web Push) — для тех, кто пользуется сайтом без Telegram."""
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    endpoint: Mapped[str] = mapped_column(String(1000), unique=True)
+    p256dh: Mapped[str] = mapped_column(String(200))
+    auth: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

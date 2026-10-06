@@ -115,6 +115,36 @@ async def audit_actors(session: AsyncSession) -> list[tuple[int, str, int]]:
     return sorted(rows.all(), key=lambda r: -r[2])
 
 
+async def push_count(session: AsyncSession, user_id: int) -> int:
+    from bot.models import PushSubscription
+
+    return int(await session.scalar(
+        select(func.count()).select_from(PushSubscription).where(PushSubscription.user_id == user_id)
+    ) or 0)
+
+
+async def save_push(session: AsyncSession, user: User, endpoint: str, p256dh: str, auth: str) -> None:
+    from bot.models import PushSubscription
+
+    sub = await session.scalar(select(PushSubscription).where(PushSubscription.endpoint == endpoint))
+    if sub is None:
+        sub = PushSubscription(endpoint=endpoint)
+        session.add(sub)
+    sub.user_id, sub.p256dh, sub.auth = user.id, p256dh, auth  # тот же браузер мог войти под другим игроком
+    await session.flush()
+
+
+async def delete_push(session: AsyncSession, user: User, endpoint: str) -> None:
+    from bot.models import PushSubscription
+
+    sub = await session.scalar(
+        select(PushSubscription).where(PushSubscription.endpoint == endpoint, PushSubscription.user_id == user.id)
+    )
+    if sub is not None:
+        await session.delete(sub)
+        await session.flush()
+
+
 async def name_from_telegram(session: AsyncSession, tg_user) -> str:
     """Имя для команды из профиля Telegram: имя, а если такое уже есть у другого игрока — имя и фамилия."""
     existing = await get_user_by_tg(session, tg_user.id)

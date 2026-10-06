@@ -58,6 +58,7 @@ async def _ensure_ready() -> tuple[async_sessionmaker[AsyncSession], Dispatcher]
 class Request:
     def __init__(self, scope: dict, body: bytes):
         self.method = scope.get("method", "GET")
+        self.path = scope.get("path", "/")
         self.headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
         self.query = {k: v[0] for k, v in parse_qs(scope.get("query_string", b"").decode()).items()}
         self.body = body
@@ -339,6 +340,9 @@ async def _team_name() -> str:
 
 async def handle_app_page(request: Request) -> tuple[int, Any]:
     asset = request.query.get("asset", "")
+    if asset == "sw.js" or request.path.endswith("/sw.js"):
+        raw = Raw((Path(__file__).parent / "miniapp" / "sw.js").read_bytes(), "application/javascript; charset=utf-8", "no-cache")
+        return 200, raw
     if asset in ICONS:
         return 200, Raw((Path(__file__).parent / "miniapp" / asset).read_bytes(), "image/png")
     if "manifest" in request.query:
@@ -360,6 +364,20 @@ async def handle_app_page(request: Request) -> tuple[int, Any]:
 async def handle_miniapp_api(request: Request) -> tuple[int, Any]:
     if request.method != "POST":
         return 405, {"ok": False, "error": "POST only"}
+    if b'"pin_login"' in (request.body or b""):  # вход по имени и PIN — без Telegram и без ссылки
+        try:
+            body = json.loads(request.body or b"{}")
+        except ValueError:
+            return 400, {"ok": False, "error": "Неверный запрос."}
+        if body.get("action") == "pin_login":
+            sessionmaker, _ = await _ensure_ready()
+            async with sessionmaker() as session:
+                try:
+                    key = await miniapp_api.pin_login(session, str(body.get("name", "")), str(body.get("pin", "")))
+                except miniapp_api.ApiError as e:
+                    return e.status, {"ok": False, "error": str(e)}
+                await session.commit()
+            return 200, {"ok": True, "key": key}
     tg = verify_init_data(request.headers.get("x-telegram-init-data", ""), config.bot_token)
     if tg is None:  # браузер: вход по личной ссылке из бота
         tg = miniapp_api.verify_web_token(request.headers.get("x-web-token", ""), config.bot_token)

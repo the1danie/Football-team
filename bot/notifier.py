@@ -5,7 +5,7 @@ import logging
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import InlineKeyboardMarkup
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_object_session
 
 from bot import keyboards, texts
 from bot.config import config
@@ -25,15 +25,26 @@ async def group_chat_id(session: AsyncSession) -> int | None:
 
 
 async def send_dm(bot: Bot, user: User, text: str, reply_markup: InlineKeyboardMarkup | None = None) -> bool:
-    """Личное сообщение. False — пользователь ещё не писал боту или заблокировал его."""
-    if user.telegram_id < 0:  # добавлен вручную, Telegram ещё не привязан
-        return False
-    try:
-        await bot.send_message(user.telegram_id, text, reply_markup=reply_markup)
-        return True
-    except (TelegramForbiddenError, TelegramBadRequest) as e:
-        log.info("DM to %s failed: %s", user.telegram_id, e)
-        return False
+    """Личное сообщение в Telegram и уведомление на сайт (если человек включил их в браузере).
+
+    False — не дошло никуда: не писал боту / заблокировал, и уведомления на сайте не включены.
+    """
+    delivered = False
+    if user.telegram_id > 0:  # < 0 — добавлен вручную, Telegram ещё не привязан
+        try:
+            await bot.send_message(user.telegram_id, text, reply_markup=reply_markup)
+            delivered = True
+        except (TelegramForbiddenError, TelegramBadRequest) as e:
+            log.info("DM to %s failed: %s", user.telegram_id, e)
+    session = async_object_session(user)
+    if session is not None:
+        from bot import webpush  # noqa: PLC0415
+
+        try:
+            delivered = await webpush.send_to_user(session, user, text) or delivered
+        except Exception:  # noqa: BLE001 — уведомление на сайт не должно ломать основное действие
+            log.exception("web push failed")
+    return delivered
 
 
 async def send_raw(bot: Bot, chat_id: int, text: str, reply_markup=None) -> bool:

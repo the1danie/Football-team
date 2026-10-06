@@ -276,6 +276,35 @@ async def players_view(session: AsyncSession) -> dict:
     }
 
 
+# ----------------------------------------------------------------- вход по имени и PIN
+
+
+async def pin_login(session: AsyncSession, name: str, pin: str) -> str:
+    """Вход на сайт без Telegram и без ссылки: имя + PIN от админа. Возвращает личный ключ."""
+    from bot.weblink import PIN_LOCK_MINUTES, PIN_MAX_FAILS, pin_hash
+
+    name, pin = (name or "").strip().casefold(), (pin or "").strip()
+    wrong = ApiError("Имя или PIN не подходят. PIN выдаёт админ команды.", 403)
+    if not name or not pin.isdigit():
+        raise wrong
+    matches = [u for u in await svc.all_users(session)
+               if u.pin_hash and u.status == UserStatus.APPROVED and u.name.strip().casefold() == name]
+    if len(matches) != 1:
+        raise wrong
+    user = matches[0]
+    now = datetime.utcnow()
+    if user.pin_locked_until and user.pin_locked_until > now:
+        raise ApiError(f"Слишком много попыток. Попробуйте через {PIN_LOCK_MINUTES} минут или попросите у админа новый PIN.", 429)
+    if not hmac.compare_digest(user.pin_hash, pin_hash(user.id, pin)):
+        user.pin_fails = (user.pin_fails or 0) + 1
+        if user.pin_fails >= PIN_MAX_FAILS:
+            user.pin_fails, user.pin_locked_until = 0, now + timedelta(minutes=PIN_LOCK_MINUTES)
+        await session.commit()  # счётчик попыток сохраняем, даже когда отвечаем ошибкой
+        raise wrong
+    user.pin_fails, user.pin_locked_until = 0, None
+    return make_web_token(user.telegram_id, user.web_version or 0, config.bot_token)
+
+
 # ----------------------------------------------------------------- действия
 
 
@@ -288,7 +317,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link",
+    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin",
 }
 
 
@@ -623,6 +652,36 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             text = whatsapp.site_invite(target.name, link)
             await audit.record(session, f"🌐 Выдал ссылку на сайт: {target.name}")
             return {"text": text, "url": whatsapp.share_url(text)}
+        elif action == "player_pin":
+            from bot.weblink import new_pin, pin_hash
+
+            target = await _user(session, body.get("user_id"))
+            if target.status != UserStatus.APPROVED:
+                raise ApiError("Сначала примите игрока в команду.")
+            pin = new_pin()
+            target.pin_hash, target.pin_fails, target.pin_locked_until = pin_hash(target.id, pin), 0, None
+            await audit.record(session, f"🔢 Выдал PIN для входа на сайт: {target.name}")
+            text = whatsapp.pin_invite(target.name, pin, config.public_url and f"{config.public_url}/app")
+            return {"pin": pin, "text": text, "url": whatsapp.share_url(text)}
+        elif action == "push_key":
+            from bot import webpush
+
+            n = await svc.push_count(session, user.id)
+            return {"key": await webpush.public_key(session), "subscribed": n}
+        elif action == "push_subscribe":
+            sub = body.get("subscription") or {}
+            keys = sub.get("keys") or {}
+            endpoint = str(sub.get("endpoint") or "")
+            if not endpoint.startswith("https://") or not keys.get("p256dh") or not keys.get("auth"):
+                raise ApiError("Браузер не дал подписку на уведомления.")
+            await svc.save_push(session, user, endpoint[:1000], str(keys["p256dh"])[:200], str(keys["auth"])[:100])
+            from bot import webpush
+
+            await webpush.send_to_user(session, user, "🔔 Уведомления включены\nСюда придут опросы на игры, напоминания и обязанности.")
+            note = "🔔 Уведомления включены"
+        elif action == "push_unsubscribe":
+            await svc.delete_push(session, user, str(body.get("endpoint") or ""))
+            note = "Уведомления выключены"
         elif action == "rsvp_for":
             target = await _user(session, body.get("user_id"))
             game = await _game(session, body)
