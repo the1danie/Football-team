@@ -663,6 +663,12 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             await audit.record(session, f"🔢 Выдал PIN для входа на сайт: {target.name}")
             text = whatsapp.pin_invite(target.name, pin, config.public_url and f"{config.public_url}/app")
             return {"pin": pin, "text": text, "url": whatsapp.share_url(text)}
+        elif action == "my_pin":
+            from bot.weblink import new_pin, pin_hash
+
+            pin = new_pin()
+            user.pin_hash, user.pin_fails, user.pin_locked_until = pin_hash(user.id, pin), 0, None
+            return {"pin": pin, "name": user.name, "site": config.public_url and f"{config.public_url}/app"}
         elif action == "push_key":
             from bot import webpush
 

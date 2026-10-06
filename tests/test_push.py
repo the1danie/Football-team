@@ -128,3 +128,11 @@ async def test_pin_login_and_lockout(team):  # noqa: F811
     _, res = await api(ADMIN, "player_pin", user_id=pid)  # админ выдал новый — блок снят
     assert (await login("Паша", res["pin"]))[0] == 200
     assert (await login("Паша", pin))[0] == 403 or res["pin"] == pin  # старый PIN больше не работает
+
+
+async def test_own_pin_from_profile(team):  # noqa: F811
+    _, res = await api(ADMIN, "my_pin")
+    assert len(res["pin"]) == 4 and res["name"] == "Даниял"
+    status, body = await call(webhook.miniapp_api_app, "POST", headers={"Content-Type": "application/json"},
+                              body=json.dumps({"action": "pin_login", "name": "Даниял", "pin": res["pin"]}).encode())
+    assert status == 200 and body["key"]

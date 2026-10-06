@@ -791,6 +791,10 @@ function profileTab() {
       const r = await api("team_invite"); if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: "Инструкция для команды" }); } },
       "📤 Инструкция для команды (WhatsApp)") : null,
     pushCard(),
+    h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
+      if (!(await confirmBox("Создать новый PIN для входа на сайт? Старый перестанет работать."))) return;
+      const r = await api("my_pin");
+      if (r) openSheet({ type: "myPin", ...r }); } }, "🔢 Мой PIN для входа на сайт"),
     S.data.web ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openSheet({ type: "save" }) }, "📌 Сохранить на телефон / в закладки") : null,
     S.data.web
       ? h("div", { class: "btns", style: "margin:0 0 12px" },
@@ -950,7 +954,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet, save: saveSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;
@@ -1130,6 +1134,16 @@ function auditSheet() {
         onclick: () => openAudit(a.id) }, a.name + (a.count ? ` · ${a.count}` : "")))) : null,
     s.entries.length ? h("div", {}, items) : h("div", { class: "card empty muted" }, "Пока пусто."),
     s.more ? h("button", { class: "btn secondary", style: "margin-top:10px", onclick: () => openAudit(undefined, true) }, "Показать ещё") : null);
+}
+
+function myPinSheet() {
+  const s = S.sheet;
+  return h("div", {}, h("h3", {}, "🔢 Ваш PIN"),
+    h("div", { class: "card", style: "text-align:center" },
+      h("div", { class: "small muted" }, "Имя"), h("div", { style: "font-size:22px;font-weight:700;margin-bottom:10px" }, s.name),
+      h("div", { class: "small muted" }, "PIN"), h("div", { style: "font-size:40px;font-weight:800;letter-spacing:8px" }, s.pin)),
+    h("p", { class: "small muted", style: "margin:4px 2px 12px" }, `Запишите. Вход без Telegram и без ссылки: откройте ${s.site || "сайт команды"} → «Войти по имени и PIN». PIN никому не показывайте.`),
+    h("button", { class: "btn secondary", onclick: closeSheet }, "Готово"));
 }
 
 function createdSheet() {
