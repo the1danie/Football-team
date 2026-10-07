@@ -77,3 +77,19 @@ async def test_audit_hidden_in_view_as_preview(team):  # noqa: F811
     assert st["state"]["is_owner"] is False and st["state"]["real_owner"] is True
     assert (await api(OWNER, "audit", view_as="player"))[0] == 403
     assert (await api(OWNER, "audit"))[0] == 200
+
+
+async def test_second_admin_cannot_approve_again(team):  # noqa: F811
+    marat = tg_user(3, "Марат")
+    marat_id = await _member(marat)
+    await api(OWNER, "player", user_id=marat_id, op="admin_on")
+    rustam = tg_user(7, "Рустам")
+    await api(rustam, "register", car=False)
+    _, pl = await api(OWNER, "players")
+    rid = next(p["id"] for p in pl["players"] if p["name"] == "Рустам")
+    status, _ = await api(marat, "player", user_id=rid, op="approve")
+    assert status == 200
+    status, body = await api(OWNER, "player", user_id=rid, op="approve")
+    assert status == 400 and body["error"] == "Рустам уже в команде — принял Марат."
+    _, log = await api(OWNER, "audit")
+    assert sum("Рустам: принял в команду" in e["text"] for e in log["entries"]) == 1

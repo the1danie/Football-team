@@ -426,6 +426,11 @@ async def player_action(cb: CallbackQuery, session: AsyncSession, bot: Bot, stat
             )
         except operations.OpError as e:
             await cb.answer(str(e), show_alert=True)
+            text, markup = await player_card(session, user, cb.from_user.id)  # показать актуальное состояние
+            try:
+                await cb.message.edit_text(text, reply_markup=markup)
+            except Exception:  # noqa: BLE001 — сообщение не изменилось
+                pass
             return
     text, markup = await player_card(session, user, cb.from_user.id)
     await cb.message.edit_text(text, reply_markup=markup)

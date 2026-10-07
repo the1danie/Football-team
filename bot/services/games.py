@@ -105,6 +105,15 @@ async def audit_entries(session: AsyncSession, actor_id: int | None = None, limi
     return list((await session.scalars(q.offset(offset).limit(limit))).all())
 
 
+async def last_audit_actor(session: AsyncSession, text_prefix: str) -> str | None:
+    from bot.models import AuditLog
+
+    return await session.scalar(
+        select(AuditLog.actor_name).where(AuditLog.text.startswith(text_prefix))
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(1)
+    )
+
+
 async def audit_actors(session: AsyncSession) -> list[tuple[int, str, int]]:
     from bot.models import AuditLog
 

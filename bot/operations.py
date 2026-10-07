@@ -545,6 +545,13 @@ async def player_action(
         raise OpError("Главного админа нельзя удалить или лишить прав (он задан в настройках ADMIN_IDS).")
 
     old_name = user.name
+    # Уведомление о заявке приходит всем админам — второй и третий нажимают уже после первого.
+    if action == "approve" and user.status == UserStatus.APPROVED:
+        who = await svc.last_audit_actor(session, f"👤 {user.name}: принял в команду")
+        raise OpError(f"{user.name} уже в команде" + (f" — принял {who}" if who else "") + ".")
+    if action == "block" and user.status == UserStatus.BLOCKED:
+        who = await svc.last_audit_actor(session, f"👤 {user.name}: удалил")
+        raise OpError(f"{user.name} уже удалён / заявка уже отклонена" + (f" — {who}" if who else "") + ".")
     if action in ("admin_on", "admin_off"):
         await audit.record(session, f"👑 {user.name}: {'выдал' if action == 'admin_on' else 'снял'} права админа")
     if action == "admin_on":
