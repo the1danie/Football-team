@@ -93,3 +93,32 @@ async def test_second_admin_cannot_approve_again(team):  # noqa: F811
     assert status == 400 and body["error"] == "Рустам уже в команде — принял Марат."
     _, log = await api(OWNER, "audit")
     assert sum("Рустам: принял в команду" in e["text"] for e in log["entries"]) == 1
+
+
+async def test_only_owner_distributes_and_can_undo(team):  # noqa: F811
+    fake = team  # noqa: F811
+    from bot import webhook
+    from bot.services import games as svc
+
+    marat, pasha = tg_user(3, "Марат"), tg_user(4, "Паша")
+    marat_id = await _member(marat)
+    await _member(pasha)
+    await api(OWNER, "player", user_id=marat_id, op="admin_on")
+    tomorrow = (config.now() + timedelta(days=2)).date().isoformat()
+    _, res = await api(OWNER, "create_game", date=tomorrow, minutes=21 * 60 + 30, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    for u in (OWNER, marat, pasha):
+        await api(u, "rsvp", game_id=gid, status="yes")
+    status, body = await api(marat, "distribute", game_id=gid)
+    assert status == 403 and "только главный админ" in body["error"]
+    _, res = await api(OWNER, "distribute", game_id=gid)  # рано, но главный может
+    assert res["state"]["games"][0]["status"] == "distributed"
+    assert (await api(marat, "undistribute", game_id=gid))[0] == 403
+    _, res = await api(OWNER, "undistribute", game_id=gid)
+    g = res["state"]["games"][0]
+    assert g["status"] == "open" and g["duties"] == [] and "Распределение отменено" in res["note"]
+    assert any("Распределение на" in m.text and "отменено" in m.text for m in fake.sent(4) + fake.sent(3))
+    async with webhook._sessionmaker() as s:
+        assert await svc.active_assignments(s, gid) == []
+    _, log = await api(OWNER, "audit")
+    assert any(e["text"].startswith("↩️ Отменил распределение") for e in log["entries"])
