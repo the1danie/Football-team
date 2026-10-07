@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import actions, audit, keyboards, notifier, operations, texts, whatsapp
 from bot.config import config
+from bot.deadlines import rsvp_deadline
 from bot.middlewares import IsAdmin
 from bot.models import Duty, Game, GameStatus, Rsvp, User
 from bot.players import player_card, players_list
@@ -224,6 +225,12 @@ async def run_action(message: Message, session: AsyncSession, bot: Bot, action: 
         await message.answer(f"{texts.game_header(game)}: игра уже {'отменена' if game.status == GameStatus.CANCELLED else 'завершена'}.")
         return
 
+    if action in ("dist", "redist") and not config.is_owner(message.chat.id):
+        await message.answer(
+            "Обязанности бот распределяет сам при закрытии сбора "
+            f"({texts.until(rsvp_deadline(game), config.now())}). Вручную — только главный админ."
+        )
+        return
     if action == "dist":
         if game.status == GameStatus.DISTRIBUTED:
             await message.answer(
@@ -231,9 +238,9 @@ async def run_action(message: Message, session: AsyncSession, bot: Bot, action: 
                 reply_markup=keyboards.confirm(f"adm:redist:{game.id}", "🔁 Пересчитать"),
             )
             return
-        await message.answer(await actions.distribute_and_announce(bot, session, game))
+        await message.answer(await operations.distribute(bot, session, game))
     elif action == "redist":
-        await message.answer(await actions.distribute_and_announce(bot, session, game))
+        await message.answer(await operations.distribute(bot, session, game))
     elif action == "edit":
         await show_edit(message, session, game)
     elif action == "cancel":
