@@ -317,7 +317,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin",
+    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute",
 }
 
 
@@ -609,8 +609,14 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                 await session.delete(x)
                 note = "Расписание удалено. Уже созданные игры остались."
         elif action == "distribute":
+            if not config.is_owner(tg_id):
+                raise ApiError("Распределяет бот сам при закрытии сбора. Вручную — только главный админ.", 403)
             report = await operations.distribute(bot, session, await _game(session, body))
             note = report.split("\n")[0]
+        elif action == "undistribute":
+            if not config.is_owner(tg_id):
+                raise ApiError("Отменить распределение может только главный админ.", 403)
+            note = await operations.undistribute(bot, session, await _game(session, body))
         elif action == "cancel":
             await operations.cancel_game(bot, session, await _game(session, body), tg_id)
             note = "Игра отменена"

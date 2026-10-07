@@ -243,6 +243,19 @@ async def upcoming_games(session: AsyncSession, now: datetime, grace_hours: floa
     return list(rows.all())
 
 
+async def undistribute(session: AsyncSession, game: Game) -> list[Assignment]:
+    """Отменить распределение: назначения снимаются, игра снова «идёт сбор» — бот распределит в срок."""
+    dropped = await active_assignments(session, game.id)
+    for a in dropped:
+        a.status = AssignmentStatus.CANCELLED
+    await _expire_swaps(session, game.id)
+    game.status = GameStatus.OPEN
+    if game.min_decision == "keep":
+        game.min_decision = None
+    await session.flush()
+    return dropped
+
+
 async def delete_game(session: AsyncSession, game: Game) -> None:
     """Убрать игру из архива (тестовую): обязанности и минусы по ней не считаются.
 

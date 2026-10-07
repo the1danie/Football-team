@@ -307,6 +307,23 @@ async def distribute(bot: Bot, session: AsyncSession, game: Game) -> str:
     return await actions.distribute_and_announce(bot, session, game)
 
 
+async def undistribute(bot: Bot, session: AsyncSession, game: Game) -> str:
+    """Главный админ: вернуть игру к сбору (распределили раньше времени)."""
+    if game.status != GameStatus.DISTRIBUTED:
+        raise OpError("Обязанности ещё не распределены.")
+    if config.now() >= game.starts_at:
+        raise OpError("Игра уже началась — распределение не отменить.")
+    dropped = await svc.undistribute(session, game)
+    await audit.record(session, "↩️ Отменил распределение", game)
+    await notifier.refresh_game(bot, session, game)
+    when = texts.until(rsvp_deadline(game), config.now())
+    for user in {a.user_id: a.user for a in dropped}.values():
+        await notifier.send_dm(
+            bot, user, f"↩️ Распределение на {texts.game_header(game)} отменено. Обязанности распределятся {when}."
+        )
+    return f"↩️ Распределение отменено. Бот распределит обязанности {when}."
+
+
 async def cancel_game(
     bot: Bot, session: AsyncSession, game: Game, admin_chat_id: int | None, reason: str | None = None
 ) -> None:

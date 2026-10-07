@@ -637,7 +637,8 @@ function gameCard(g) {
       h("button", { class: "btn small danger", onclick: () => deleteGame(g) }, "🗑 Удалить")));
   } else if (d.is_admin) {
     add(card, h("div", { class: "admin-bar" },
-      h("button", { class: "btn small secondary", onclick: () => adminDistribute(g) }, g.status === "distributed" ? "🔁 Пересчитать" : "🎯 Распределить"),
+      d.is_owner ? h("button", { class: "btn small secondary", onclick: () => adminDistribute(g) }, g.status === "distributed" ? "🔁 Пересчитать" : "🎯 Распределить") : null,
+      d.is_owner && g.status === "distributed" ? h("button", { class: "btn small secondary", onclick: () => adminUndistribute(g) }, "↩️ Отменить распределение") : null,
       h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp"),
       h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "create", edit: g }) }, "✏️ Изменить"),
       g.attendance_open ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "attendance", game: g }) }, "👥 Кто пришёл") : null,
@@ -653,7 +654,14 @@ async function deleteGame(g) {
   if (r) { haptic("ok"); S.openPast = null; await loadArchive(); }
 }
 
+async function adminUndistribute(g) {
+  if (!(await confirmBox(`Отменить распределение? Назначения снимутся, игра вернётся к сбору, и бот распределит обязанности сам ${g.deadline_at_label}.`))) return;
+  const r = await api("undistribute", { game_id: g.id });
+  if (r) { haptic("ok"); render(); }
+}
+
 async function adminDistribute(g) {
+  if (g.status === "open" && !g.deadline_passed && !(await confirmBox(`Сбор ещё открыт (закроется ${g.deadline_at_label}). Распределить раньше времени? Кто отметится позже, в распределение не попадёт.`))) return;
   if (g.status === "distributed" && !(await confirmBox("Пересчитать обязанности заново? Все получат новые назначения."))) return;
   const r = await api("distribute", { game_id: g.id });
   if (r) { haptic("ok"); render(); }
