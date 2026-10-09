@@ -160,7 +160,10 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
     }
     if is_admin or staff:
         view["no_answer"] = [_user_brief(u) for u in await svc.non_responders(session, game)]
-        view["team_count"] = len(await svc.roster(session))
+        team = await svc.roster(session)
+        view["team_count"] = len(team)
+        if is_admin and game.status == GameStatus.FINISHED:  # исправить «кто что делал» можно любым из команды
+            view["team"] = [_user_brief(u) for u in team]
         if (
             is_admin and now >= deadline and game.penalties_applied and penalties_enabled(game)
             and config.penalty_points > 0

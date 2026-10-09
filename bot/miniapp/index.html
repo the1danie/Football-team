@@ -1217,10 +1217,10 @@ function assignSheet() {
   const past = g.status === "finished";
   // Прошедшая игра: выбрать можно любого — мог взять мячи и тот, кто не отмечался.
   const seen = new Set();
-  const pool = (past ? [...g.participants.yes, ...g.participants.maybe, ...g.participants.no, ...(g.no_answer || [])] : g.participants.yes)
+  const pool = (past ? [...g.participants.yes, ...g.participants.maybe, ...g.participants.no, ...(g.no_answer || []), ...(g.team || [])] : g.participants.yes)
     .filter((u) => !seen.has(u.id) && seen.add(u.id));
   return h("div", {}, h("h3", {}, past ? "✏️ Кто что делал" : "Назначения"),
-    past ? h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Исправление задним числом: рейтинг «Помощь» пересчитается, минус, списанный за обязанность, перейдёт к тому, кто её выполнил. Выбранный отметится как «пришёл». Сообщения игрокам не отправляются.") : null,
+    past ? h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Исправление задним числом: рейтинг «Помощь» пересчитается, минус, списанный за обязанность, перейдёт к тому, кто её выполнил. Выбранный отметится как «пришёл». Сообщения игрокам не отправляются. В списке вся команда — и те, кто пришёл в бота позже. Кого нет — добавьте в «Игроки» → «✍️ Добавить вручную».") : null,
     g.duties.map((x) => h("div", { class: "card" },
       h("div", { class: "row" }, h("span", { style: "font-size:22px" }, x.emoji), h("b", { class: "grow" }, x.name), x.requires_car ? h("span", { class: "chip" }, "нужна 🚗") : null),
       h("select", { class: "field", style: "margin-top:10px", onchange: async (e) => {

@@ -177,3 +177,36 @@ async def test_fix_duty_in_past_game(team):  # noqa: F811
     assert len(fake.sent(4)) == sent_before  # задним числом — без сообщений
     _, log = await api(OWNER, "audit")
     assert any("Исправил задним числом" in e["text"] and "→ Паша" in e["text"] for e in log["entries"])
+
+
+async def test_fix_past_duty_with_player_who_joined_later(team):  # noqa: F811
+    """Дидара не было в боте во время игры — его всё равно можно выбрать в «Кто что делал»."""
+    from datetime import datetime
+
+    from bot import webhook
+    from bot.models import Game, GameStatus
+    from bot.services import games as svc
+
+    day = (config.now() + timedelta(days=1)).date().isoformat()
+    _, res = await api(OWNER, "create_game", date=day, minutes=20 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    await api(OWNER, "rsvp", game_id=gid, status="yes")
+    await api(OWNER, "distribute", game_id=gid)
+    async with webhook._sessionmaker() as s:
+        game = await s.get(Game, gid)
+        game.starts_at = config.now() - timedelta(days=7)
+        game.created_at = datetime.utcnow() - timedelta(days=9)
+        game.status = GameStatus.FINISHED
+        await s.commit()
+    didar_id = await _member(tg_user(8, "Дидар"))  # пришёл в бота уже после игры
+    _, arch = await api(OWNER, "archive")
+    g = next(x for x in arch["archive"] if x["id"] == gid)
+    assert didar_id in {u["id"] for u in g["team"]}
+    assert didar_id not in {u["id"] for u in g["no_answer"]}
+    balls = next(d for d in g["duties"] if d["name"] == "Мячи")
+    status, _ = await api(OWNER, "assign", game_id=gid, duty_id=balls["duty_id"], user_id=didar_id)
+    assert status == 200
+    async with webhook._sessionmaker() as s:
+        assert next(a for a in await svc.active_assignments(s, gid) if a.duty_id == balls["duty_id"]).user_id == didar_id
+    _, me = await api(tg_user(8, "Дидар"), "archive")
+    assert "team" not in next(x for x in me["archive"] if x["id"] == gid)  # игрокам список команды не нужен
