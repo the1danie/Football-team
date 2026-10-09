@@ -471,11 +471,23 @@ async def create_from_schedule(bot: Bot, session: AsyncSession, schedule, starts
 
 
 async def assign_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty, user: User | None) -> None:
-    if game.status != GameStatus.DISTRIBUTED:
+    finished = game.status == GameStatus.FINISHED
+    if game.status != GameStatus.DISTRIBUTED and not finished:
         raise OpError("Сначала распределите обязанности.")
-    if user is not None and duty.requires_car and not user.has_car:
+    if user is not None and duty.requires_car and not user.has_car and not finished:
         raise OpError(f"Для «{duty.name}» нужна машина.")
     old_user, _ = await svc.set_assignment(session, game, duty, user)
+    if finished:
+        # Исправление задним числом: статистика и минусы — по факту, сообщения не нужны.
+        await svc.fix_redemption(session, game, old_user, user)
+        if user is not None:
+            p = await session.get(svc.GameParticipant, (game.id, user.id))
+            if p is None or p.status != Rsvp.YES or p.attended is False:
+                await svc.set_attendance(session, game, user, True)  # выполнил обязанность — значит, был
+        await audit.record(
+            session, f"🔧 Исправил задним числом {duty.title}: {old_user.name if old_user else '—'} → {user.name if user else 'никто'}", game
+        )
+        return
     await audit.record(
         session, f"🔧 Назначение {duty.title}: {old_user.name if old_user else '—'} → {user.name if user else 'никто'}", game
     )

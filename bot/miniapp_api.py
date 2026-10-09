@@ -92,8 +92,15 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
     now = config.now()
     by_status = await svc.participants_by_status(session, game.id)
     deadline = rsvp_deadline(game)
-    assignments = await svc.active_assignments(session, game.id) if game.status == GameStatus.DISTRIBUTED else []
-    unassigned = await svc.unassigned_duties(session, game) if game.status == GameStatus.DISTRIBUTED else []
+    assignments = (await svc.active_assignments(session, game.id)
+                   if game.status in (GameStatus.DISTRIBUTED, GameStatus.FINISHED) else [])
+    if game.status == GameStatus.DISTRIBUTED:
+        unassigned = await svc.unassigned_duties(session, game)
+    elif game.status == GameStatus.FINISHED:  # прошедшая: можно дописать любую обязанность задним числом
+        taken = {a.duty_id for a in assignments}
+        unassigned = [d for d in await svc.active_duties(session) if d.id not in taken]
+    else:
+        unassigned = []
     duties = [
         {
             "duty_id": a.duty.id, "emoji": a.duty.emoji, "name": a.duty.name, "action": a.duty.action,

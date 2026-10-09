@@ -610,6 +610,28 @@ async def set_assignment(
     return old_user, new
 
 
+async def fix_redemption(session: AsyncSession, game: Game, old_user: User | None, new_user: User | None) -> None:
+    """Исправили назначение в прошедшей игре: минус, списанный за эту обязанность, переходит к тому,
+    кто её на самом деле выполнил."""
+    if old_user is not None:
+        p = await session.scalar(
+            select(Penalty).where(
+                Penalty.user_id == old_user.id, Penalty.redeemed_game_id == game.id,
+                Penalty.status == PenaltyStatus.REDEEMED,
+            ).order_by(Penalty.id.desc()).limit(1)
+        )
+        if p is not None:
+            p.status, p.redeemed_game_id = PenaltyStatus.OPEN, None
+    if new_user is not None:
+        p = await session.scalar(
+            select(Penalty).where(Penalty.user_id == new_user.id, Penalty.status == PenaltyStatus.OPEN)
+            .order_by(Penalty.created_at, Penalty.id).limit(1)
+        )
+        if p is not None:
+            p.status, p.redeemed_game_id = PenaltyStatus.REDEEMED, game.id
+    await session.flush()
+
+
 # ---------------------------------------------------------------- обмены
 
 

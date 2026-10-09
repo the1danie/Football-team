@@ -122,3 +122,58 @@ async def test_only_owner_distributes_and_can_undo(team):  # noqa: F811
         assert await svc.active_assignments(s, gid) == []
     _, log = await api(OWNER, "audit")
     assert any(e["text"].startswith("↩️ Отменил распределение") for e in log["entries"])
+
+
+async def test_fix_duty_in_past_game(team):  # noqa: F811
+    """Мячи брал другой игрок, а в боте не исправили — исправляем в архиве задним числом."""
+    from datetime import datetime
+
+    from sqlalchemy import select
+
+    from bot import webhook
+    from bot.models import Game, GameStatus, Penalty, PenaltyStatus
+    from bot.services import games as svc
+
+    fake = team  # noqa: F811
+    marat, pasha = tg_user(3, "Марат"), tg_user(4, "Паша")
+    await _member(marat)
+    pasha_id = await _member(pasha)
+    day = (config.now() + timedelta(days=1)).date().isoformat()
+    _, res = await api(OWNER, "create_game", date=day, minutes=20 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    for u in (OWNER, marat):
+        await api(u, "rsvp", game_id=gid, status="yes")
+    await api(OWNER, "distribute", game_id=gid)
+    async with webhook._sessionmaker() as s:
+        game = await s.get(Game, gid)
+        balls = next(a for a in await svc.active_assignments(s, gid) if a.duty.name == "Мячи")
+        balls_duty_id, first = balls.duty_id, balls.user
+        # у обоих был минус; при завершении игры минус списался тому, кто «вёз мячи» по боту
+        for uid in (first.id, pasha_id):
+            s.add(Penalty(user_id=uid, game_id=None, points=1, created_at=datetime.utcnow() - timedelta(days=3)))
+        await s.flush()
+        await svc.redeem_penalties(s, game)
+        game.starts_at = config.now() - timedelta(days=1)
+        game.status = GameStatus.FINISHED
+        first_id = first.id
+        await s.commit()
+    sent_before = len(fake.sent(4))
+
+    _, arch = await api(OWNER, "archive")
+    g = next(x for x in arch["archive"] if x["id"] == gid)
+    assert g["past"] and next(d for d in g["duties"] if d["duty_id"] == balls_duty_id)["user"]["id"] == first_id
+    status, res = await api(OWNER, "assign", game_id=gid, duty_id=balls_duty_id, user_id=pasha_id)
+    assert status == 200, res
+
+    async with webhook._sessionmaker() as s:
+        now_balls = next(a for a in await svc.active_assignments(s, gid) if a.duty_id == balls_duty_id)
+        assert now_balls.user_id == pasha_id
+        assert (await svc.attendance(s, gid))[pasha_id] is True  # отмечен «пришёл»
+        pens = {p.user_id: p for p in (await s.scalars(select(Penalty))).all()}
+        assert pens[pasha_id].status == PenaltyStatus.REDEEMED and pens[pasha_id].redeemed_game_id == gid
+        assert pens[first_id].status == PenaltyStatus.OPEN
+        board = {r["id"]: r for r in await svc.leaderboard(s, config.now())}
+        assert board[pasha_id]["duties"] == 1
+    assert len(fake.sent(4)) == sent_before  # задним числом — без сообщений
+    _, log = await api(OWNER, "audit")
+    assert any("Исправил задним числом" in e["text"] and "→ Паша" in e["text"] for e in log["entries"])

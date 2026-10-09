@@ -614,13 +614,13 @@ function gameCard(g) {
   }
 
   // Обязанности
-  if (g.status === "distributed") {
+  if (g.status === "distributed" || (g.status === "finished" && g.duties.some((x) => x.user))) {
     add(card, h("h2", { style: "margin:16px 0 4px" }, "Обязанности"));
     add(card, h("div", {}, g.duties.map((x) => h("div", { class: "duty" + (x.mine ? " mine" : "") },
       h("div", { class: "ico" }, x.emoji),
       h("div", { class: "grow" }, h("div", { class: "small muted" }, x.name),
         h("div", { class: "who" }, x.user ? (x.mine ? "Ты" : x.user.name) : "⚠️ не назначено")),
-      x.mine ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "swap", game: g, duty: x }) }, "🔄 Поменяться") : null))));
+      x.mine && !g.past ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "swap", game: g, duty: x }) }, "🔄 Поменяться") : null))));
   } else if (g.status === "open" && !g.needs_decision) {
     const plan = h("div", { class: "small muted", style: "margin-top:12px" });
     if (g.before_titles.length) add(plan, h("div", {}, `${g.before_titles.join(", ")} — ${g.deadline_passed ? "скоро распределит админ" : "распределится " + g.deadline_at_label}`));
@@ -634,6 +634,7 @@ function gameCard(g) {
     add(card, h("div", { class: "admin-bar" },
       g.status !== "cancelled" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "attendance", game: g }) }, "👥 Кто пришёл") : null,
       g.status !== "cancelled" ? h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp") : null,
+      g.status === "finished" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "assign", game: g }) }, "✏️ Кто что делал") : null,
       h("button", { class: "btn small danger", onclick: () => deleteGame(g) }, "🗑 Удалить")));
   } else if (d.is_admin) {
     add(card, h("div", { class: "admin-bar" },
@@ -1212,16 +1213,21 @@ function swapSheet() {
 }
 
 function assignSheet() {
-  const g = S.data.games.find((x) => x.id === S.sheet.game.id) || S.sheet.game;
-  const yes = g.participants.yes;
-  return h("div", {}, h("h3", {}, "Назначения"),
+  const g = findGame(S.sheet.game.id) || S.sheet.game;
+  const past = g.status === "finished";
+  // Прошедшая игра: выбрать можно любого — мог взять мячи и тот, кто не отмечался.
+  const seen = new Set();
+  const pool = (past ? [...g.participants.yes, ...g.participants.maybe, ...g.participants.no, ...(g.no_answer || [])] : g.participants.yes)
+    .filter((u) => !seen.has(u.id) && seen.add(u.id));
+  return h("div", {}, h("h3", {}, past ? "✏️ Кто что делал" : "Назначения"),
+    past ? h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Исправление задним числом: рейтинг «Помощь» пересчитается, минус, списанный за обязанность, перейдёт к тому, кто её выполнил. Выбранный отметится как «пришёл». Сообщения игрокам не отправляются.") : null,
     g.duties.map((x) => h("div", { class: "card" },
       h("div", { class: "row" }, h("span", { style: "font-size:22px" }, x.emoji), h("b", { class: "grow" }, x.name), x.requires_car ? h("span", { class: "chip" }, "нужна 🚗") : null),
       h("select", { class: "field", style: "margin-top:10px", onchange: async (e) => {
         const r = await api("assign", { game_id: g.id, duty_id: x.duty_id, user_id: Number(e.target.value) || null });
-        if (r) { haptic("ok"); render(); } } },
+        if (r) { haptic("ok"); if (past) await loadArchive(); render(); } } },
         h("option", { value: "0", selected: !x.user }, "— не назначено —"),
-        yes.filter((u) => u.car || !x.requires_car).map((u) => h("option", { value: u.id, selected: x.user && x.user.id === u.id }, u.name + (u.car ? " 🚗" : "")))))));
+        pool.filter((u) => past || u.car || !x.requires_car).map((u) => h("option", { value: u.id, selected: x.user && x.user.id === u.id }, u.name + (u.car ? " 🚗" : "")))))));
 }
 
 function playerSheet() {
