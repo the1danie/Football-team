@@ -443,6 +443,15 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                 "more": len(rows) > 50,
                 "actors": [{"id": a, "name": n, "count": c} for a, n, c in await svc.audit_actors(session)],
             }
+        elif action == "calendar_link":
+            if not config.is_owner(tg_id) or tg.get("view_as"):
+                raise ApiError("Календарь — только для главного админа.", 403)
+            from bot import calendar_feed
+
+            url = calendar_feed.feed_url(tg_id)
+            if url is None:
+                raise ApiError("Календарь доступен, когда бот работает на Vercel.")
+            return {"url": url, "webcal": "webcal://" + url.split("://", 1)[1]}
         elif action == "archive":
             offset = max(0, int(body.get("offset") or 0))
             past = await svc.past_games(session, config.now(), limit=11, offset=offset, past_after_hours=PAST_AFTER_HOURS)

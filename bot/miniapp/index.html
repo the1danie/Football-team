@@ -789,6 +789,8 @@ function profileTab() {
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
       h("div", { class: "small muted", style: "margin-top:4px" }, "За неответ на опрос или неявку после «Буду». Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
     S.data.is_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openAudit() }, "📜 Журнал действий админов") : null,
+    S.data.is_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
+      const r = await api("calendar_link"); if (r) openSheet({ type: "calendar", ...r }); } }, "📅 Игры в мой Google Календарь") : null,
     S.data.real_owner && !S.data.view_as ? h("div", { class: "card" },
       h("div", { style: "font-weight:600" }, "👁 Посмотреть как…"),
       h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Приложение глазами другой роли — данные настоящие, меняются только права. Ваши ответы «Буду/Не буду» сохраняются как обычно."),
@@ -962,7 +964,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;
@@ -1142,6 +1144,22 @@ function auditSheet() {
         onclick: () => openAudit(a.id) }, a.name + (a.count ? ` · ${a.count}` : "")))) : null,
     s.entries.length ? h("div", {}, items) : h("div", { class: "card empty muted" }, "Пока пусто."),
     s.more ? h("button", { class: "btn secondary", style: "margin-top:10px", onclick: () => openAudit(undefined, true) }, "Показать ещё") : null);
+}
+
+function calendarSheet() {
+  const s = S.sheet;
+  const google = "https://calendar.google.com/calendar/render?cid=" + encodeURIComponent(s.webcal);
+  const copy = async () => { try { await navigator.clipboard.writeText(s.url); toast("Ссылка скопирована"); } catch (e) { toast("Не удалось скопировать"); } };
+  return h("div", {}, h("h3", {}, "📅 Календарь игр"),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Подписка: все игры и тренировки сами появятся в календаре и будут обновляться — новые, перенос, место, отмена (зачёркнуто «❌»), кто идёт и обязанности в описании. Плюс тренировки по расписанию на 8 недель вперёд."),
+    h("button", { class: "btn", onclick: () => openLink(google) }, "Добавить в Google Календарь"),
+    h("button", { class: "btn secondary", style: "margin-top:8px", onclick: () => openLink(s.webcal) }, "iPhone / Mac: Календарь Apple"),
+    h("div", { class: "card", style: "margin-top:12px" },
+      h("div", { style: "font-weight:700" }, "Если кнопка не сработала"),
+      h("div", { class: "small muted", style: "margin:4px 0 8px" }, "На компьютере откройте calendar.google.com → слева «Другие календари» ＋ → «Добавить по URL» → вставьте ссылку:"),
+      h("div", { class: "small", style: "word-break:break-all;margin-bottom:8px" }, s.url),
+      h("button", { class: "btn secondary", onclick: copy }, "📋 Скопировать ссылку")),
+    h("p", { class: "small muted", style: "margin:8px 2px" }, "Google обновляет подписки сам, обычно в течение нескольких часов. Ссылка личная — не пересылайте её."));
 }
 
 function myPinSheet() {

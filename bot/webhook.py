@@ -345,6 +345,15 @@ async def handle_app_page(request: Request) -> tuple[int, Any]:
         return 200, raw
     if asset in ICONS:
         return 200, Raw((Path(__file__).parent / "miniapp" / asset).read_bytes(), "image/png")
+    if "ics" in request.query:  # подписка на календарь (только главный админ)
+        from bot import calendar_feed
+
+        if calendar_feed.verify_feed_token(request.query.get("ics", "")) is None:
+            return 404, {"ok": False, "error": "not found"}
+        sessionmaker, _ = await _ensure_ready()
+        async with sessionmaker() as session:
+            body = await calendar_feed.build(session)
+        return 200, Raw(body.encode(), "text/calendar; charset=utf-8", "no-cache, max-age=0")
     if "manifest" in request.query:
         # Установка на экран «Домой»: адрес запуска — с личным ключом, иначе установленное приложение
         # (у него своё хранилище) открылось бы без входа.
