@@ -441,13 +441,19 @@ class DistributionResult:
 
 
 async def distribute_game(
-    session: AsyncSession, game: Game, rng: random.Random | None = None, phase: str = DutyPhase.BEFORE
+    session: AsyncSession, game: Game, rng: random.Random | None = None, phase: str = DutyPhase.BEFORE,
+    reshuffle: bool = False,
 ) -> DistributionResult:
-    """Распределить (или пересчитать заново) обязанности этапа: до тренировки или после."""
+    """Распределить (или пересчитать заново) обязанности этапа: до тренировки или после.
+
+    reshuffle — «Пересчитать»: каждая обязанность по возможности достаётся не тому, у кого была.
+    """
     duties = await active_duties(session, phase)
     duty_ids = {d.id for d in duties}
+    previous: dict[int, int] = {}
     for a in await active_assignments(session, game.id):
         if a.duty_id in duty_ids:
+            previous[a.duty_id] = a.user_id
             a.status = AssignmentStatus.CANCELLED
     await _expire_swaps(session, game.id)
     await session.flush()
@@ -457,7 +463,8 @@ async def distribute_game(
     users = {u.id: u for u in (await participants_by_status(session, game.id))[Rsvp.YES]}
 
     mapping, unassigned = distribute(
-        [_spec(d) for d in duties], candidates, rng, base_load=await _current_load(session, game.id)
+        [_spec(d) for d in duties], candidates, rng, base_load=await _current_load(session, game.id),
+        avoid=previous if reshuffle else None,
     )
 
     result = DistributionResult()

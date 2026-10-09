@@ -20,6 +20,9 @@ from dataclasses import dataclass, field
 DUTY_WEIGHT = 3
 RECENT_PENALTY = 2
 EXTRA_DUTY_COST = 10_000  # цена второй (третьей…) обязанности одному человеку за игру
+# «Пересчитать»: та же обязанность тому же человеку — только если больше некому
+# (дороже любой разницы в честности, но дешевле второй обязанности за игру).
+REPEAT_COST = 1_000
 INFEASIBLE = 10**9
 
 
@@ -79,10 +82,12 @@ def distribute(
     candidates: list[Candidate],
     rng: random.Random | None = None,
     base_load: dict[int, int] | None = None,
+    avoid: dict[int, int] | None = None,
 ) -> tuple[dict[int, int], list[int]]:
     """Распределить обязанности.
 
     base_load — сколько обязанностей у игрока уже есть на этой игре (например, вода «до»).
+    avoid — {duty_id: user_id} прежние исполнители: при пересчёте обязанность уходит другому, если есть кому.
 
     Возвращает ({duty_id: user_id}, [duty_id без исполнителя]).
     """
@@ -103,6 +108,7 @@ def distribute(
             INFEASIBLE
             if d.requires_car and not c.has_car
             else (k + (base_load or {}).get(c.user_id, 0)) * EXTRA_DUTY_COST + score(c, d.id) + noise[c.user_id]
+            + (REPEAT_COST if (avoid or {}).get(d.id) == c.user_id else 0)
             for c, k in slots
         ]
         for d in fillable

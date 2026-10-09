@@ -12,12 +12,12 @@ from bot.models import DutyPhase, Game, GameStatus, Rsvp, User
 from bot.services import games as svc
 
 
-async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game) -> str:
+async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game, reshuffle: bool = False) -> str:
     """Распределить обязанности, обновить сообщения в чате и написать назначенным.
 
     Возвращает отчёт для администратора.
     """
-    result = await svc.distribute_game(session, game)
+    result = await svc.distribute_game(session, game, reshuffle=reshuffle)
     await notifier.refresh_game(bot, session, game)
     await notifier.announce_new_assignments(bot, game, result.assignments)
 
@@ -60,12 +60,14 @@ def after_at(game: Game):
     return game.starts_at + timedelta(minutes=config.after_duties_minutes)
 
 
-async def distribute_after_and_announce(bot: Bot, session: AsyncSession, game: Game) -> str | None:
+async def distribute_after_and_announce(
+    bot: Bot, session: AsyncSession, game: Game, reshuffle: bool = False
+) -> str | None:
     """После тренировки: мячи, манишки — среди тех, кто был («Буду»)."""
     if not await svc.active_duties(session, DutyPhase.AFTER):
         game.after_duties_done = True
         return None
-    result = await svc.distribute_game(session, game, phase=DutyPhase.AFTER)
+    result = await svc.distribute_game(session, game, phase=DutyPhase.AFTER, reshuffle=reshuffle)
     await notifier.refresh_game(bot, session, game)
     for a in result.assignments:
         await notifier.send_dm(

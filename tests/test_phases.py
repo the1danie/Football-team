@@ -8,7 +8,7 @@ from sqlalchemy import select, text
 from bot import webhook
 from bot.config import config
 from bot.db import init_db, make_engine, make_sessionmaker
-from bot.models import Duty, Game, GameStatus
+from bot.models import Duty, DutyPhase, Game, GameStatus, Rsvp
 from bot.scheduler import tick
 from bot.services import games as svc
 from tests.conftest import db_url, make_user
@@ -227,3 +227,29 @@ def test_whatsapp_texts_have_no_emoji():
     assert whatsapp.clean(texts_[0]).startswith("*Тренировка — 5 октября (пн), 23:00*\nСбор в 22:30\nМесто: Жас Оркен")
     assert "Буду (1): Даниял Абуов" in whatsapp.clean(texts_[1])
     assert "Аптечка — Даниял Абуов" in whatsapp.clean(texts_[3])
+
+
+@pytest.mark.real_phases
+async def test_recalculate_reshuffles_all_phases(session):
+    """«Пересчитать»: заново и вода, и мячи с манишками — каждому по возможности другая обязанность."""
+    import random
+
+    users = []
+    for i in range(6):
+        u = await svc.get_or_create_user(session, 100 + i, f"P{i}", None)
+        u.profile_completed, u.status, u.has_car = True, "approved", True
+        users.append(u)
+    game = await svc.create_game(session, "training", config.now() + timedelta(hours=1), None, None)
+    for u in users:
+        await svc.set_rsvp(session, game, u, Rsvp.YES)
+    rng = random.Random(1)
+    await svc.distribute_game(session, game, rng)
+    await svc.distribute_game(session, game, rng, phase=DutyPhase.AFTER)
+    before = {a.duty_id: a.user_id for a in await svc.active_assignments(session, game.id)}
+    assert len(before) >= 3
+
+    for phase in (DutyPhase.BEFORE, DutyPhase.AFTER):
+        await svc.distribute_game(session, game, rng, phase=phase, reshuffle=True)
+    after = {a.duty_id: a.user_id for a in await svc.active_assignments(session, game.id)}
+    assert after.keys() == before.keys()
+    assert all(after[d] != before[d] for d in before), (before, after)

@@ -303,8 +303,14 @@ async def distribute(bot: Bot, session: AsyncSession, game: Game) -> str:
     _require_active(game)
     if game.min_players:
         game.min_decision = "keep"  # админ распределил сам — значит, проводим
-    await audit.record(session, "🎯 Распределил обязанности" + (" заново" if game.status == GameStatus.DISTRIBUTED else ""), game)
-    return await actions.distribute_and_announce(bot, session, game)
+    redo = game.status == GameStatus.DISTRIBUTED
+    await audit.record(session, "🎯 Распределил обязанности" + (" заново" if redo else ""), game)
+    report = await actions.distribute_and_announce(bot, session, game, reshuffle=redo)
+    if redo and game.after_duties_done:  # «после тренировки» уже раздали — пересчитать и их
+        after = await actions.distribute_after_and_announce(bot, session, game, reshuffle=True)
+        if after:
+            report += "\n\n" + after
+    return report
 
 
 async def undistribute(bot: Bot, session: AsyncSession, game: Game) -> str:
