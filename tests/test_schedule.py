@@ -303,3 +303,45 @@ async def test_repeat_far_away_waits_for_poll_window(team):  # noqa: F811
         assert await svc.due_schedule_games(s, opens - timedelta(minutes=1)) == []
         due = await svc.due_schedule_games(s, opens + timedelta(minutes=1))
         assert len(due) == 1 and due[0][1].weekday() == friday.weekday()
+
+
+async def test_tick_failure_does_not_lose_scheduled_game(fake, monkeypatch):  # noqa: F811
+    """Опрос разослан — игра обязана остаться в базе, даже если дальше в том же запуске что-то упало."""
+    from sqlalchemy import select
+
+    from bot import actions
+
+    sm, _ = await webhook._ensure_ready()
+    async with sm() as s:
+        now = config.now()
+        start = now + timedelta(days=2) - timedelta(minutes=5)
+        s.add(Schedule(kind="training", weekday=start.weekday(), minutes=start.hour * 60 + start.minute,
+                       open_days_before=2))
+        other = await svc.create_game(s, "game", now + timedelta(hours=10), None, None)
+        other.created_at = datetime.utcnow() - timedelta(days=2)
+        await s.commit()
+        other_id = other.id
+
+    async def boom(*a, **k):
+        raise RuntimeError("telegram is down")
+
+    monkeypatch.setattr(actions, "send_rsvp_nudge", boom)  # падает обработка соседней игры
+    async with sm() as s:
+        await tick(webhook.make_bot(), s)
+        await s.commit()
+    async with sm() as s:
+        games = (await s.scalars(select(Game).where(Game.schedule_id.is_not(None)))).all()
+        assert len(games) == 1  # игра по расписанию сохранилась
+        assert (await s.get(Game, other_id)) is not None
+
+    # рассылка опроса упала уже после создания — игра всё равно в базе, повторно не создаётся
+    async with sm() as s:
+        for g in (await s.scalars(select(Game).where(Game.schedule_id.is_not(None)))).all():
+            await s.delete(g)
+        await s.commit()
+    monkeypatch.setattr(actions, "send_poll_invites", boom)
+    async with sm() as s:
+        await tick(webhook.make_bot(), s)
+        await s.commit()
+    async with sm() as s:
+        assert len((await s.scalars(select(Game).where(Game.schedule_id.is_not(None)))).all()) == 1

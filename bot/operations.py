@@ -199,6 +199,9 @@ async def create_game(
     )
     # Ссылка на карту: вставленная или запомненная для этого места.
     game.location_url = texts.normalize_map_url(location_url) or await svc.known_place_url(session, game.location)
+    # Сначала сохранить игру, потом рассылать: если запрос дальше оборвётся (сбой, таймаут),
+    # у игроков не останется опроса на игру, которой нет в базе.
+    await session.commit()
     chat_id = await notifier.group_chat_id(session)
     if chat_id is not None:
         await notifier.publish_game(bot, session, game, chat_id)
