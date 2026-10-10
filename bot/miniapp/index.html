@@ -576,8 +576,8 @@ function gameCard(g) {
   if (open) {
     const group = (title, list) => list && list.length ? h("div", { style: "margin-top:10px" },
       h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => canMarkFor
-        ? h("button", { class: "chip", onclick: () => openSheet({ type: "rsvpFor", game: g, user: u }) }, u.name + (u.car ? " 🚗" : ""))
-        : h("span", { class: "chip" }, u.name + (u.car ? " 🚗" : ""))))) : null;
+        ? h("button", { class: "chip" + (u.burpees ? " bad" : ""), onclick: () => openSheet({ type: "rsvpFor", game: g, user: u }) }, u.name + (u.car ? " 🚗" : "") + (u.burpees ? ` 💪${u.burpees}` : ""))
+        : h("span", { class: "chip" + (u.burpees ? " bad" : "") }, u.name + (u.car ? " 🚗" : "") + (u.burpees ? ` 💪${u.burpees}` : ""))))) : null;
     add(card, group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
       g.no_answer ? group(`🙈 Не ответили (${g.no_answer.length})`, g.no_answer) : null,
       g.silent_unpenalized && g.silent_unpenalized.length ? h("button", { class: "btn small danger", style: "margin-top:10px", onclick: async () => {
@@ -616,11 +616,17 @@ function gameCard(g) {
   // Обязанности
   if (g.status === "distributed" || (g.status === "finished" && g.duties.some((x) => x.user))) {
     add(card, h("h2", { style: "margin:16px 0 4px" }, "Обязанности"));
+    const canFail = d.is_admin && (g.attendance_open || g.past) && g.status !== "cancelled";
     add(card, h("div", {}, g.duties.map((x) => h("div", { class: "duty" + (x.mine ? " mine" : "") },
       h("div", { class: "ico" }, x.emoji),
       h("div", { class: "grow" }, h("div", { class: "small muted" }, x.name),
-        h("div", { class: "who" }, x.user ? (x.mine ? "Ты" : x.user.name) : "⚠️ не назначено")),
-      x.mine && !g.past ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "swap", game: g, duty: x }) }, "🔄 Поменяться") : null))));
+        h("div", { class: "who" }, x.user ? (x.mine ? "Ты" : x.user.name) + (x.failed_by ? " — выручил" : "") : x.failed_by ? "—" : "⚠️ не назначено"),
+        x.failed_by ? h("div", { class: "small", style: "color:var(--danger)" }, `❌ ${x.failed_by.name} не выполнил`) : null),
+      x.mine && !g.past && !x.failed_by ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "swap", game: g, duty: x }) }, "🔄 Поменяться") : null,
+      canFail && x.failed_by ? h("button", { class: "btn small secondary", title: "Отменить отметку", onclick: async () => {
+        if (!(await confirmBox(`Снять отметку «не выполнил» с ${x.failed_by.name}? Минус уберётся.`))) return;
+        const r = await api("duty_failed_undo", { game_id: g.id, duty_id: x.duty_id }); if (r) { haptic("ok"); if (g.past) await loadArchive(); render(); } } }, "↩️") : null,
+      canFail && x.user && !x.failed_by ? h("button", { class: "btn small danger", title: "Не выполнил", onclick: () => openSheet({ type: "notDone", game: g, duty: x }) }, "❌") : null))));
   } else if (g.status === "open" && !g.needs_decision) {
     const plan = h("div", { class: "small muted", style: "margin-top:12px" });
     if (g.before_titles.length) add(plan, h("div", {}, `${g.before_titles.join(", ")} — ${g.deadline_passed ? "скоро распределит админ" : "распределится " + g.deadline_at_label}`));
@@ -788,7 +794,8 @@ function profileTab() {
         h("button", { class: "switch" + (u.car ? " on" : ""), role: "switch", "aria-checked": u.car ? "true" : "false", disabled: u.car_locked && !S.data.is_admin,
           onclick: async () => { haptic(); const r = await api("profile", { car: !u.car }); if (r) render(); } }))),
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
-      h("div", { class: "small muted", style: "margin-top:4px" }, "За неответ на опрос или неявку после «Буду». Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
+      u.level ? h("div", { style: "margin-top:6px;color:var(--danger);font-weight:600" }, `💪 ${u.level}`) : null,
+      h("div", { class: "small muted", style: "margin-top:4px" }, "Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
     S.data.is_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openAudit() }, "📜 Журнал действий админов") : null,
     S.data.is_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
       const r = await api("calendar_link"); if (r) openSheet({ type: "calendar", ...r }); } }, "📅 Игры в мой Google Календарь") : null,
@@ -820,7 +827,10 @@ function profileTab() {
       h("li", {}, "Когда админ создаёт игру, бот присылает опрос. Отметься: Буду / Не знаю / Не буду."),
       h("li", {}, "Обязанности распределяются между теми, кто придёт, — первыми тем, кто делал меньше. Воду — перед тренировкой, мячи и манишки — после, среди тех, кто был."),
       h("li", {}, "Не можешь выполнить — «🔄 Поменяться». Передумал идти — «Не буду», обязанность перейдёт другому."),
-      S.data.penalty_points ? h("li", {}, `Не ответил до закрытия сбора — минус (−${S.data.penalty_points}).`) : null)));
+      S.data.penalty_points ? h("li", {}, `Не ответил до закрытия сбора — минус (−${S.data.penalty_points}). Сказал «Буду» и не пришёл — тоже минус.`) : null,
+      h("li", {}, "Не выполнил обязанность (не принёс воду, не забрал манишки) — −2."),
+      h("li", {}, "Отдал свою обязанность другому: первый раз за 30 дней — без минуса, второй — −1, третий и дальше — −3 за каждый. Обмен обязанностями (ты — его, он — твою) не считается."),
+      h("li", {}, "−3 минуса — на тренировке 25 бёрпи, −6 — 50 бёрпи, −9 — исключение из команды. Минусы снимаются выполненными обязанностями: одна обязанность — один минус."))));
 }
 
 function stepper(value, min, max, onChange, fmt) {
@@ -868,7 +878,8 @@ function attendanceSheet() {
   ].filter(([, list]) => list.length);
   const row = (u, came) => h("div", { class: "switch-row" }, avatar(u.name, u.id),
     h("div", { class: "grow" }, h("div", { style: "font-weight:600" }, u.name + (u.car ? " 🚗" : "")),
-      h("div", { class: "small muted" }, came ? (u.attended ? "пришёл" : "отметил «Буду»") : "не пришёл — минус, обязанности «после» не получит")),
+      h("div", { class: "small muted" }, (came ? (u.attended ? "пришёл" : "отметил «Буду»") : "не пришёл — минус, обязанности «после» не получит")
+        + (u.burpees ? ` · 💪 ${u.burpees} бёрпи` : ""))),
     h("button", { class: "switch" + (came ? " on" : ""), role: "switch", "aria-checked": came ? "true" : "false", onclick: () => mark(u, !came) }));
   return h("div", {}, h("h3", {}, "👥 Кто пришёл"),
     h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Выключите тех, кто отметил «Буду», но не пришёл: им минус, а обязанности «после тренировки» достанутся тем, кто был."),
@@ -965,7 +976,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;
@@ -1103,7 +1114,7 @@ async function openReport(period) {
 function reportSheet() {
   const rows = S.sheet.rows.filter((r) => r.games);
   const cls = (r) => (r.rate < 50 ? "bad" : r.rate < 75 ? "mid" : "good");
-  const problem = rows.filter((r) => r.games >= 2 && (r.rate < 50 || r.silent + r.no_show >= 2));
+  const problem = rows.filter((r) => (r.games >= 2 && (r.rate < 50 || r.silent + r.no_show >= 2)) || r.failed || r.gave >= 2);
   return h("div", {}, h("h3", {}, "📊 Посещаемость"),
     h("div", { class: "seg", style: "margin-bottom:10px" }, [["month", "За месяц"], ["all", "За всё время"]].map(([k, l]) =>
       h("button", { class: S.reportPeriod === k ? "on" : "", onclick: () => openReport(k) }, l))),
@@ -1115,7 +1126,8 @@ function reportSheet() {
       h("div", { class: "grow" },
         h("div", { style: "font-weight:600" }, r.name + (r.manual ? " ✍️" : "")),
         h("div", { class: "small muted" }, [`был ${r.came} из ${r.games}`, r.no ? `не буду ${r.no}` : null, r.maybe ? `не знаю ${r.maybe}` : null,
-          r.silent ? `молчал ${r.silent}` : null, r.no_show ? `неявка ${r.no_show}` : null].filter(Boolean).join(" · ")),
+          r.silent ? `молчал ${r.silent}` : null, r.no_show ? `неявка ${r.no_show}` : null,
+          r.failed ? `❌ не выполнил ${r.failed}` : null, r.gave ? `🔁 отдал ${r.gave}` : null].filter(Boolean).join(" · ")),
         h("div", { class: "history" }, r.history)),
       h("div", { class: "rate " + cls(r) }, `${r.rate}%`))))
       : h("div", { class: "card empty muted" }, "Прошедших игр за этот период нет."));
@@ -1171,6 +1183,25 @@ function myPinSheet() {
       h("div", { class: "small muted" }, "PIN"), h("div", { style: "font-size:40px;font-weight:800;letter-spacing:8px" }, s.pin)),
     h("p", { class: "small muted", style: "margin:4px 2px 12px" }, `Запишите. Вход без Telegram и без ссылки: откройте ${s.site || "сайт команды"} → «Войти по имени и PIN». PIN никому не показывайте.`),
     h("button", { class: "btn secondary", onclick: closeSheet }, "Готово"));
+}
+
+function notDoneSheet() {
+  const { game: g, duty: x } = S.sheet;
+  const st = S.sheet.form || (S.sheet.form = { doneBy: null });
+  const seen = new Set([x.user.id]);
+  const pool = [...g.participants.yes, ...g.participants.maybe, ...g.participants.no, ...(g.no_answer || []), ...(g.team || [])]
+    .filter((u) => !seen.has(u.id) && seen.add(u.id));
+  return h("div", {}, h("h3", {}, `❌ Не выполнил: ${x.emoji} ${x.name}`),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, `${x.user.name} получит −2, обязанность не засчитается. При −3 — 25 бёрпи, −6 — 50, −9 — исключение из команды.`),
+    h("div", { class: "label" }, "Кто выполнил вместо него? (необязательно)"),
+    h("div", { class: "people" }, [{ id: null, name: "Никто" }, ...pool].map((u) => h("button", { class: "chip" + (st.doneBy === u.id ? " accent" : ""),
+      onclick: () => { st.doneBy = u.id; render(); } }, u.name))),
+    h("p", { class: "small muted", style: "margin:8px 2px 0" }, "Тому, кто выручил, обязанность засчитается в «Помощь»."),
+    h("button", { class: "btn danger", style: "margin-top:14px", onclick: async (e) => {
+      e.target.disabled = true;
+      const r = await api("duty_failed", { game_id: g.id, duty_id: x.duty_id, done_by: st.doneBy });
+      if (r) { haptic("ok"); closeSheet(); if (g.past) await loadArchive(); render(); } else e.target.disabled = false; } },
+      `Не выполнил — −2 ${x.user.name}`));
 }
 
 function createdSheet() {

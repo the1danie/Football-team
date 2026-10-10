@@ -176,9 +176,10 @@ async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, result
             bot, whatsapp.penalties(game, [r.user for r in results], points),
             note="🙈 Кто получил минус — для группы WhatsApp 👇",
         )
-    over = [(r.user, r.total) for r in results if config.penalty_limit and r.total >= config.penalty_limit]
-    if over:
-        await notifier.notify_admins(bot, texts.penalty_limit_admin(over, config.penalty_limit))
+    from bot import discipline
+
+    for r in results:
+        await discipline.check_level(bot, session, r.user, r.total - r.points, r.total)
     return f"🙈 Не ответили на опрос — по −{points}: " + ", ".join(texts.h(r.user.name) for r in results)
 
 

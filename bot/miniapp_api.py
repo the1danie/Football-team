@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, audit, operations, texts, whatsapp
+from bot import actions, audit, discipline, operations, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
@@ -101,23 +101,35 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         unassigned = [d for d in await svc.active_duties(session) if d.id not in taken]
     else:
         unassigned = []
+    failed = {a.duty_id: a.user for a in await svc.failed_assignments(session, game.id)}
     duties = [
         {
             "duty_id": a.duty.id, "emoji": a.duty.emoji, "name": a.duty.name, "action": a.duty.action,
             "requires_car": a.duty.requires_car, "user": _user_brief(a.user),
             "assignment_id": a.id, "mine": a.user_id == me.id,
+            "failed_by": _user_brief(failed[a.duty_id]) if a.duty_id in failed else None,
         }
         for a in assignments
     ] + [
         {
             "duty_id": d.id, "emoji": d.emoji, "name": d.name, "action": d.action,
             "requires_car": d.requires_car, "user": None, "assignment_id": None, "mine": False,
+            "failed_by": _user_brief(failed[d.id]) if d.id in failed else None,
         }
         for d in unassigned
     ]
+    # Незанятая из-за «не выполнил» обязанность — показать, кто не выполнил, даже если этап уже не открыт.
+    shown = {x["duty_id"] for x in duties}
+    for duty_id, u in failed.items():
+        if duty_id not in shown:
+            d = await session.get(Duty, duty_id)
+            duties.append({"duty_id": d.id, "emoji": d.emoji, "name": d.name, "action": d.action,
+                           "requires_car": d.requires_car, "user": None, "assignment_id": None, "mine": False,
+                           "failed_by": _user_brief(u)})
     from bot.actions import after_at
 
     marks = await svc.attendance(session, game.id)
+    minus = await svc.open_penalty_points(session, [u.id for s in Rsvp.ALL for u in by_status[s]])
     before = await svc.active_duties(session, DutyPhase.BEFORE)
     pending_after = await svc.pending_after_duties(session, game)
     view = {
@@ -149,7 +161,8 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "silence_penalized": bool(game.penalties_applied) and config.penalty_points > 0,
         "penalty": config.penalty_points if penalties_enabled(game) and not game.penalties_applied else 0,
         "participants": {
-            s: [{**_user_brief(u), "attended": marks.get(u.id)} for u in by_status[s]] for s in Rsvp.ALL
+            s: [{**_user_brief(u), "attended": marks.get(u.id), "burpees": discipline.burpees(minus.get(u.id, 0))}
+                for u in by_status[s]] for s in Rsvp.ALL
         },
         "attendance_open": game.status != GameStatus.CANCELLED and now >= game.starts_at - timedelta(hours=1),
         "min_players": game.min_players or 0,
@@ -200,6 +213,7 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         "status": user.status, "active": user.is_active, "staff": staff,
         "minuses": (await svc.open_penalty_points(session, [user.id])).get(user.id, 0),
     }
+    data["user"]["level"] = discipline.level_text(data["user"]["minuses"])
     data["access"] = "ok" if (user.is_approved or is_admin) else user.status
     if data["access"] == "ok":
         games = [
@@ -327,7 +341,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute",
+    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo",
 }
 
 
@@ -647,6 +661,16 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             target = await _user(session, body["user_id"]) if body.get("user_id") else None
             await operations.assign_duty(bot, session, game, duty, target)
             note = f"{duty.title} — {target.name if target else 'не назначено'}"
+        elif action in ("duty_failed", "duty_failed_undo"):
+            game = await _game(session, body)
+            duty = await session.get(Duty, int(body.get("duty_id", 0)))
+            if duty is None:
+                raise ApiError("Обязанность не найдена.", 404)
+            if action == "duty_failed":
+                done_by = await _user(session, body["done_by"]) if body.get("done_by") else None
+                note = await operations.mark_duty_failed(bot, session, game, duty, done_by)
+            else:
+                note = await operations.undo_duty_failed(bot, session, game, duty)
         elif action == "whatsapp":
             text = await actions.whatsapp_snapshot(bot, session, await _game(session, body))
             return {"text": text, "url": whatsapp.share_url(text)}
@@ -716,7 +740,8 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         elif action == "rsvp_for":
             target = await _user(session, body.get("user_id"))
             game = await _game(session, body)
-            await operations.change_rsvp(bot, session, game, target, body.get("status", ""), by_admin=True)
+            await operations.change_rsvp(bot, session, game, target, body.get("status", ""), by_admin=True,
+                                         count_transfer=False)
             note = f"{target.name}: {texts.RSVP_LABELS.get(body.get('status'), '')}"
         elif action == "player" and body.get("op") == "link_to":
             pending = await _user(session, body.get("user_id"))

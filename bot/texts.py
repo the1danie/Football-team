@@ -351,8 +351,10 @@ def penalty_dm(game: Game, points: int, total: int, limit: int) -> str:
         "Пока есть минусы, обязанности достаются тебе в первую очередь. "
         "Каждая выполненная обязанность списывает один минус.",
     ]
-    if limit and total >= limit:
-        lines += ["", f"❗ У тебя {total} {minus_word(total)} — администраторы получили уведомление."]
+    from bot.discipline import level_text  # noqa: PLC0415
+
+    if level_text(total):
+        lines += ["", f"❗ {level_text(total)}."]
     return "\n".join(lines)
 
 

@@ -7,12 +7,16 @@ from datetime import datetime, timedelta
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import actions, audit, keyboards, notifier, texts, whatsapp
 from bot.config import config
 from bot.deadlines import distribute_at, penalties_enabled, rsvp_deadline
-from bot.models import Assignment, AssignmentStatus, Duty, Game, GameStatus, Rsvp, SwapStatus, User, UserStatus
+from bot.models import (
+    Assignment, AssignmentStatus, Duty, Game, GameStatus, Penalty, PenaltyReason, PenaltyStatus, Rsvp, SwapStatus, User,
+    UserStatus,
+)
 from bot.services import games as svc
 
 
@@ -133,8 +137,10 @@ async def set_own_car(bot: Bot, session: AsyncSession, user: User, has_car: bool
 
 
 async def change_rsvp(
-    bot: Bot, session: AsyncSession, game: Game, user: User, status: str, by_admin: bool = False
+    bot: Bot, session: AsyncSession, game: Game, user: User, status: str, by_admin: bool = False,
+    count_transfer: bool = True,
 ) -> svc.RsvpResult:
+    """count_transfer=False — админ отметил сам (например, игрок заболел): обязанность уходит без минуса."""
     if status not in Rsvp.ALL:
         raise OpError("Неизвестный ответ.")
     if game.status not in GameStatus.ACTIVE:
@@ -153,6 +159,14 @@ async def change_rsvp(
         await notifier.refresh_game(bot, session, game)
         await notifier.announce_reassignments(bot, game, result.reassigned)
         await notifier.announce_new_assignments(bot, game, result.filled)
+        if count_transfer:  # отказался после распределения — обязанность ушла другому
+            from bot import discipline
+
+            mine = [r for r in result.reassigned if r.old_user.id == user.id]
+            if mine:  # один отказ — одна передача, сколько бы обязанностей ни было
+                note = await discipline.record_transfer(bot, session, game, user, mine[0].duty, mine[0].new_user, "dropped")
+                if note:
+                    await notifier.send_dm(bot, user, note)
     return result
 
 
@@ -508,6 +522,89 @@ async def assign_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty, u
         )
 
 
+# ----------------------------------------------------------------- не выполнил обязанность
+
+
+async def mark_duty_failed(
+    bot: Bot, session: AsyncSession, game: Game, duty: Duty, done_by: User | None = None
+) -> str:
+    """Админ: игрок не выполнил обязанность (не принёс воду…). Минус; если кто-то выручил — засчитать ему."""
+    from bot import discipline
+
+    if game.status not in (GameStatus.DISTRIBUTED, GameStatus.FINISHED):
+        raise OpError("Обязанности по этой игре не распределялись.")
+    if config.now() < game.starts_at - timedelta(hours=1):
+        raise OpError("Отметить «не выполнил» можно с часа до начала.")
+    current = next((a for a in await svc.active_assignments(session, game.id) if a.duty_id == duty.id), None)
+    if current is None:
+        raise OpError("Эта обязанность ни на кого не назначена.")
+    failed = current.user
+    if done_by is not None and done_by.id == failed.id:
+        raise OpError("Выберите другого — того, кто выполнил вместо него.")
+    current.status = AssignmentStatus.FAILED
+    finished = game.status == GameStatus.FINISHED
+    if finished:
+        await svc.fix_redemption(session, game, failed, None)  # не выполнил — минус не отработан
+    if done_by is not None:
+        session.add(Assignment(game_id=game.id, user=done_by, duty=duty))
+        await session.flush()
+        if finished:
+            await svc.fix_redemption(session, game, None, done_by)
+        p = await session.get(svc.GameParticipant, (game.id, done_by.id))
+        if p is None or p.status != Rsvp.YES or p.attended is False:
+            await svc.set_attendance(session, game, done_by, True)
+    await session.flush()
+    total = await discipline.penalize(bot, session, failed, game, discipline.NOT_DONE_POINTS, PenaltyReason.NOT_DONE)
+    await audit.record(
+        session, f"❌ Не выполнил {duty.title}: {failed.name}" + (f" (выручил {done_by.name})" if done_by else ""), game
+    )
+    await notifier.refresh_game(bot, session, game)
+    if failed.status == UserStatus.APPROVED:
+        await notifier.send_dm(
+            bot, failed,
+            f"❌ Ты не выполнил обязанность {duty.title} ({texts.game_header(game)}) — −{discipline.NOT_DONE_POINTS}. "
+            f"Всего минусов: {total}." + (f"\n{discipline.level_text(total)}." if discipline.level_text(total) else ""),
+        )
+    if done_by is not None:
+        await notifier.send_dm(bot, done_by, f"🙌 Спасибо, что выручил: {duty.title} засчитана тебе ({texts.game_header(game)}).")
+    return f"❌ {failed.name}: не выполнил {duty.name.lower()} — −{discipline.NOT_DONE_POINTS}"
+
+
+async def undo_duty_failed(bot: Bot, session: AsyncSession, game: Game, duty: Duty) -> str:
+    """Ошибочно отметили «не выполнил» — вернуть как было, минус снять."""
+    failed = await session.scalar(
+        select(Assignment).where(
+            Assignment.game_id == game.id, Assignment.duty_id == duty.id, Assignment.status == AssignmentStatus.FAILED
+        ).order_by(Assignment.id.desc()).limit(1)
+    )
+    if failed is None:
+        raise OpError("Нечего отменять.")
+    finished = game.status == GameStatus.FINISHED
+    for a in await svc.active_assignments(session, game.id):
+        if a.duty_id == duty.id:  # тот, кто «выручил», — назначение снимаем
+            a.status = AssignmentStatus.CANCELLED
+            if finished:
+                await svc.fix_redemption(session, game, a.user, None)
+    failed.status = AssignmentStatus.ACTIVE
+    if finished:
+        await svc.fix_redemption(session, game, None, failed.user)
+    from bot import discipline
+
+    pen = await session.scalar(
+        select(Penalty).where(Penalty.user_id == failed.user_id, Penalty.game_id == game.id,
+                              Penalty.reason == PenaltyReason.NOT_DONE, Penalty.status == PenaltyStatus.OPEN)
+    )
+    if pen is not None:
+        pen.points -= discipline.NOT_DONE_POINTS
+        if pen.points <= 0:
+            pen.points, pen.status = discipline.NOT_DONE_POINTS, PenaltyStatus.CANCELLED
+    await session.flush()
+    await audit.record(session, f"↩️ Отменил «не выполнил» {duty.title}: {failed.user.name}", game)
+    await notifier.refresh_game(bot, session, game)
+    await notifier.send_dm(bot, failed.user, f"✅ Отметка «не выполнил» ({duty.title}, {texts.game_header(game)}) снята, минус убран.")
+    return f"↩️ {failed.user.name}: отметка «не выполнил» снята"
+
+
 # ----------------------------------------------------------------- обмены
 
 
@@ -543,6 +640,12 @@ async def offer_swap(bot: Bot, session: AsyncSession, me: User, assignment_id: i
             ]
         ]
     )
+    if not theirs:  # передача в одну сторону — предупредить, если будет минус
+        from bot import discipline
+
+        warning = await discipline.warn_before_transfer(session, me.id)
+        if warning:
+            await notifier.send_dm(bot, me, warning + " Если согласится — минус начислится.")
     if not await notifier.send_dm(bot, target, offer, markup):
         req.status = SwapStatus.EXPIRED
         me_bot = await bot.me()
@@ -706,6 +809,11 @@ async def mark_attendance(bot: Bot, session: AsyncSession, game: Game, user: Use
             bot, user,
             f"⚠️ Ты отметил «Буду» на {texts.game_header(game)}, но не пришёл — −{config.no_show_points}. "
             f"Всего минусов: {result.penalty_total}.\nЕсли это ошибка — напиши админу.",
+        )
+        from bot import discipline
+
+        await discipline.check_level(
+            bot, session, user, result.penalty_total - config.no_show_points, result.penalty_total
         )
     if result.penalty_removed:
         await notifier.send_dm(bot, user, f"✅ Минус за неявку ({texts.game_header(game)}) снят.")

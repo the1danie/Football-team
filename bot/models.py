@@ -35,6 +35,7 @@ class AssignmentStatus:
     ACTIVE = "active"
     REPLACED = "replaced"  # обязанность передана другому (игрок отказался / админ поменял)
     CANCELLED = "cancelled"  # распределение пересчитано или игра отменена
+    FAILED = "failed"  # не выполнил (отметил админ): не засчитывается, минус
 
 
 class DutyPhase:
@@ -240,8 +241,13 @@ class SwapRequest(Base):
 class PenaltyReason:
     NO_RESPONSE = "no_response"  # не ответил на опрос
     NO_SHOW = "no_show"  # сказал «Буду», но не пришёл
+    NOT_DONE = "not_done"  # не выполнил обязанность
+    GAVE_AWAY = "gave_away"  # слишком часто отдаёт обязанность другим
 
-    LABELS = {NO_RESPONSE: "не ответил на опрос", NO_SHOW: "сказал «Буду», но не пришёл"}
+    LABELS = {
+        NO_RESPONSE: "не ответил на опрос", NO_SHOW: "сказал «Буду», но не пришёл",
+        NOT_DONE: "не выполнил обязанность", GAVE_AWAY: "отдал обязанность другому",
+    }
 
 
 class PenaltyStatus:
@@ -312,3 +318,17 @@ class PushSubscription(Base):
     p256dh: Mapped[str] = mapped_column(String(200))
     auth: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DutyTransfer(Base):
+    """Игрок отдал свою обязанность другому (обмен в одну сторону или «Не буду» после распределения)."""
+
+    __tablename__ = "duty_transfers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    game_id: Mapped[int | None] = mapped_column(ForeignKey("games.id", ondelete="SET NULL"), nullable=True)
+    duty_id: Mapped[int | None] = mapped_column(ForeignKey("duties.id", ondelete="SET NULL"), nullable=True)
+    to_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), default="swap")  # swap | dropped
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

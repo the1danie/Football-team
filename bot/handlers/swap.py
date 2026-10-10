@@ -129,6 +129,15 @@ async def swap_accept(cb: CallbackQuery, session: AsyncSession, bot: Bot):
         f"✅ {texts.h(target.name)} согласился на обмен ({texts.game_header(game)}).\n"
         f"Твоя обязанность теперь: {duty_list(theirs)}",
     )
+    if req.to_assignment_id is None:  # отдал свою обязанность, ничего не взяв взамен
+        from bot import discipline
+
+        given = await session.get(Assignment, req.from_assignment_id)
+        note = await discipline.record_transfer(
+            bot, session, game, initiator, given.duty if given else None, target, "swap"
+        )
+        if note:
+            await notifier.send_dm(bot, initiator, note)
 
 
 @router.callback_query(F.data.startswith("swapno:"))

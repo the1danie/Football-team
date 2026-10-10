@@ -617,6 +617,15 @@ async def set_assignment(
     return old_user, new
 
 
+async def failed_assignments(session: AsyncSession, game_id: int) -> list[Assignment]:
+    """Обязанности, которые не выполнили (последняя отметка по каждой)."""
+    rows = (await session.scalars(
+        select(Assignment).where(Assignment.game_id == game_id, Assignment.status == AssignmentStatus.FAILED)
+        .order_by(Assignment.id)
+    )).all()
+    return list({a.duty_id: a for a in rows}.values())
+
+
 async def fix_redemption(session: AsyncSession, game: Game, old_user: User | None, new_user: User | None) -> None:
     """Исправили назначение в прошедшей игре: минус, списанный за эту обязанность, переходит к тому,
     кто её на самом деле выполнил."""
@@ -1183,10 +1192,26 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
         )).all():
             marks[(p.game_id, p.user_id)] = p
 
+    from bot.models import DutyTransfer
+
+    game_ids = [g.id for g in games]
+    failed: dict[int, int] = {}
+    gave: dict[int, int] = {}
+    if game_ids:
+        failed = dict((await session.execute(
+            select(Assignment.user_id, func.count()).where(
+                Assignment.game_id.in_(game_ids), Assignment.status == AssignmentStatus.FAILED
+            ).group_by(Assignment.user_id)
+        )).all())
+    tq = select(DutyTransfer.user_id, func.count()).group_by(DutyTransfer.user_id)
+    if since is not None:
+        tq = tq.where(DutyTransfer.created_at >= since - timedelta(days=1))
+    gave = dict((await session.execute(tq)).all())
+
     rows = []
     for u in users:
         r = {"id": u.id, "name": u.name, "manual": u.is_manual, "games": 0, "came": 0, "no": 0, "maybe": 0,
-             "silent": 0, "no_show": 0, "history": []}
+             "silent": 0, "no_show": 0, "history": [], "failed": failed.get(u.id, 0), "gave": gave.get(u.id, 0)}
         for g in games:
             p = marks.get((g.id, u.id))
             if p is None:

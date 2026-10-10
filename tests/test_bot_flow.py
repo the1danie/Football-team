@@ -234,6 +234,7 @@ async def test_full_flow(h: Harness):
     assert new_balls.user.telegram_id not in (driver_tg,) and new_balls.user.has_car
     assert driver_tg not in {a.user.telegram_id for a in active}
     assert len(active) == 4
+    assert any("Первый раз за 30 дней — без минуса" in m.text for m in fake.sent(driver_tg))  # отдал — учтено
 
     # --- обмен: игрок без машины меняется с другим без машины
     async with h.sm() as s:
@@ -262,6 +263,7 @@ async def test_full_flow(h: Harness):
     async with h.sm() as s:
         swapped = {a.duty_id: a.user_id for a in await svc.active_assignments(s, game_id)}
     assert swapped[a1.duty_id] == a2.user_id and swapped[a2.duty_id] == a1.user_id
+    assert not any("отдал обязанность" in m.text.lower() for m in fake.sent(a1.user.telegram_id))  # обмен — не «отдал»
 
     # --- ручное изменение назначения
     fake.reset()
@@ -442,7 +444,7 @@ async def test_poll_nudge_and_penalties(h: Harness, monkeypatch):
     assert any("Начислено: −1. Всего: 1 минус." in m.text for m in fake.sent(4))
     assert any("Не ответили на опрос" in m.text and "Руслан" in m.text for m in fake.sent(GROUP))
     admin_texts = [m.text for m in fake.sent(ADMIN)]
-    assert any("1 и больше минусов" in t for t in admin_texts)  # лимит
+    # пороги минусов (3/6/9) проверяются в tests/test_discipline.py
     assert any("Автоматическое распределение" in t for t in admin_texts)
     async with h.sm() as s:
         assert (await svc.open_penalty_points(s)) == {ruslan.id: 1, (await svc.get_user_by_tg(s, ADMIN)).id: 1}
