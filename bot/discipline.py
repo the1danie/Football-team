@@ -3,7 +3,7 @@
 Правила (числа — здесь, в одном месте):
 - не выполнил обязанность — NOT_DONE_POINTS;
 - отдал обязанность другому: 1-й раз за TRANSFER_WINDOW — бесплатно, 2-й — минус 1,
-  3-й и каждый следующий — минус 3;
+  3-й — минус 2, 4-й — минус 3 и т. д. (каждый следующий на 1 больше);
 - всего минусов 3 → 25 бёрпи на тренировке, 6 → 50 бёрпи, 9 → исключение из команды.
 Минусы, как и раньше, отрабатываются выполненными обязанностями (одна — один минус).
 """
@@ -27,7 +27,7 @@ BURPEES = ((6, 50), (3, 25))  # (минусов от, бёрпи)
 
 def transfer_points(n: int) -> int:
     """Сколько минусов за n-ю передачу обязанности за окно (n начинается с 1)."""
-    return 0 if n <= 1 else 1 if n == 2 else 3
+    return max(0, n - 1)
 
 
 def burpees(total: int) -> int | None:
@@ -116,7 +116,7 @@ async def record_transfer(
     points = transfer_points(n)
     days = TRANSFER_WINDOW.days
     if not points:
-        return f"Ты отдал обязанность другому. Первый раз за {days} дней — без минуса, дальше: −1, потом −3 за каждый."
+        return f"Ты отдал обязанность другому. Первый раз за {days} дней — без минуса, дальше: −1, −2, −3 и т. д."
     total = await penalize(bot, session, user, game, points, PenaltyReason.GAVE_AWAY)
     await notifier.notify_admins(
         bot, f"🔁 {texts.h(user.name)} отдал обязанность другому — {n}-й раз за {days} дней: −{points} (всего −{total})."

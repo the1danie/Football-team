@@ -1,4 +1,4 @@
-"""Дисциплина: «не выполнил» (−2), «отдал другому» (1-й раз бесплатно, 2-й −1, дальше −3), пороги 3/6/9."""
+"""Дисциплина: «не выполнил» (−2), «отдал другому» (1-й раз бесплатно, 2-й −1, 3-й −2, …), пороги 3/6/9."""
 
 from datetime import timedelta
 
@@ -13,7 +13,7 @@ from tests.test_webhook import fake  # noqa: F401
 
 
 def test_rules_numbers():
-    assert [discipline.transfer_points(n) for n in (1, 2, 3, 4)] == [0, 1, 3, 3]
+    assert [discipline.transfer_points(n) for n in (1, 2, 3, 4, 5)] == [0, 1, 2, 3, 4]
     assert [discipline.burpees(n) for n in (2, 3, 5, 6, 8)] == [None, 25, 25, 50, 50]
     assert "исключение" in discipline.level_text(9) and "25 бёрпи" in discipline.level_text(3)
 
@@ -91,7 +91,7 @@ async def test_giving_away_escalates_and_thresholds(team):  # noqa: F811
     await give_away(2)
     assert await _open_points(meir_id) == 1  # 2-й — −1
     await give_away(3)
-    assert await _open_points(meir_id) == 4  # 3-й — −3 → всего 4: порог 25 бёрпи пройден
+    assert await _open_points(meir_id) == 3  # 3-й — −2 → всего 3: порог 25 бёрпи пройден
     assert any("25 бёрпи" in m.text for m in fake.sent(2))
     assert any("Мейр" in m.text and "25 бёрпи" in m.text for m in fake.sent(1))  # админу
     _, st = await api(meir, "state")
@@ -104,7 +104,7 @@ async def test_giving_away_escalates_and_thresholds(team):  # noqa: F811
     # −9 — исключение из команды
     async with webhook._sessionmaker() as s:
         user = await svc.get_user_by_tg(s, 2)
-        await discipline.penalize(_Bot(), s, user, None, 5, PenaltyReason.NOT_DONE)
+        await discipline.penalize(_Bot(), s, user, None, 6, PenaltyReason.NOT_DONE)
         await s.commit()
     async with webhook._sessionmaker() as s:
         assert (await svc.get_user_by_tg(s, 2)).status == UserStatus.BLOCKED
