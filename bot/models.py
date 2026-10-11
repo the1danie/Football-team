@@ -123,6 +123,8 @@ class Game(Base):
     # Напоминание тем, кто не отметился, и начисление минусов.
     rsvp_nudge_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     penalties_applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Сбор закрыт: «Не знаю» и молчащие переведены в «Не буду».
+    auto_declined: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Обязанности «после тренировки» уже распределены.
     after_duties_done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Админам отправлен список «кто пришёл».
@@ -184,6 +186,8 @@ class GameParticipant(Base):
     status: Mapped[str] = mapped_column(String(8))
     # Отметка админа после начала: True — пришёл, False — не пришёл, None — не отмечали.
     attended: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Поставлено ботом при закрытии сбора: "silent" — молчал, "maybe" — был «Не знаю». Сам ответил — None.
+    auto_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(lazy="joined")

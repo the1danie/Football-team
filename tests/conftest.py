@@ -80,3 +80,4 @@ def _old_deadlines(monkeypatch):
 
     monkeypatch.setattr(config, "auto_distribute_hours", 5.0)
     monkeypatch.setattr(config, "personal_reminder_hours", 3.0)
+    monkeypatch.setattr(config, "rsvp_reminder_hours", 3.0)

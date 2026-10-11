@@ -564,6 +564,8 @@ function gameCard(g) {
       onclick: async () => { if (g.my_rsvp === key) return; haptic(); const r = await api("rsvp", { game_id: g.id, status: key }); if (r) { haptic("ok"); render(); } } },
       h("span", { class: "e" }, e), label))));
 
+  if (g.auto_declined && !g.past)
+    add(card, h("div", { class: "small muted", style: "margin-top:8px" }, "🔒 Сбор закрыт: «Не знаю» и молчавшие записаны «Не буду». Обязанности — только среди «Буду»."));
   const open = S.open[g.id] ?? (!!staff || !!g.past);
   const canMarkFor = d.is_admin && !g.past && g.status !== "cancelled";
   const counts = h("div", { class: "counts" },

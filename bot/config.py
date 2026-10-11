@@ -52,7 +52,7 @@ class Config:
     )
     # --- Опросы и минусы
     # Напомнить не ответившим за столько часов до закрытия сбора (= распределения обязанностей).
-    rsvp_reminder_hours: float = field(default_factory=lambda: _float("RSVP_REMINDER_HOURS", 3))
+    rsvp_reminder_hours: float = field(default_factory=lambda: _float("RSVP_REMINDER_HOURS", 2))
     # Сколько минусов за то, что не ответил на опрос (0 — не начислять).
     penalty_points: int = field(default_factory=lambda: int(_float("PENALTY_POINTS", 1)))
     # Минус за неявку: отметил «Буду», а админ отметил «не пришёл» (0 — не начислять).

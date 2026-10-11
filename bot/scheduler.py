@@ -77,6 +77,13 @@ async def _process_game(bot: Bot, session: AsyncSession, game: Game, now) -> Non
         report = await actions.apply_penalties_and_announce(bot, session, game)
         if report:
             await notifier.notify_admins(bot, report)
+    # Сразу после минусов: «Не знаю» и молчащие → «Не буду», чтобы вода распределилась только среди «Буду».
+    # Пока решается недобор (админ может «подождать час» и позвать сомневающихся) — не трогаем.
+    if not game.auto_declined and now >= rsvp_deadline(game) and not (
+        game.status == GameStatus.OPEN and game.min_players and game.min_decision != "keep"
+        and await svc.yes_count(session, game.id) < game.min_players
+    ):
+        await actions.auto_decline_and_notify(bot, session, game)
     if now >= game.starts_at:
         return
 

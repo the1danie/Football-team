@@ -319,15 +319,17 @@ def rsvp_nudge(game: Game, deadline: datetime, now: datetime, penalty_points: in
     lines = ["⏰ <b>Ты ещё не ответил, придёшь ли</b>", ""] + game_lines(game)
     if game.min_players:
         lines += ["", min_players_line(game, yes)]
-    lines += ["", f"Сбор закрывается {until(deadline, now)}."]
+    lines += ["", f"Ответь {until(deadline, now)} — потом сбор закроется."]
     if penalty_points > 0:
-        lines.append(f"Не ответишь — {penalty_points} {minus_word(penalty_points)}. Достаточно нажать «❌ Не буду».")
+        lines.append(f"Не ответишь — {penalty_points} {minus_word(penalty_points)} и запись «Не буду». "
+                     "Не можешь прийти — просто нажми «❌ Не буду», это без минуса.")
     return "\n".join(lines)
 
 
 def maybe_nudge(game: Game, deadline: datetime, now: datetime, yes: int = 0) -> str:
     lines = ["🤔 <b>Ты ответил «Не знаю»</b>", ""] + game_lines(game)
-    lines += ["", f"Определись {until(deadline, now)}, чтобы было понятно, сколько нас."]
+    lines += ["", f"Определись {until(deadline, now)}: «Буду» или «Не буду».",
+              "Сбор закроется — и бот запишет «Не буду», если так и останется «Не знаю»."]
     if game.min_players:
         lines.append(min_players_line(game, yes))
     return "\n".join(lines)

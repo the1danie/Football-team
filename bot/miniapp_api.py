@@ -155,6 +155,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "deadline_label": texts.until(deadline, now),
         "deadline_at_label": f"{texts.day_word(deadline, now).lower()} в {texts.fmt_time(deadline)}",
         "deadline_passed": now >= deadline,
+        "auto_declined": bool(game.auto_declined),
         # Для живого таймера: момент закрытия сбора в мс (UTC) и «сейчас» сервера — на случай неверных часов телефона.
         "deadline_ts": int(to_utc(deadline).replace(tzinfo=timezone.utc).timestamp() * 1000),
         "server_ts": int(datetime.now(timezone.utc).timestamp() * 1000),

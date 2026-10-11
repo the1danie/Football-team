@@ -183,6 +183,30 @@ async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, result
     return f"🙈 Не ответили на опрос — по −{points}: " + ", ".join(texts.h(r.user.name) for r in results)
 
 
+async def auto_decline_and_notify(bot: Bot, session: AsyncSession, game: Game) -> None:
+    """Сбор закрыт: «Не знаю» и молчащие становятся «Не буду»."""
+    silent, maybe = await svc.auto_decline(session, game)
+    if not silent and not maybe:
+        return
+    await notifier.refresh_game(bot, session, game)
+    for user in maybe:
+        await notifier.send_dm(
+            bot, user, f"🔒 Сбор закрыт ({texts.game_header(game)}). Ты не определился — записан «Не буду». "
+                       "Если всё-таки придёшь, напиши админу."
+        )
+    for user in silent:
+        await notifier.send_dm(
+            bot, user, f"🔒 Сбор закрыт ({texts.game_header(game)}). Ты не ответил — записан «Не буду». "
+                       "Если всё-таки придёшь, напиши админу."
+        )
+    parts = []
+    if maybe:
+        parts.append(f"«Не знаю» → «Не буду»: {', '.join(texts.h(u.name) for u in maybe)}")
+    if silent:
+        parts.append(f"молчали → «Не буду»: {', '.join(texts.h(u.name) for u in silent)}")
+    await notifier.notify_admins(bot, f"🔒 Сбор закрыт: {texts.game_header(game)}\n" + "\n".join(parts))
+
+
 async def redeem_and_announce(bot: Bot, session: AsyncSession, game: Game) -> None:
     """Игра прошла — выполненные обязанности списывают минусы."""
     redeemed = await svc.redeem_penalties(session, game)

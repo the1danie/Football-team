@@ -285,12 +285,32 @@ async def cancel_game(session: AsyncSession, game: Game) -> list[Assignment]:
 
 
 async def participants(session: AsyncSession, game_id: int) -> list[GameParticipant]:
+    """Ответы на опрос. Молчавшие, которых бот при закрытии сбора записал в «Не буду», — не ответ."""
     rows = await session.scalars(
         select(GameParticipant)
         .where(GameParticipant.game_id == game_id)
+        .where(or_(GameParticipant.auto_from.is_(None), GameParticipant.auto_from != "silent"))
         .order_by(GameParticipant.updated_at)
     )
     return list(rows.all())
+
+
+async def auto_decline(session: AsyncSession, game: Game) -> tuple[list[User], list[User]]:
+    """Сбор закрыт: «Не знаю» и молчащие → «Не буду». Возвращает (молчавшие, были «Не знаю»)."""
+    silent = await non_responders(session, game)
+    for u in silent:
+        p = await session.get(GameParticipant, (game.id, u.id))
+        if p is None:
+            session.add(GameParticipant(game_id=game.id, user_id=u.id, status=Rsvp.NO, user=u, auto_from="silent"))
+        else:
+            p.status, p.auto_from = Rsvp.NO, "silent"
+    maybe = (await participants_by_status(session, game.id))[Rsvp.MAYBE]
+    for u in maybe:
+        p = await session.get(GameParticipant, (game.id, u.id))
+        p.status, p.auto_from = Rsvp.NO, "maybe"
+    game.auto_declined = True
+    await session.flush()
+    return silent, maybe
 
 
 async def participants_by_status(session: AsyncSession, game_id: int) -> dict[str, list[User]]:
@@ -566,7 +586,9 @@ async def set_rsvp(
     if p is None:
         session.add(GameParticipant(game_id=game.id, user_id=user.id, status=status, user=user))
     else:
-        p.status = status
+        if p.auto_from == "silent":
+            old = None  # для системы он молчал
+        p.status, p.auto_from = status, None
     await session.flush()
 
     result = RsvpResult(old_status=old, new_status=status)
@@ -776,7 +798,10 @@ async def non_responders(session: AsyncSession, game: Game) -> list[User]:
     from bot.deadlines import MIN_RSVP_WINDOW, rsvp_deadline, to_utc
 
     answered = set(
-        (await session.scalars(select(GameParticipant.user_id).where(GameParticipant.game_id == game.id))).all()
+        (await session.scalars(select(GameParticipant.user_id).where(
+            GameParticipant.game_id == game.id,
+            or_(GameParticipant.auto_from.is_(None), GameParticipant.auto_from != "silent"),
+        ))).all()
     )
     joined_by = max(game.created_at, to_utc(rsvp_deadline(game) - MIN_RSVP_WINDOW))
     return [u for u in await roster(session) if u.id not in answered and u.created_at <= joined_by]
@@ -1038,6 +1063,7 @@ async def set_attendance(
             session.add(p)
         p.status = Rsvp.YES
         p.attended = True
+        p.auto_from = None
         no_show = await session.scalar(
             select(Penalty).where(
                 Penalty.user_id == user.id, Penalty.game_id == game.id,
@@ -1221,6 +1247,10 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
                 kind = "silent"
             elif p.attended is True or (p.status == Rsvp.YES and p.attended is None):
                 kind = "came"
+            elif p.auto_from == "silent":
+                kind = "silent"
+            elif p.auto_from == "maybe":
+                kind = "maybe"
             elif p.status == Rsvp.YES:
                 kind = "no_show"
             elif p.status == Rsvp.MAYBE:
