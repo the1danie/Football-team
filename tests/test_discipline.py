@@ -223,6 +223,10 @@ async def test_burpees_grow_each_time_within_3_months(team):  # noqa: F811
     await api(ADMIN, "burpees_done", user_id=meir_id)
     assert await debt_and_due() == 50
     _, st = await api(tg_user(2, "Мейр"), "state")
+    info = st["state"]["user"]["burpee_info"]
+    assert (info["rounds"], info["next"]) == (1, 50) and info["reset"]
+    _, p = await api(ADMIN, "player_detail", user_id=meir_id)
+    assert p["burpee_info"]["next"] == 50
     assert "50 бёрпи (2-й раз" in st["state"]["user"]["level"]
     status, res = await api(ADMIN, "burpees_done", user_id=meir_id)
     assert "50 бёрпи" in res["note"]

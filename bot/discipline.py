@@ -9,7 +9,7 @@
 Минусы, как и раньше, отрабатываются выполненными обязанностями (одна — один минус).
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
 from sqlalchemy import func, select
@@ -63,6 +63,19 @@ async def burpee_rounds(session: AsyncSession, user_ids, now: datetime | None = 
         .group_by(Penalty.user_id)
     )
     return {uid: int(n) for uid, n in rows.all()}
+
+
+async def burpee_info(session: AsyncSession, user_id: int) -> dict | None:
+    """Делал бёрпи за последние 3 месяца — сколько раз, сколько будет в следующий раз и когда снова с 25."""
+    since = datetime.utcnow() - BURPEES_WINDOW
+    times = sorted(set((await session.scalars(
+        select(Penalty.burpees_at).where(Penalty.user_id == user_id, Penalty.status == PenaltyStatus.BURPEES,
+                                         Penalty.burpees_at >= since)
+    )).all()))
+    if not times:
+        return None
+    reset = (times[-1] + BURPEES_WINDOW).replace(tzinfo=timezone.utc).astimezone(config.tz)
+    return {"rounds": len(times), "next": burpees(BURPEES[-1][0], len(times)), "reset": texts.fmt_date(reset)}
 
 
 async def level(session: AsyncSession, user: User, total: int) -> str | None:

@@ -216,6 +216,7 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         "minuses": (await svc.open_penalty_points(session, [user.id])).get(user.id, 0),
     }
     data["user"]["level"] = await discipline.level(session, user, data["user"]["minuses"])
+    data["user"]["burpee_info"] = await discipline.burpee_info(session, user.id)
     me_row = next((r for r in await svc.leaderboard(session, config.now()) if r["id"] == user.id), None)
     if me_row:
         data["user"]["help"], data["user"]["minus_total"], data["user"]["balance"] = (
@@ -275,6 +276,7 @@ async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict
     penalties = await svc.user_penalties(session, user.id, open_only=True)
     view = {
         "id": user.id, "name": user.name, "car": user.has_car,
+        "burpee_info": await discipline.burpee_info(session, user.id),
         "burpees": discipline.burpees(sum(p.points for p in penalties if p.status == PenaltyStatus.OPEN),
                                       (await discipline.burpee_rounds(session, [user.id])).get(user.id, 0)),
         "duties": [{"emoji": d.emoji, "name": d.name, "count": n} for d, n in await svc.player_stats(session, user.id)],

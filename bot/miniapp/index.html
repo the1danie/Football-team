@@ -802,11 +802,12 @@ function profileTab() {
           onclick: async () => { haptic(); const r = await api("profile", { car: !u.car }); if (r) render(); } }))),
     u.balance !== undefined ? h("div", { class: "card row" },
       h("div", { class: "grow" }, h("div", { class: "small muted" }, "⚖️ Итог: помощь − минусы"),
-        h("div", { class: "small" }, `🏆 помощь +${u.help} · ⚠️ минусы −${u.minus_total}`)),
+        h("div", { class: "small" }, `🏆 помощь ${u.help ? "+" + u.help : 0} · ⚠️ минусы ${u.minus_total ? "−" + u.minus_total : 0}`)),
       h("div", { style: `font-size:26px;font-weight:800;color:var(${u.balance < 0 ? "--danger" : "--yes"})` }, (u.balance > 0 ? "+" : "") + u.balance)) : null,
     u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Долг сейчас: −${u.minuses}`),
       u.level ? h("div", { style: "margin-top:6px;color:var(--danger);font-weight:600" }, `💪 ${u.level}`) : null,
       h("div", { class: "small muted", style: "margin-top:4px" }, "Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
+    u.burpee_info ? burpeeCard(u.burpee_info, "Ты делал") : null,
     S.data.is_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openAudit() }, "📜 Журнал действий админов") : null,
     S.data.is_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
       const r = await api("calendar_link"); if (r) openSheet({ type: "calendar", ...r }); } }, "📅 Игры в мой Google Календарь") : null,
@@ -1198,6 +1199,13 @@ function myPinSheet() {
     h("button", { class: "btn secondary", onclick: closeSheet }, "Готово"));
 }
 
+function burpeeCard(b, who) {
+  return h("div", { class: "card" },
+    h("div", { style: "font-weight:600" }, `💪 ${who} бёрпи: ${b.rounds} ${plural(b.rounds, "раз", "раза", "раз")} за 3 месяца`),
+    h("div", { style: "margin-top:6px" }, "Если снова наберётся −3, будет ", h("b", { style: "color:var(--danger)" }, `${b.next} бёрпи`), "."),
+    h("div", { class: "small muted", style: "margin-top:4px" }, `Без новых бёрпи до ${b.reset} — снова с 25.`));
+}
+
 async function markBurpees(u, g) {
   if (!(await confirmBox(`${u.name} сделал ${u.burpees} бёрпи? Все его минусы обнулятся.`))) return false;
   const r = await api("burpees_done", { user_id: u.id, game_id: g ? g.id : null });
@@ -1340,6 +1348,7 @@ function playerSheet() {
       h("button", { class: "btn small", onclick: () => playerOp(p, "rename", { name: document.getElementById("pname").value }) }, "Сохранить")),
     p.duties && p.duties.some((x) => x.count) ? h("div", {}, h("div", { class: "label" }, "Выполнял обязанности"),
       h("div", { class: "people" }, p.duties.map((x) => h("span", { class: "chip" }, `${x.emoji} ${x.name}: ${x.count}`)))) : null,
+    p.burpee_info ? h("div", { style: "margin-top:12px" }, burpeeCard(p.burpee_info, "Делал")) : null,
     p.burpees ? h("button", { class: "btn", style: "margin-top:12px", onclick: async () => {
       if (await markBurpees(p, null)) { const r = await api("player_detail", { user_id: p.id }); if (r) { S.sheet.player = r; render(); } } } },
       `💪 Сделал ${p.burpees} бёрпи — обнулить минусы`) : null,
