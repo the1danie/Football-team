@@ -4,7 +4,8 @@
 - не выполнил обязанность — NOT_DONE_POINTS;
 - отдал обязанность другому: 1-й раз за TRANSFER_WINDOW — бесплатно, 2-й — минус 1,
   3-й — минус 2, 4-й — минус 3 и т. д. (каждый следующий на 1 больше);
-- всего минусов 3 → 25 бёрпи на тренировке, 6 → 50 бёрпи, 9 → исключение из команды.
+- всего минусов 3 → 25 бёрпи на тренировке, 6 → 50 бёрпи, 9 → исключение из команды;
+  каждый следующий раз бёрпи за BURPEES_WINDOW — на BURPEES_STEP больше (25 → 50 → 75…).
 Минусы, как и раньше, отрабатываются выполненными обязанностями (одна — один минус).
 """
 
@@ -23,6 +24,8 @@ NOT_DONE_POINTS = 2
 TRANSFER_WINDOW = timedelta(days=30)
 EXCLUDE_AT = 9
 BURPEES = ((6, 50), (3, 25))  # (минусов от, бёрпи)
+BURPEES_STEP = 25  # прибавка за каждый уже сделанный раз бёрпи за окно
+BURPEES_WINDOW = timedelta(days=90)
 
 
 def transfer_points(n: int) -> int:
@@ -30,20 +33,40 @@ def transfer_points(n: int) -> int:
     return max(0, n - 1)
 
 
-def burpees(total: int) -> int | None:
+def burpees(total: int, rounds: int = 0) -> int | None:
+    """Сколько бёрпи при долге total, если за окно бёрпи уже делал rounds раз."""
     for limit, count in BURPEES:
         if total >= limit:
-            return count
+            return count + BURPEES_STEP * rounds
     return None
 
 
-def level_text(total: int) -> str | None:
+def level_text(total: int, rounds: int = 0) -> str | None:
     if total >= EXCLUDE_AT:
         return f"−{total}: исключение из команды"
-    b = burpees(total)
+    b = burpees(total, rounds)
     if b:
-        return f"−{total}: на тренировке {b} бёрпи. При −{EXCLUDE_AT} — исключение из команды"
+        again = f" ({rounds + 1}-й раз за {BURPEES_WINDOW.days // 30} мес.)" if rounds else ""
+        return f"−{total}: на тренировке {b} бёрпи{again}. При −{EXCLUDE_AT} — исключение из команды"
     return None
+
+
+async def burpee_rounds(session: AsyncSession, user_ids, now: datetime | None = None) -> dict[int, int]:
+    """Сколько раз каждый делал бёрпи за последние BURPEES_WINDOW."""
+    ids = list(user_ids)
+    if not ids:
+        return {}
+    since = (now or datetime.utcnow()) - BURPEES_WINDOW
+    rows = await session.execute(
+        select(Penalty.user_id, func.count(func.distinct(Penalty.burpees_at)))
+        .where(Penalty.user_id.in_(ids), Penalty.status == PenaltyStatus.BURPEES, Penalty.burpees_at >= since)
+        .group_by(Penalty.user_id)
+    )
+    return {uid: int(n) for uid, n in rows.all()}
+
+
+async def level(session: AsyncSession, user: User, total: int) -> str | None:
+    return level_text(total, (await burpee_rounds(session, [user.id])).get(user.id, 0))
 
 
 async def add_penalty(session: AsyncSession, user: User, game: Game | None, points: int, reason: str) -> int:
@@ -82,7 +105,7 @@ async def check_level(bot: Bot, session: AsyncSession, user: User, before: int, 
                  "Вернуть можно в «Игроки» → «Удалены» → «♻️ Вернуть в команду» (минусы стоит снять)."
         )
         return
-    b = burpees(after)
+    b = burpees(after, (await burpee_rounds(session, [user.id])).get(user.id, 0))
     await notifier.send_dm(
         bot, user, f"❗ У тебя −{after}: на ближайшей тренировке — {b} бёрпи. Сделаешь — минусы обнулятся. "
                    f"При −{EXCLUDE_AT} — исключение из команды.\n"
@@ -136,12 +159,13 @@ async def warn_before_transfer(session: AsyncSession, user_id: int) -> str | Non
 async def burpees_done(session: AsyncSession, user: User, game: Game | None) -> tuple[int, int]:
     """Игрок сделал бёрпи — все действующие минусы обнуляются. Возвращает (сколько было, сколько бёрпи)."""
     total = (await svc.open_penalty_points(session, [user.id])).get(user.id, 0)
-    count = burpees(total)
+    count = burpees(total, (await burpee_rounds(session, [user.id])).get(user.id, 0))
     if not count:
         raise ValueError("no burpees due")
+    at = datetime.utcnow()
     for p in (await session.scalars(
         select(Penalty).where(Penalty.user_id == user.id, Penalty.status == PenaltyStatus.OPEN)
     )).all():
-        p.status, p.redeemed_game_id = PenaltyStatus.BURPEES, game.id if game else None
+        p.status, p.redeemed_game_id, p.burpees_at = PenaltyStatus.BURPEES, game.id if game else None, at
     await session.flush()
     return total, count

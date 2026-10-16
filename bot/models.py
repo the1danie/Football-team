@@ -278,6 +278,8 @@ class Penalty(Base):
         ForeignKey("games.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # Когда закрыт бёрпи (одна отметка «сделал бёрпи» — одно время у всех её минусов).
+    burpees_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     game: Mapped["Game | None"] = relationship(foreign_keys=[game_id], lazy="joined")
 

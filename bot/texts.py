@@ -345,7 +345,7 @@ def group_nudge(game: Game, users: list[User], deadline: datetime, now: datetime
     )
 
 
-def penalty_dm(game: Game, points: int, total: int, limit: int) -> str:
+def penalty_dm(game: Game, points: int, total: int, limit: int, rounds: int = 0) -> str:
     lines = [
         f"⚠️ Ты не ответил на опрос: {game_header(game)}.",
         f"Начислено: −{points}. Всего: {total} {minus_word(total)}.",
@@ -355,8 +355,8 @@ def penalty_dm(game: Game, points: int, total: int, limit: int) -> str:
     ]
     from bot.discipline import level_text  # noqa: PLC0415
 
-    if level_text(total):
-        lines += ["", f"❗ {level_text(total)}."]
+    if level_text(total, rounds):
+        lines += ["", f"❗ {level_text(total, rounds)}."]
     return "\n".join(lines)
 
 

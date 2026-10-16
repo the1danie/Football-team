@@ -18,7 +18,7 @@ DEFAULT_DUTIES = [
 # Один раз: «Стирка манишек» объединяется с «Манишками» (история переносится, обязанность выключается).
 MERGE_LAUNDRY_INTO_BIBS = True
 MERGE_LAUNDRY_KEY = "merge_laundry_v1"
-BURPEES_STATUS_KEY = "burpees_status_v1"
+BURPEES_STATUS_KEY = "burpees_status_v2"  # v2: ещё и время бёрпи (для 25 → 50 → 75)
 DUTY_PHASES_KEY = "duty_phases_v1"
 
 
@@ -149,13 +149,14 @@ async def _mark_burpees_history(session: AsyncSession) -> None:
                      else Penalty.redeemed_game_id.is_(None))
         left = int(m.group(2))
         for p in (await session.scalars(
-            select(Penalty).where(Penalty.user_id == user.id, Penalty.status == PenaltyStatus.REDEEMED,
-                                  Penalty.created_at <= entry.created_at, game_cond)
+            select(Penalty).where(Penalty.user_id == user.id,
+                                  Penalty.status.in_((PenaltyStatus.REDEEMED, PenaltyStatus.BURPEES)),
+                                  Penalty.burpees_at.is_(None), Penalty.created_at <= entry.created_at, game_cond)
             .order_by(Penalty.created_at.desc(), Penalty.id.desc())
         )).all():
             if left <= 0:
                 break
-            p.status, left = PenaltyStatus.BURPEES, left - p.points
+            p.status, p.burpees_at, left = PenaltyStatus.BURPEES, entry.created_at, left - p.points
     await session.flush()
 
 

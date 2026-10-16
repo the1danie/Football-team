@@ -566,7 +566,7 @@ async def mark_duty_failed(
         await notifier.send_dm(
             bot, failed,
             f"❌ Ты не выполнил обязанность {duty.title} ({texts.game_header(game)}) — −{discipline.NOT_DONE_POINTS}. "
-            f"Всего минусов: {total}." + (f"\n{discipline.level_text(total)}." if discipline.level_text(total) else ""),
+            f"Всего минусов: {total}." + (f"\n{lvl}." if (lvl := await discipline.level(session, failed, total)) else ""),
         )
     if done_by is not None:
         await notifier.send_dm(bot, done_by, f"🙌 Спасибо, что выручил: {duty.title} засчитана тебе ({texts.game_header(game)}).")

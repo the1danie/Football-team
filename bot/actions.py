@@ -167,8 +167,12 @@ async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, result
     if not results:
         return ""
     points = results[0].points
+    from bot import discipline  # noqa: PLC0415
+
+    rounds = await discipline.burpee_rounds(session, [r.user.id for r in results])
     for r in results:
-        await notifier.send_dm(bot, r.user, texts.penalty_dm(game, r.points, r.total, config.penalty_limit))
+        await notifier.send_dm(bot, r.user, texts.penalty_dm(game, r.points, r.total, config.penalty_limit,
+                                                             rounds.get(r.user.id, 0)))
     if config.penalty_announce and game.chat_id:
         await bot.send_message(game.chat_id, texts.penalty_group(game, [r.user for r in results], points))
     elif config.penalty_announce:

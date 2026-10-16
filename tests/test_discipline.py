@@ -201,3 +201,35 @@ async def test_old_burpees_fixed_once(team):  # noqa: F811
     async with webhook._sessionmaker() as s:
         statuses = sorted(p.status for p in (await s.scalars(select(Penalty).where(Penalty.user_id == meir_id))).all())
     assert statuses == ["burpees", "burpees", "redeemed"]
+    async with webhook._sessionmaker() as s:
+        assert (await discipline.burpee_rounds(s, [meir_id])) == {meir_id: 1}
+
+
+async def test_burpees_grow_each_time_within_3_months(team):  # noqa: F811
+    """1-й раз 25, 2-й раз 50, 3-й 75; через 3 месяца без бёрпи — снова 25."""
+    from datetime import datetime
+
+    meir_id = await _member(tg_user(2, "Мейр"))
+
+    async def debt_and_due():
+        async with webhook._sessionmaker() as s:
+            meir = await svc.get_user_by_tg(s, 2)
+            await discipline.add_penalty(s, meir, None, 3, PenaltyReason.NOT_DONE)
+            await s.commit()
+        _, p = await api(ADMIN, "player_detail", user_id=meir_id)
+        return p["burpees"]
+
+    assert await debt_and_due() == 25
+    await api(ADMIN, "burpees_done", user_id=meir_id)
+    assert await debt_and_due() == 50
+    _, st = await api(tg_user(2, "Мейр"), "state")
+    assert "50 бёрпи (2-й раз" in st["state"]["user"]["level"]
+    status, res = await api(ADMIN, "burpees_done", user_id=meir_id)
+    assert "50 бёрпи" in res["note"]
+    assert await debt_and_due() == 75
+    await api(ADMIN, "burpees_done", user_id=meir_id)
+    async with webhook._sessionmaker() as s:  # прошло 3 месяца
+        for p in (await s.scalars(select(Penalty).where(Penalty.status == PenaltyStatus.BURPEES))).all():
+            p.burpees_at = datetime.utcnow() - timedelta(days=91)
+        await s.commit()
+    assert await debt_and_due() == 25
