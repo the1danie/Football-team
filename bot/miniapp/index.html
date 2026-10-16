@@ -577,7 +577,9 @@ function gameCard(g) {
   add(card, counts, h("button", { class: "toggle-link", onclick: () => { S.open[g.id] = !open; render(); } }, open ? "Скрыть список ▲" : "Кто идёт ▼"));
   if (open) {
     const group = (title, list) => list && list.length ? h("div", { style: "margin-top:10px" },
-      h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => canMarkFor
+      h("div", { class: "small muted" }, title), h("div", { class: "people" }, list.map((u) => staff && u.burpees
+        ? h("button", { class: "chip bad", onclick: () => markBurpees(u, g) }, `${u.name} 💪${u.burpees} — сделал?`)
+        : canMarkFor
         ? h("button", { class: "chip" + (u.burpees ? " bad" : ""), onclick: () => openSheet({ type: "rsvpFor", game: g, user: u }) }, u.name + (u.car ? " 🚗" : "") + (u.burpees ? ` 💪${u.burpees}` : ""))
         : h("span", { class: "chip" + (u.burpees ? " bad" : "") }, u.name + (u.car ? " 🚗" : "") + (u.burpees ? ` 💪${u.burpees}` : ""))))) : null;
     add(card, group(`✅ Будут (${yes.length})`, yes), group(`🤔 Не знают (${maybe.length})`, maybe), group(`❌ Не будут (${no.length})`, no),
@@ -832,7 +834,7 @@ function profileTab() {
       S.data.penalty_points ? h("li", {}, `Не ответил до закрытия сбора — минус (−${S.data.penalty_points}). Сказал «Буду» и не пришёл — тоже минус.`) : null,
       h("li", {}, "Не выполнил обязанность (не принёс воду, не забрал манишки) — −2."),
       h("li", {}, "Отдал свою обязанность другому: первый раз за 30 дней — без минуса, второй — −1, третий — −2, четвёртый — −3 и так далее. Обмен обязанностями (ты — его, он — твою) не считается."),
-      h("li", {}, "−3 минуса — на тренировке 25 бёрпи, −6 — 50 бёрпи, −9 — исключение из команды. Минусы снимаются выполненными обязанностями: одна обязанность — один минус."))));
+      h("li", {}, "−3 минуса — на тренировке 25 бёрпи, −6 — 50 бёрпи, −9 — исключение из команды. Сделал бёрпи — минусы обнуляются. Ещё минус снимает каждая выполненная обязанность."))));
 }
 
 function stepper(value, min, max, onChange, fmt) {
@@ -879,6 +881,7 @@ function attendanceSheet() {
     [`❌ Отвечали «Не буду»`, g.participants.no.filter((u) => u.attended !== false), null],
   ].filter(([, list]) => list.length);
   const row = (u, came) => h("div", { class: "switch-row" }, avatar(u.name, u.id),
+    came && u.burpees ? h("button", { class: "btn small secondary", style: "order:3", onclick: async () => { if (await markBurpees(u, g)) render(); } }, `💪 Сделал ${u.burpees}`) : null,
     h("div", { class: "grow" }, h("div", { style: "font-weight:600" }, u.name + (u.car ? " 🚗" : "")),
       h("div", { class: "small muted" }, (came ? (u.attended ? "пришёл" : "отметил «Буду»") : "не пришёл — минус, обязанности «после» не получит")
         + (u.burpees ? ` · 💪 ${u.burpees} бёрпи` : ""))),
@@ -1087,7 +1090,8 @@ function rsvpForSheet() {
     h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Например, ответил в WhatsApp или добавлен вручную без Telegram. Отметка считается как его собственная: минуса за молчание не будет."),
     h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
       h("button", { class: key, onclick: () => set(key) }, h("span", { class: "e" }, e), label))),
-    u.manual ? h("button", { class: "btn secondary", style: "margin-top:14px", onclick: () => invitePlayer(u) }, "📤 Пригласить в бота") : null);
+    u.manual ? h("button", { class: "btn secondary", style: "margin-top:14px", onclick: () => invitePlayer(u) }, "📤 Пригласить в бота") : null,
+    u.burpees ? h("button", { class: "btn", style: "margin-top:10px", onclick: async () => { if (await markBurpees(u, g)) closeSheet(); } }, `💪 Сделал ${u.burpees} бёрпи — обнулить минусы`) : null);
 }
 
 function addPlayerSheet() {
@@ -1185,6 +1189,16 @@ function myPinSheet() {
       h("div", { class: "small muted" }, "PIN"), h("div", { style: "font-size:40px;font-weight:800;letter-spacing:8px" }, s.pin)),
     h("p", { class: "small muted", style: "margin:4px 2px 12px" }, `Запишите. Вход без Telegram и без ссылки: откройте ${s.site || "сайт команды"} → «Войти по имени и PIN». PIN никому не показывайте.`),
     h("button", { class: "btn secondary", onclick: closeSheet }, "Готово"));
+}
+
+async function markBurpees(u, g) {
+  if (!(await confirmBox(`${u.name} сделал ${u.burpees} бёрпи? Все его минусы обнулятся.`))) return false;
+  const r = await api("burpees_done", { user_id: u.id, game_id: g ? g.id : null });
+  if (!r) return false;
+  haptic("ok");
+  if (g && g.past) await loadArchive();
+  render();
+  return true;
 }
 
 function notDoneSheet() {
@@ -1319,6 +1333,9 @@ function playerSheet() {
       h("button", { class: "btn small", onclick: () => playerOp(p, "rename", { name: document.getElementById("pname").value }) }, "Сохранить")),
     p.duties && p.duties.some((x) => x.count) ? h("div", {}, h("div", { class: "label" }, "Выполнял обязанности"),
       h("div", { class: "people" }, p.duties.map((x) => h("span", { class: "chip" }, `${x.emoji} ${x.name}: ${x.count}`)))) : null,
+    p.burpees ? h("button", { class: "btn", style: "margin-top:12px", onclick: async () => {
+      if (await markBurpees(p, null)) { const r = await api("player_detail", { user_id: p.id }); if (r) { S.sheet.player = r; render(); } } } },
+      `💪 Сделал ${p.burpees} бёрпи — обнулить минусы`) : null,
     p.minuses && p.minuses.length ? h("div", {}, h("div", { class: "label" }, `Минусы: ${p.minuses.length}`),
       h("div", { class: "list" }, p.minuses.map((m) => h("div", { class: "item" }, h("div", { class: "grow small" }, `−${m.points} · ${m.reason}: ${m.game}`),
         h("button", { class: "btn small secondary", onclick: async () => { const r = await api("penalty_cancel", { penalty_id: m.id }); if (r) { S.sheet.player = r.player; render(); } } }, "Снять"))))) : null,

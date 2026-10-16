@@ -270,6 +270,7 @@ async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict
     penalties = await svc.user_penalties(session, user.id, open_only=True)
     view = {
         "id": user.id, "name": user.name, "car": user.has_car,
+        "burpees": discipline.burpees(sum(p.points for p in penalties if p.status == PenaltyStatus.OPEN)),
         "duties": [{"emoji": d.emoji, "name": d.name, "count": n} for d, n in await svc.player_stats(session, user.id)],
         "minuses": [
             {"id": p.id, "points": p.points, "game": texts.game_header(p.game) if p.game else "",
@@ -662,6 +663,21 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             target = await _user(session, body["user_id"]) if body.get("user_id") else None
             await operations.assign_duty(bot, session, game, duty, target)
             note = f"{duty.title} — {target.name if target else 'не назначено'}"
+        elif action == "burpees_done":
+            if not (is_admin or staff_view):
+                raise ApiError("Отмечает админ или тренер.", 403)
+            target = await _user(session, body.get("user_id"))
+            game = await svc.get_game(session, int(body["game_id"])) if body.get("game_id") else None
+            try:
+                total, count = await discipline.burpees_done(session, target, game)
+            except ValueError:
+                raise ApiError(f"У {target.name} нет долга по бёрпи.") from None
+            await audit.record(session, f"💪 {target.name}: сделал {count} бёрпи — минусы обнулены (было −{total})", game,
+                               any_actor=True)
+            from bot import notifier
+
+            await notifier.send_dm(bot, target, f"💪 {count} бёрпи засчитаны — минусы обнулены. Было −{total}, стало 0. Красавчик!")
+            note = f"💪 {target.name}: {count} бёрпи засчитаны, минусы обнулены"
         elif action in ("duty_failed", "duty_failed_undo"):
             game = await _game(session, body)
             duty = await session.get(Duty, int(body.get("duty_id", 0)))

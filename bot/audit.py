@@ -40,10 +40,13 @@ def current() -> Actor | None:
     return _actor.get()
 
 
-async def record(session: AsyncSession, text: str, game: Game | None = None) -> None:
-    """Записать действие, если его делает админ (не бот по расписанию и не обычный игрок)."""
+async def record(session: AsyncSession, text: str, game: Game | None = None, any_actor: bool = False) -> None:
+    """Записать действие, если его делает админ (не бот по расписанию и не обычный игрок).
+
+    any_actor — записать, даже если это не админ (например, тренер отметил бёрпи).
+    """
     actor = _actor.get()
-    if actor is None or not config.is_admin(actor.telegram_id):
+    if actor is None or (not any_actor and not config.is_admin(actor.telegram_id)):
         return
     if game is not None:
         from bot import texts  # noqa: PLC0415

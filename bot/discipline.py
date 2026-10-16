@@ -84,8 +84,9 @@ async def check_level(bot: Bot, session: AsyncSession, user: User, before: int, 
         return
     b = burpees(after)
     await notifier.send_dm(
-        bot, user, f"❗ У тебя −{after}: на ближайшей тренировке — {b} бёрпи. При −{EXCLUDE_AT} — исключение из команды.\n"
-                   "Минусы снимаются выполненными обязанностями: одна обязанность — один минус."
+        bot, user, f"❗ У тебя −{after}: на ближайшей тренировке — {b} бёрпи. Сделаешь — минусы обнулятся. "
+                   f"При −{EXCLUDE_AT} — исключение из команды.\n"
+                   "Ещё минус снимает каждая выполненная обязанность."
     )
     await notifier.notify_admins(bot, f"❗ {texts.h(user.name)}: −{after} — на тренировке {b} бёрпи.")
 
@@ -130,3 +131,17 @@ async def warn_before_transfer(session: AsyncSession, user_id: int) -> str | Non
     if not points:
         return None
     return f"⚠️ Это будет уже не первая передача обязанности за {TRANSFER_WINDOW.days} дней — −{points}."
+
+
+async def burpees_done(session: AsyncSession, user: User, game: Game | None) -> tuple[int, int]:
+    """Игрок сделал бёрпи — все действующие минусы обнуляются. Возвращает (сколько было, сколько бёрпи)."""
+    total = (await svc.open_penalty_points(session, [user.id])).get(user.id, 0)
+    count = burpees(total)
+    if not count:
+        raise ValueError("no burpees due")
+    for p in (await session.scalars(
+        select(Penalty).where(Penalty.user_id == user.id, Penalty.status == PenaltyStatus.OPEN)
+    )).all():
+        p.status, p.redeemed_game_id = PenaltyStatus.REDEEMED, game.id if game else None
+    await session.flush()
+    return total, count

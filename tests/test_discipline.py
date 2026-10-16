@@ -122,3 +122,25 @@ class _Bot:
 
     async def me(self):
         return None
+
+
+async def test_burpees_done_resets_minuses(team):  # noqa: F811
+    fake = team  # noqa: F811
+    meir_id = await _member(tg_user(2, "Мейр"))
+    coach_id = await _member(tg_user(5, "Серик"))
+    await api(ADMIN, "player", user_id=coach_id, op="staff", name="Тренер")
+    async with webhook._sessionmaker() as s:
+        meir = await svc.get_user_by_tg(s, 2)
+        await discipline.add_penalty(s, meir, None, 4, PenaltyReason.NOT_DONE)
+        await s.commit()
+    _, p = await api(ADMIN, "player_detail", user_id=meir_id)
+    assert p["burpees"] == 25
+    assert (await api(tg_user(2, "Мейр"), "burpees_done", user_id=meir_id))[0] == 403  # сам себе — нельзя
+    status, res = await api(tg_user(5, "Серик"), "burpees_done", user_id=meir_id)  # тренер может
+    assert status == 200 and "обнулены" in res["note"]
+    assert await _open_points(meir_id) == 0
+    assert any("25 бёрпи засчитаны" in m.text for m in fake.sent(2))
+    status, body = await api(ADMIN, "burpees_done", user_id=meir_id)
+    assert status == 400 and "нет долга" in body["error"]
+    _, log = await api(ADMIN, "audit")
+    assert any("сделал 25 бёрпи" in e["text"] for e in log["entries"])
