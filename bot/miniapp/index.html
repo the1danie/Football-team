@@ -689,6 +689,8 @@ async function shareWhatsApp(g) {
 
 // ---------------------------------------------------------------- статистика
 const BOARDS = {
+  balance: { title: "⚖️ Итог", unit: (n) => plural(Math.abs(n), "балл", "балла", "баллов"),
+    hint: "Помощь минус минусы: +1 за каждую выполненную обязанность, −1 за каждый минус. Кто больше помогает и меньше подводит — выше." },
   duties: { title: "🏆 Помощь", unit: (n) => plural(n, "обязанность", "обязанности", "обязанностей"),
     hint: "Кто больше всех выполнил обязанностей (вода, мячи, манишки). У кого меньше — тому следующие." },
   games: { title: "⚽ Посещения", unit: (n) => plural(n, "игра", "игры", "игр"),
@@ -701,7 +703,7 @@ async function loadStats() {
   if (r) { S.stats = r.board; render(); }
 }
 function statsTab() {
-  const board = S.statsBoard || "duties", period = S.statsPeriod || "all";
+  const board = S.statsBoard || "balance", period = S.statsPeriod || "all";
   const head = [h("h1", {}, "Рейтинг"),
     h("div", { class: "seg", style: "margin-bottom:8px" }, Object.entries(BOARDS).map(([k, b]) =>
       h("button", { class: board === k ? "on" : "", onclick: () => { S.statsBoard = k; haptic(); render(); } }, b.title))),
@@ -715,6 +717,7 @@ function statsTab() {
   rows.forEach((p, i) => { if (p[board] !== prev) { rank = i + 1; prev = p[board]; } p.rank = rank; });
   const max = Math.max(1, ...rows.map((p) => p[board]));
   const top = rows.filter((p) => p[board] > 0).slice(0, 3);
+  const anyValue = rows.some((p) => p[board] !== 0);
   const medal = (r) => ["🥇", "🥈", "🥉"][r - 1] || "";
 
   const podium = top.length ? h("div", { class: "podium" },
@@ -729,17 +732,17 @@ function statsTab() {
   return h("div", {}, head,
     canReport ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openReport() }, "📊 Посещаемость: кто пропускает") : null,
     h("p", { class: "muted small", style: "margin:0 4px 12px" }, BOARDS[board].hint),
-    podium || h("div", { class: "card empty muted" }, board === "minuses" ? "Минусов ни у кого нет 👍"
-      : period === "month" ? "За последний месяц пока пусто." : "Пока пусто — сыграйте первую игру."),
-    !top.length ? null : h("div", { class: "list" }, rows.map((p) => h("button", { class: "item" + (p.id === me ? " me-row" : ""), onclick: () => openPlayerStats(p.id) },
+    podium || (anyValue ? null : h("div", { class: "card empty muted" }, board === "minuses" ? "Минусов ни у кого нет 👍"
+      : period === "month" ? "За последний месяц пока пусто." : "Пока пусто — сыграйте первую игру.")),
+    !anyValue ? null : h("div", { class: "list" }, rows.map((p) => h("button", { class: "item" + (p.id === me ? " me-row" : ""), onclick: () => openPlayerStats(p.id) },
       h("div", { class: "rank" }, p[board] > 0 && p.rank <= 3 ? medal(p.rank) : p.rank),
       avatar(p.name, p.id),
       h("div", { class: "grow" }, h("div", { class: "row" },
           h("span", { class: "ellipsis", style: "font-weight:600" }, p.id === me ? `${p.name} (ты)` : p.name),
           p.car ? h("span", {}, "🚗") : null,
           board === "minuses" && p.no_shows ? h("span", { class: "chip bad" }, `неявки: ${p.no_shows}`) : null),
-        h("div", { class: "bar" }, h("div", { style: `width:${(p[board] / max) * 100}%;${board === "minuses" ? "background:var(--danger)" : ""}` }))),
-      h("div", { class: "num" }, p[board])))));
+        h("div", { class: "bar" }, h("div", { style: `width:${(Math.max(0, p[board]) / max) * 100}%;${board === "minuses" ? "background:var(--danger)" : ""}` }))),
+      h("div", { class: "num", style: p[board] < 0 ? "color:var(--danger)" : "" }, board === "balance" && p[board] > 0 ? `+${p[board]}` : p[board])))));
 }
 async function openPlayerStats(id) {
   const r = await api("player_stats", { user_id: id });
@@ -797,7 +800,11 @@ function profileTab() {
         h("div", { class: "small muted" }, u.car_locked ? "Отметил администратор — изменить может только он." : "Мячи возят только те, кто на машине.")),
         h("button", { class: "switch" + (u.car ? " on" : ""), role: "switch", "aria-checked": u.car ? "true" : "false", disabled: u.car_locked && !S.data.is_admin,
           onclick: async () => { haptic(); const r = await api("profile", { car: !u.car }); if (r) render(); } }))),
-    u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Минусы: ${u.minuses}`),
+    u.balance !== undefined ? h("div", { class: "card row" },
+      h("div", { class: "grow" }, h("div", { class: "small muted" }, "⚖️ Итог: помощь − минусы"),
+        h("div", { class: "small" }, `🏆 помощь +${u.help} · ⚠️ минусы −${u.minus_total}`)),
+      h("div", { style: `font-size:26px;font-weight:800;color:var(${u.balance < 0 ? "--danger" : "--yes"})` }, (u.balance > 0 ? "+" : "") + u.balance)) : null,
+    u.minuses ? h("div", { class: "card" }, h("div", { style: "font-weight:600" }, `⚠️ Долг сейчас: −${u.minuses}`),
       u.level ? h("div", { style: "margin-top:6px;color:var(--danger);font-weight:600" }, `💪 ${u.level}`) : null,
       h("div", { class: "small muted", style: "margin-top:4px" }, "Пока минусы есть, обязанности достаются тебе первым; каждая выполненная обязанность списывает один минус.")) : null,
     S.data.is_owner ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openAudit() }, "📜 Журнал действий админов") : null,

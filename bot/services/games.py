@@ -1150,6 +1150,7 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
             "id": u.id, "name": u.name, "car": u.has_car,
             "duties": duties.get(u.id, 0), "games": games.get(u.id, 0),
             "minuses": minuses.get(u.id, 0), "no_shows": no_shows.get(u.id, 0),
+            "balance": duties.get(u.id, 0) - minuses.get(u.id, 0),  # итог: помощь минус минусы
         }
         for u in users
     ]

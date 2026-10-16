@@ -144,3 +144,17 @@ async def test_burpees_done_resets_minuses(team):  # noqa: F811
     assert status == 400 and "нет долга" in body["error"]
     _, log = await api(ADMIN, "audit")
     assert any("сделал 25 бёрпи" in e["text"] for e in log["entries"])
+
+
+async def test_balance_is_help_minus_minuses(team):  # noqa: F811
+    meir_id = await _member(tg_user(2, "Мейр"))
+    async with webhook._sessionmaker() as s:
+        meir = await svc.get_user_by_tg(s, 2)
+        await discipline.add_penalty(s, meir, None, 2, PenaltyReason.NOT_DONE)
+        await s.commit()
+    _, st = await api(tg_user(2, "Мейр"), "state")
+    u = st["state"]["user"]
+    assert (u["help"], u["minus_total"], u["balance"]) == (0, 2, -2)
+    _, stats = await api(ADMIN, "stats")
+    row = next(r for r in stats["board"] if r["id"] == meir_id)
+    assert row["balance"] == row["duties"] - row["minuses"] == -2

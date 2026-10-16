@@ -215,6 +215,10 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         "minuses": (await svc.open_penalty_points(session, [user.id])).get(user.id, 0),
     }
     data["user"]["level"] = discipline.level_text(data["user"]["minuses"])
+    me_row = next((r for r in await svc.leaderboard(session, config.now()) if r["id"] == user.id), None)
+    if me_row:
+        data["user"]["help"], data["user"]["minus_total"], data["user"]["balance"] = (
+            me_row["duties"], me_row["minuses"], me_row["balance"])
     data["access"] = "ok" if (user.is_approved or is_admin) else user.status
     if data["access"] == "ok":
         games = [
