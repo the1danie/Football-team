@@ -158,3 +158,46 @@ async def test_balance_is_help_minus_minuses(team):  # noqa: F811
     _, stats = await api(ADMIN, "stats")
     row = next(r for r in stats["board"] if r["id"] == meir_id)
     assert row["balance"] == row["duties"] - row["minuses"] == -2
+
+
+async def test_burpees_clear_minuses_in_rating_too(team):  # noqa: F811
+    """Бёрпи сделал — в рейтинге (Итог и Минусы) этих минусов тоже больше нет."""
+    meir_id = await _member(tg_user(2, "Мейр"))
+    async with webhook._sessionmaker() as s:
+        meir = await svc.get_user_by_tg(s, 2)
+        await discipline.add_penalty(s, meir, None, 3, PenaltyReason.NOT_DONE)
+        await s.commit()
+    _, stats = await api(ADMIN, "stats")
+    assert next(r for r in stats["board"] if r["id"] == meir_id)["balance"] == -3
+    await api(ADMIN, "burpees_done", user_id=meir_id)
+    _, stats = await api(ADMIN, "stats")
+    row = next(r for r in stats["board"] if r["id"] == meir_id)
+    assert (row["minuses"], row["balance"]) == (0, 0)
+    _, st = await api(tg_user(2, "Мейр"), "state")
+    assert (st["state"]["user"]["minuses"], st["state"]["user"]["balance"]) == (0, 0)
+
+
+async def test_old_burpees_fixed_once(team):  # noqa: F811
+    """Бёрпи, отмеченные до исправления (минусы были «отработаны»), убираются из рейтинга при запуске."""
+    from datetime import datetime
+
+    from bot import db
+    from bot.models import AuditLog, Setting
+
+    meir_id = await _member(tg_user(2, "Мейр"))
+    async with webhook._sessionmaker() as s:
+        old = datetime.utcnow() - timedelta(days=5)
+        s.add_all([
+            Penalty(user_id=meir_id, points=1, status=PenaltyStatus.REDEEMED, redeemed_game_id=None,
+                    created_at=old - timedelta(days=1)),
+            Penalty(user_id=meir_id, points=2, status=PenaltyStatus.REDEEMED, created_at=old),
+            Penalty(user_id=meir_id, points=1, status=PenaltyStatus.REDEEMED, created_at=old),
+            AuditLog(actor_name="Даниял", text="💪 Мейр: сделал 25 бёрпи — минусы обнулены (было −3)",
+                     created_at=old + timedelta(hours=1)),
+        ])
+        await s.delete(await s.get(Setting, db.BURPEES_STATUS_KEY))
+        await s.commit()
+    await db.init_db(webhook._engine)
+    async with webhook._sessionmaker() as s:
+        statuses = sorted(p.status for p in (await s.scalars(select(Penalty).where(Penalty.user_id == meir_id))).all())
+    assert statuses == ["burpees", "burpees", "redeemed"]

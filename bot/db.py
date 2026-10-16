@@ -18,6 +18,7 @@ DEFAULT_DUTIES = [
 # Один раз: «Стирка манишек» объединяется с «Манишками» (история переносится, обязанность выключается).
 MERGE_LAUNDRY_INTO_BIBS = True
 MERGE_LAUNDRY_KEY = "merge_laundry_v1"
+BURPEES_STATUS_KEY = "burpees_status_v1"
 DUTY_PHASES_KEY = "duty_phases_v1"
 
 
@@ -122,7 +123,40 @@ async def init_db(engine: AsyncEngine) -> None:
             if MERGE_LAUNDRY_INTO_BIBS and not fresh_install:
                 await _merge_laundry_into_bibs(session)
             session.add(Setting(key=MERGE_LAUNDRY_KEY, value="1"))
+        if await session.get(Setting, BURPEES_STATUS_KEY) is None:
+            await _mark_burpees_history(session)
+            session.add(Setting(key=BURPEES_STATUS_KEY, value="1"))
         await session.commit()
+
+
+async def _mark_burpees_history(session: AsyncSession) -> None:
+    """Один раз: минусы, закрытые бёрпи до появления отдельного статуса, убрать из рейтинга.
+
+    Берём записи журнала «сделал N бёрпи … (было −X)» и помечаем последние списанные минусы
+    этого игрока на сумму X (обязанностью списываются самые старые, бёрпи — все остальные)."""
+    import re
+
+    from bot.models import AuditLog, Penalty, PenaltyStatus, User
+
+    pattern = re.compile(r"^💪 (.+): сделал \d+ бёрпи — минусы обнулены \(было −(\d+)\)")
+    for entry in (await session.scalars(select(AuditLog).where(AuditLog.text.contains("бёрпи — минусы обнулены"))
+                                        .order_by(AuditLog.id))).all():
+        m = pattern.match(entry.text)
+        user = m and (await session.scalars(select(User).where(User.name == m.group(1)))).first()
+        if user is None:
+            continue
+        game_cond = (Penalty.redeemed_game_id == entry.game_id if entry.game_id is not None
+                     else Penalty.redeemed_game_id.is_(None))
+        left = int(m.group(2))
+        for p in (await session.scalars(
+            select(Penalty).where(Penalty.user_id == user.id, Penalty.status == PenaltyStatus.REDEEMED,
+                                  Penalty.created_at <= entry.created_at, game_cond)
+            .order_by(Penalty.created_at.desc(), Penalty.id.desc())
+        )).all():
+            if left <= 0:
+                break
+            p.status, left = PenaltyStatus.BURPEES, left - p.points
+    await session.flush()
 
 
 async def _merge_laundry_into_bibs(session: AsyncSession) -> None:

@@ -142,6 +142,6 @@ async def burpees_done(session: AsyncSession, user: User, game: Game | None) -> 
     for p in (await session.scalars(
         select(Penalty).where(Penalty.user_id == user.id, Penalty.status == PenaltyStatus.OPEN)
     )).all():
-        p.status, p.redeemed_game_id = PenaltyStatus.REDEEMED, game.id if game else None
+        p.status, p.redeemed_game_id = PenaltyStatus.BURPEES, game.id if game else None
     await session.flush()
     return total, count

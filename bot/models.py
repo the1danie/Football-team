@@ -258,6 +258,7 @@ class PenaltyStatus:
     OPEN = "open"  # действует
     REDEEMED = "redeemed"  # отработан обязанностью
     CANCELLED = "cancelled"  # снят администратором
+    BURPEES = "burpees"  # закрыт бёрпи — не считается нигде, даже в рейтинге
 
 
 class Penalty(Base):

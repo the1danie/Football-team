@@ -1130,7 +1130,7 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
         )).all()
     )
     pen_q = select(Penalty.user_id, Penalty.reason, func.sum(Penalty.points)).where(
-        Penalty.status != PenaltyStatus.CANCELLED
+        Penalty.status.not_in((PenaltyStatus.CANCELLED, PenaltyStatus.BURPEES))
     )
     if since is not None:
         pen_q = pen_q.where(Penalty.created_at >= since - timedelta(days=1))
