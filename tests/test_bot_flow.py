@@ -299,7 +299,7 @@ async def test_full_flow(h: Harness):
     assert any("Твои обязанности" in m.text for m in fake.sent(a1.user.telegram_id))
     assert any("мячи" in m.text for m in personal)
     group = fake.sent(GROUP)[-1].text
-    assert "Сегодня игра в" in group and "Ответственные" in group
+    assert ("Сегодня игра в" in group or "Завтра игра в" in group) and "Ответственные" in group
     # повторно не шлём
     fake.reset()
     async with h.sm() as s:
@@ -597,7 +597,7 @@ async def test_whatsapp_team_without_telegram_group(h: Harness):
     fake.reset()
     await _tick(h)
     reminder = _wa_text(fake.sent(ADMIN)[-1])
-    assert "*Сегодня игра в" in reminder and "Ответственные:" in reminder and "Максим" in reminder
+    assert ("*Сегодня игра в" in reminder or "*Завтра игра в" in reminder) and "Ответственные:" in reminder and "Максим" in reminder
 
     # --- отмена
     fake.reset()

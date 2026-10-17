@@ -191,16 +191,16 @@ async def test_delete_test_game_from_archive(team):  # noqa: F811
         assert (await s.get(Game, gid)).status == GameStatus.DELETED  # запись осталась — расписание не создаст её снова
 
 
-def test_default_deadline_three_hours(monkeypatch):
+def test_default_deadline_four_hours(monkeypatch):
     from bot.config import Config
     from bot.deadlines import distribute_at, rsvp_deadline
 
     monkeypatch.delenv("AUTO_DISTRIBUTE_HOURS", raising=False)
     monkeypatch.delenv("PERSONAL_REMINDER_HOURS", raising=False)
     fresh = Config()
-    assert fresh.auto_distribute_hours == 3 and fresh.personal_reminder_hours == 2
+    assert fresh.auto_distribute_hours == 4 and fresh.personal_reminder_hours == 2
     monkeypatch.setattr(config, "auto_distribute_hours", fresh.auto_distribute_hours)
     monkeypatch.setattr(config, "personal_reminder_hours", fresh.personal_reminder_hours)
     start = config.now().replace(hour=23, minute=0, second=0, microsecond=0) + timedelta(days=2)
     game = Game(starts_at=start, created_at=datetime.utcnow())
-    assert rsvp_deadline(game) == distribute_at(game) == start - timedelta(hours=3)
+    assert rsvp_deadline(game) == distribute_at(game) == start - timedelta(hours=4)

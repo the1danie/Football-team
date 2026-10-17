@@ -39,7 +39,7 @@ class Config:
     # Город в 2ГИС для ссылки-поиска по названию места (если своей ссылки нет): petropavlovsk, astana, almaty, …
     twogis_city: str = field(default_factory=lambda: os.getenv("TWOGIS_CITY", "petropavlovsk"))
     # За сколько часов до начала автоматически распределить обязанности (0 — только вручную).
-    auto_distribute_hours: float = field(default_factory=lambda: _float("AUTO_DISTRIBUTE_HOURS", 3))
+    auto_distribute_hours: float = field(default_factory=lambda: _float("AUTO_DISTRIBUTE_HOURS", 4))
     # Личное напоминание ответственным.
     personal_reminder_hours: float = field(default_factory=lambda: _float("PERSONAL_REMINDER_HOURS", 2))
     # Напоминание в общий чат.
