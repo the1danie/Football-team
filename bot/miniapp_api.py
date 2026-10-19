@@ -351,7 +351,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo",
+    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo", "redo_duty",
 }
 
 
@@ -656,6 +656,14 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                 raise ApiError("Распределяет бот сам при закрытии сбора. Вручную — только главный админ.", 403)
             report = await operations.distribute(bot, session, await _game(session, body))
             note = report.split("\n")[0]
+        elif action == "redo_duty":
+            if not config.is_owner(tg_id):
+                raise ApiError("Пересчитать может только главный админ.", 403)
+            game = await _game(session, body)
+            duty = await session.get(Duty, int(body.get("duty_id", 0)))
+            if duty is None:
+                raise ApiError("Обязанность не найдена.", 404)
+            note = "🔁 " + await operations.redo_duty(bot, session, game, duty)
         elif action == "undistribute":
             if not config.is_owner(tg_id):
                 raise ApiError("Отменить распределение может только главный админ.", 403)

@@ -1284,7 +1284,10 @@ function assignSheet() {
   return h("div", {}, h("h3", {}, past ? "✏️ Кто что делал" : "Назначения"),
     past ? h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Исправление задним числом: рейтинг «Помощь» пересчитается, минус, списанный за обязанность, перейдёт к тому, кто её выполнил. Выбранный отметится как «пришёл». Сообщения игрокам не отправляются. В списке вся команда — и те, кто пришёл в бота позже. Кого нет — добавьте в «Игроки» → «✍️ Добавить вручную».") : null,
     g.duties.map((x) => h("div", { class: "card" },
-      h("div", { class: "row" }, h("span", { style: "font-size:22px" }, x.emoji), h("b", { class: "grow" }, x.name), x.requires_car ? h("span", { class: "chip" }, "нужна 🚗") : null),
+      h("div", { class: "row" }, h("span", { style: "font-size:22px" }, x.emoji), h("b", { class: "grow" }, x.name), x.requires_car ? h("span", { class: "chip" }, "нужна 🚗") : null,
+        !past && S.data.is_owner ? h("button", { class: "btn small secondary", onclick: async () => {
+          if (!(await confirmBox(`Пересчитать «${x.name}»? Бот отдаст её следующему по очереди${x.user ? ` вместо ${x.user.name}` : ""}.`))) return;
+          const r = await api("redo_duty", { game_id: g.id, duty_id: x.duty_id }); if (r) { haptic("ok"); render(); } } }, "🔁") : null),
       h("select", { class: "field", style: "margin-top:10px", onchange: async (e) => {
         const r = await api("assign", { game_id: g.id, duty_id: x.duty_id, user_id: Number(e.target.value) || null });
         if (r) { haptic("ok"); if (past) await loadArchive(); render(); } } },

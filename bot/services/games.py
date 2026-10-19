@@ -639,6 +639,32 @@ async def set_assignment(
     return old_user, new
 
 
+async def redo_duty(
+    session: AsyncSession, game: Game, duty: Duty, rng: random.Random | None = None
+) -> tuple[User | None, User | None]:
+    """«Пересчитать» одну обязанность: отдать её другому по очереди (тому же — только если больше некому).
+
+    Возвращает (прежний исполнитель, новый)."""
+    old_user = None
+    for a in await active_assignments(session, game.id):
+        if a.duty_id == duty.id:
+            old_user = a.user
+            a.status = AssignmentStatus.CANCELLED
+            await _expire_swaps(session, game.id, assignment_id=a.id)
+    await session.flush()
+    load = await _current_load(session, game.id)
+    chosen = None
+    if old_user is not None:
+        chosen = pick(_spec(duty), await build_candidates(session, game, exclude_user_ids={old_user.id}), load, rng)
+    if chosen is None:
+        chosen = pick(_spec(duty), await build_candidates(session, game), load, rng)
+    new_user = await session.get(User, chosen.user_id) if chosen is not None else None
+    if new_user is not None:
+        session.add(Assignment(game_id=game.id, user=new_user, duty=duty))
+    await session.flush()
+    return old_user, new_user
+
+
 async def failed_assignments(session: AsyncSession, game_id: int) -> list[Assignment]:
     """Обязанности, которые не выполнили (последняя отметка по каждой)."""
     rows = (await session.scalars(

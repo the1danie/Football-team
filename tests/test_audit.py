@@ -210,3 +210,30 @@ async def test_fix_past_duty_with_player_who_joined_later(team):  # noqa: F811
         assert next(a for a in await svc.active_assignments(s, gid) if a.duty_id == balls["duty_id"]).user_id == didar_id
     _, me = await api(tg_user(8, "Дидар"), "archive")
     assert "team" not in next(x for x in me["archive"] if x["id"] == gid)  # игрокам список команды не нужен
+
+
+async def test_redo_single_duty(team):  # noqa: F811
+    """«🔁» у одной обязанности: меняется только она, остальные остаются у своих."""
+    fake = team  # noqa: F811
+    marat, pasha, rus = tg_user(3, "Марат"), tg_user(4, "Паша"), tg_user(7, "Рустам")
+    marat_id = await _member(marat)
+    for u in (pasha, rus):
+        await _member(u)
+    await api(OWNER, "player", user_id=marat_id, op="admin_on")
+    day = (config.now() + timedelta(days=2)).date().isoformat()
+    _, res = await api(OWNER, "create_game", date=day, minutes=21 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    for u in (OWNER, marat, pasha, rus):
+        await api(u, "rsvp", game_id=gid, status="yes")
+    _, res = await api(OWNER, "distribute", game_id=gid)
+    before = {d["duty_id"]: d["user"]["id"] for d in res["state"]["games"][0]["duties"] if d["user"]}
+    water = next(d for d in res["state"]["games"][0]["duties"] if d["name"] == "Вода")
+    assert (await api(marat, "redo_duty", game_id=gid, duty_id=water["duty_id"]))[0] == 403
+    status, res = await api(OWNER, "redo_duty", game_id=gid, duty_id=water["duty_id"])
+    assert status == 200 and res["note"].startswith("🔁 ")
+    after = {d["duty_id"]: d["user"]["id"] for d in res["state"]["games"][0]["duties"] if d["user"]}
+    assert after[water["duty_id"]] != before[water["duty_id"]]
+    assert {k: v for k, v in after.items() if k != water["duty_id"]} == {
+        k: v for k, v in before.items() if k != water["duty_id"]}
+    _, log = await api(OWNER, "audit")
+    assert any(e["text"].startswith("🔁 Пересчитал") for e in log["entries"])

@@ -493,6 +493,30 @@ async def create_from_schedule(bot: Bot, session: AsyncSession, schedule, starts
     return game
 
 
+async def redo_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty) -> str:
+    """Пересчитать одну обязанность (мячи, вода, манишки…) — остальные назначения не трогаем."""
+    if game.status != GameStatus.DISTRIBUTED:
+        raise OpError("Сначала распределите обязанности.")
+    if duty.phase not in svc.phases_open(game):
+        raise OpError(f"{duty.title} ещё не распределялась — бот назначит её сам.")
+    old_user, user = await svc.redo_duty(session, game, duty)
+    await audit.record(
+        session, f"🔁 Пересчитал {duty.title}: {old_user.name if old_user else '—'} → {user.name if user else 'никто'}", game
+    )
+    await notifier.refresh_game(bot, session, game)
+    if old_user is not None and (user is None or old_user.id != user.id):
+        await notifier.send_dm(bot, old_user, f"Обязанность {duty.title} ({texts.game_header(game)}) передана другому игроку — с тебя снята.")
+    if user is not None and (old_user is None or old_user.id != user.id):
+        await notifier.send_dm(
+            bot, user, f"Тебе назначена обязанность на {texts.game_header(game)}:\n{duty.emoji} {texts.h(duty.action)}"
+        )
+    if user is None:
+        return f"{duty.title}: некому назначить" + (" (нужна машина)" if duty.requires_car else "")
+    if old_user is not None and old_user.id == user.id:
+        return f"{duty.title}: больше некому — остаётся {user.name}"
+    return f"{duty.title} → {user.name}"
+
+
 async def assign_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty, user: User | None) -> None:
     finished = game.status == GameStatus.FINISHED
     if game.status != GameStatus.DISTRIBUTED and not finished:
