@@ -152,6 +152,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "map_label": texts.map_label(texts.map_url(game.location, game.location_url)),
         "status": game.status,
         "past": game.status not in GameStatus.ACTIVE or now >= game.starts_at + timedelta(hours=PAST_AFTER_HOURS),
+        "can_delete": is_admin and _can_delete(game, len(by_status[Rsvp.YES])),
         "my_rsvp": await svc.get_rsvp(session, game.id, me.id),
         "deadline_label": texts.until(deadline, now),
         "deadline_at_label": f"{texts.day_word(deadline, now).lower()} в {texts.fmt_time(deadline)}",
@@ -353,6 +354,14 @@ ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo", "redo_duty",
 }
+
+
+# Прошедшую игру удалить нельзя — она в истории. Исключение — тестовые: отменённые или где «Буду» меньше этого.
+TEST_GAME_MAX_YES = 4
+
+
+def _can_delete(game: Game, yes: int) -> bool:
+    return game.status == GameStatus.CANCELLED or yes < TEST_GAME_MAX_YES
 
 
 async def _game(session: AsyncSession, body: dict) -> Game:
@@ -561,6 +570,9 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             game = await _game(session, body)
             if game.status in GameStatus.ACTIVE and config.now() < game.starts_at + timedelta(hours=PAST_AFTER_HOURS):
                 raise ApiError("Удалить можно отменённую или прошедшую игру. Предстоящую сначала отмените.")
+            if not _can_delete(game, await svc.yes_count(session, game.id)):
+                raise ApiError("Игра уже прошла — она остаётся в истории (посещаемость, помощь, минусы). "
+                               "Удалить можно только отменённую или тестовую игру.")
             await audit.record(session, "🗑 Удалил из архива", game)
             await svc.delete_game(session, game)
             note = "🗑 Игра удалена"

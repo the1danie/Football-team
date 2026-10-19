@@ -204,3 +204,28 @@ def test_default_deadline_four_hours(monkeypatch):
     start = config.now().replace(hour=23, minute=0, second=0, microsecond=0) + timedelta(days=2)
     game = Game(starts_at=start, created_at=datetime.utcnow())
     assert rsvp_deadline(game) == distribute_at(game) == start - timedelta(hours=4)
+
+
+async def test_real_past_game_cannot_be_deleted(team):  # noqa: F811
+    """Прошедшая игра с составом остаётся в истории; тестовую (мало «Буду») удалить можно."""
+    day = (config.now() + timedelta(days=1)).date().isoformat()
+    _, res = await api(ADMIN_TG, "create_game", date=day, minutes=20 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    for i in range(4):
+        u = tg_user(20 + i, f"Игрок{i}")
+        await api(u, "register", car=False)
+    _, pl = await api(ADMIN_TG, "players")
+    for p in pl["players"]:
+        if p["name"].startswith("Игрок"):
+            await api(ADMIN_TG, "player", user_id=p["id"], op="approve")
+    for i in range(4):
+        await api(tg_user(20 + i, f"Игрок{i}"), "rsvp", game_id=gid, status="yes")
+    async with webhook._sessionmaker() as s:
+        game = await s.get(Game, gid)
+        game.starts_at = config.now() - timedelta(hours=5)
+        game.status = GameStatus.FINISHED
+        await s.commit()
+    _, arch = await api(ADMIN_TG, "archive")
+    assert next(g for g in arch["archive"] if g["id"] == gid)["can_delete"] is False
+    status, body = await api(ADMIN_TG, "delete_game", game_id=gid)
+    assert status == 400 and "остаётся в истории" in body["error"]

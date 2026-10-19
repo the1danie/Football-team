@@ -108,7 +108,8 @@ def distribute(
             INFEASIBLE
             if d.requires_car and not c.has_car
             else (k + (base_load or {}).get(c.user_id, 0)) * EXTRA_DUTY_COST + score(c, d.id) + noise[c.user_id]
-            + (REPEAT_COST if (avoid or {}).get(d.id) == c.user_id else 0)
+            # у кого минусы — остаётся первым и при пересчёте (обязанность отрабатывает минус)
+            + (REPEAT_COST if (avoid or {}).get(d.id) == c.user_id and c.penalty_bonus <= 0 else 0)
             for c, k in slots
         ]
         for d in fillable

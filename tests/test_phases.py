@@ -253,3 +253,18 @@ async def test_recalculate_reshuffles_all_phases(session):
     after = {a.duty_id: a.user_id for a in await svc.active_assignments(session, game.id)}
     assert after.keys() == before.keys()
     assert all(after[d] != before[d] for d in before), (before, after)
+
+
+def test_recalc_keeps_minus_holder_first():
+    """«Пересчитать»: у кого минус — тот и остаётся с обязанностью (отрабатывает минус)."""
+    import random
+
+    from bot.services.distribution import Candidate, DutySpec, distribute
+
+    balls = DutySpec(id=1, requires_car=True)
+    nurik = Candidate(user_id=1, has_car=True, penalty_bonus=10)
+    rus = Candidate(user_id=2, has_car=True)
+    mapping, _ = distribute([balls], [nurik, rus], random.Random(1), avoid={1: 1})
+    assert mapping == {1: 1}
+    mapping, _ = distribute([balls], [Candidate(user_id=1, has_car=True), rus], random.Random(1), avoid={1: 1})
+    assert mapping == {1: 2}  # без минусов — пересчёт отдаёт другому
