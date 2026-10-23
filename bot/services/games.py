@@ -796,7 +796,7 @@ async def team_stats(session: AsyncSession) -> list[tuple[User, int]]:
     rows = [
         (u, totals.get(u.id, 0))
         for u in users
-        if (u.profile_completed and u.status == UserStatus.APPROVED and not u.is_staff) or u.id in totals
+        if u.profile_completed and u.status == UserStatus.APPROVED and not u.is_staff
     ]
     rows.sort(key=lambda r: (-r[1], r[0].name))
     return rows
@@ -1169,7 +1169,8 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
 
     users = [
         u for u in await all_users(session)
-        if u.profile_completed and not u.is_staff and (u.status == UserStatus.APPROVED or u.id in duties or u.id in games)
+        # удалённых из команды в рейтинге нет (их история в базе остаётся — вернём, и всё посчитается)
+        if u.profile_completed and not u.is_staff and u.status == UserStatus.APPROVED
     ]
     return [
         {

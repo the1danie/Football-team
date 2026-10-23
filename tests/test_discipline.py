@@ -237,3 +237,13 @@ async def test_burpees_grow_each_time_within_3_months(team):  # noqa: F811
             p.burpees_at = datetime.utcnow() - timedelta(days=91)
         await s.commit()
     assert await debt_and_due() == 25
+
+
+async def test_removed_player_not_in_rating(team):  # noqa: F811
+    temir_id = await _member(tg_user(6, "Темир"))
+    _, stats = await api(ADMIN, "stats")
+    assert temir_id in {r["id"] for r in stats["board"]}
+    await api(ADMIN, "player", user_id=temir_id, op="block")
+    _, stats = await api(ADMIN, "stats")
+    assert temir_id not in {r["id"] for r in stats["board"]}
+    assert temir_id not in {r["id"] for r in stats["team"]}
