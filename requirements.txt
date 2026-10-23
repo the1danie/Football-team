@@ -5,3 +5,4 @@ aiosqlite>=0.20
 python-dotenv>=1.0
 tzdata
 cryptography>=42
+fpdf2>=2.7

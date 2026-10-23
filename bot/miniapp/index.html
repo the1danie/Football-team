@@ -1133,6 +1133,8 @@ function reportSheet() {
     h("div", { class: "seg", style: "margin-bottom:10px" }, [["month", "За месяц"], ["all", "За всё время"]].map(([k, l]) =>
       h("button", { class: S.reportPeriod === k ? "on" : "", onclick: () => openReport(k) }, l))),
     h("p", { class: "muted small", style: "margin:0 2px 10px" }, "Сверху — кто пропускает чаще. ✅ был · ❌ не буду · 🤔 не знаю · 🔇 молчал · 🚫 сказал «Буду» и не пришёл. Последние 10 игр — слева направо."),
+    rows.length ? h("button", { class: "btn secondary", style: "margin-bottom:10px", onclick: async () => {
+      const r = await api("attendance_pdf", { period: S.reportPeriod }); if (r) openLink(r.url); } }, "📄 Скачать PDF") : null,
     problem.length ? h("div", { class: "banner", style: "margin-bottom:10px" }, h("b", {}, `⚠️ Требуют внимания: ${problem.length}`),
       h("div", { class: "small", style: "margin-top:4px" }, problem.map((r) => r.name).join(", "))) : null,
     rows.length ? h("div", { class: "list" }, rows.map((r) => h("div", { class: "item" },

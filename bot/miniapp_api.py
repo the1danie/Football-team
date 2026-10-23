@@ -508,6 +508,15 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             since = config.now() - timedelta(days=30) if body.get("period") == "month" else None
             return {"rows": await svc.attendance_report(session, config.now(), since),
                     "period": "month" if since else "all"}
+        elif action == "attendance_pdf":
+            if not (is_admin or staff_view):
+                raise ApiError("Только для админа и тренера.", 403)
+            if not config.public_url:
+                raise ApiError("PDF доступен, когда бот работает на Vercel.")
+            from bot import report_pdf
+
+            period = "month" if body.get("period") == "month" else "all"
+            return {"url": f"{config.public_url}/api/app?report={report_pdf.make_token(tg_id, period)}"}
         elif action == "stats":
             return await stats_view(session, body.get("period", "all"))
         elif action == "player_stats":

@@ -1264,7 +1264,7 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
     rows = []
     for u in users:
         r = {"id": u.id, "name": u.name, "manual": u.is_manual, "games": 0, "came": 0, "no": 0, "maybe": 0,
-             "silent": 0, "no_show": 0, "history": [], "failed": failed.get(u.id, 0), "gave": gave.get(u.id, 0)}
+             "silent": 0, "no_show": 0, "history": [], "kinds": [], "failed": failed.get(u.id, 0), "gave": gave.get(u.id, 0)}
         for g in games:
             p = marks.get((g.id, u.id))
             if p is None:
@@ -1287,7 +1287,9 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
             r["games"] += 1
             r[kind] += 1
             r["history"].append(ATTENDANCE_ICONS[kind])
+            r["kinds"].append(kind)
         r["history"] = "".join(r["history"][-10:])
+        r["kinds"] = r["kinds"][-10:]
         r["rate"] = round(100 * r["came"] / r["games"]) if r["games"] else None
         rows.append(r)
     rows.sort(key=lambda r: (r["rate"] if r["rate"] is not None else 101, -r["silent"] - r["no_show"], r["name"]))

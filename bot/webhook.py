@@ -81,12 +81,17 @@ class Html(str):
 class Raw:
     """Файл (иконка, манифест) с типом и кэшированием."""
 
-    def __init__(self, body: bytes, ctype: str, cache: str = "public, max-age=86400"):
-        self.body, self.ctype, self.cache = body, ctype, cache
+    def __init__(self, body: bytes, ctype: str, cache: str = "public, max-age=86400", filename: str | None = None):
+        self.body, self.ctype, self.cache, self.filename = body, ctype, cache, filename
 
 
 async def _respond(send, status: int, payload: Any) -> None:
     cache = b"no-store"
+    extra: list[tuple[bytes, bytes]] = []
+    if isinstance(payload, Raw) and payload.filename:
+        from urllib.parse import quote
+
+        extra.append((b"content-disposition", f"inline; filename=\"report.pdf\"; filename*=UTF-8''{quote(payload.filename)}".encode()))
     if isinstance(payload, Raw):
         body, ctype, cache = payload.body, payload.ctype.encode(), payload.cache.encode()
     elif isinstance(payload, Html):
@@ -97,7 +102,7 @@ async def _respond(send, status: int, payload: Any) -> None:
         {
             "type": "http.response.start",
             "status": status,
-            "headers": [(b"content-type", ctype), (b"cache-control", cache)],
+            "headers": [(b"content-type", ctype), (b"cache-control", cache), *extra],
         }
     )
     await send({"type": "http.response.body", "body": body})
@@ -354,6 +359,16 @@ async def handle_app_page(request: Request) -> tuple[int, Any]:
         async with sessionmaker() as session:
             body = await calendar_feed.build(session)
         return 200, Raw(body.encode(), "text/calendar; charset=utf-8", "no-cache, max-age=0")
+    if "report" in request.query:  # посещаемость в PDF (админ или тренер, ссылка на сутки)
+        from bot import report_pdf
+
+        sessionmaker, _ = await _ensure_ready()
+        async with sessionmaker() as session:
+            result = await report_pdf.from_token(session, request.query.get("report", ""), await _team_name())
+        if result is None:
+            return 404, {"ok": False, "error": "Ссылка устарела — откройте отчёт в приложении ещё раз."}
+        body, filename = result
+        return 200, Raw(body, "application/pdf", "no-store", filename=filename)
     if "manifest" in request.query:
         # Установка на экран «Домой»: адрес запуска — с личным ключом, иначе установленное приложение
         # (у него своё хранилище) открылось бы без входа.
