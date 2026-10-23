@@ -508,6 +508,15 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             since = config.now() - timedelta(days=30) if body.get("period") == "month" else None
             return {"rows": await svc.attendance_report(session, config.now(), since),
                     "period": "month" if since else "all"}
+        elif action == "explain":
+            if not config.is_owner(tg_id) or tg.get("view_as"):
+                raise ApiError("Только для главного админа.", 403)
+            from bot import explain
+
+            data = await explain.explain(session, await _game(session, body))
+            if data is None:
+                raise ApiError("На эту игру обязанности ещё не распределялись.")
+            return {"explain": data}
         elif action == "attendance_pdf":
             if not (is_admin or staff_view):
                 raise ApiError("Только для админа и тренера.", 403)

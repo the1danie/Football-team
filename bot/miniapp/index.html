@@ -645,6 +645,7 @@ function gameCard(g) {
       g.status !== "cancelled" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "attendance", game: g }) }, "👥 Кто пришёл") : null,
       g.status !== "cancelled" ? h("button", { class: "btn small secondary", onclick: () => shareWhatsApp(g) }, "📤 В WhatsApp") : null,
       g.status === "finished" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "assign", game: g }) }, "✏️ Кто что делал") : null,
+      d.is_owner && g.status === "finished" ? h("button", { class: "btn small secondary", onclick: () => openExplain(g) }, "🧮 Почему так") : null,
       g.can_delete ? h("button", { class: "btn small danger", onclick: () => deleteGame(g) }, "🗑 Удалить") : null));
   } else if (d.is_admin) {
     add(card, h("div", { class: "admin-bar" },
@@ -654,6 +655,7 @@ function gameCard(g) {
       h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "create", edit: g }) }, "✏️ Изменить"),
       g.attendance_open ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "attendance", game: g }) }, "👥 Кто пришёл") : null,
       g.status === "distributed" ? h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "assign", game: g }) }, "✏️ Назначения") : null,
+      d.is_owner && g.status === "distributed" ? h("button", { class: "btn small secondary", onclick: () => openExplain(g) }, "🧮 Почему так") : null,
       h("button", { class: "btn small danger", onclick: () => adminCancel(g) }, "Отменить")));
   }
   return card;
@@ -989,7 +991,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;
@@ -1147,6 +1149,26 @@ function reportSheet() {
         h("div", { class: "history" }, r.history)),
       h("div", { class: "rate " + cls(r) }, `${r.rate}%`))))
       : h("div", { class: "card empty muted" }, "Прошедших игр за этот период нет."));
+}
+
+async function openExplain(g) {
+  const r = await api("explain", { game_id: g.id });
+  if (r) openSheet({ type: "explain", data: r.explain });
+}
+function explainSheet() {
+  const e = S.sheet.data;
+  return h("div", {}, h("h3", {}, "🧮 Почему так распределилось"),
+    h("p", { class: "muted small", style: "margin:-6px 2px 10px" }, `${e.game}. Распределение в ${e.at}, участвовали ${e.candidates} (все «Буду» на тот момент). `
+      + `Очки: делал эту обязанность ×3 + всего обязанностей + 2 если был занят на прошлой игре − ${e.weight} за каждый минус в долге. `
+      + "Меньше очков — раньше получает. Но одному человеку — одна обязанность, поэтому первый в списке мог получить другую."),
+    e.duties.map((d) => h("div", { class: "card" },
+      h("div", { style: "font-weight:700" }, `${d.emoji} ${d.name}` + (d.car ? " (нужна 🚗)" : "")),
+      h("div", { class: "small", style: "margin:6px 0" }, "История: " + d.history.map((x) => `${x.name} ${x.time} (${x.status})`).join(" → ")),
+      d.ranking.map((r, i) => h("div", { class: "small", style: "padding:4px 0;border-top:1px solid var(--sep);" + (r.no_car ? "opacity:.5" : "") },
+        h("b", {}, `${i + 1}. ${r.name}: ${r.score}`), r.minus ? h("span", { style: "color:var(--danger)" }, ` · −${r.minus}`) : null,
+        h("div", { class: "muted" }, r.no_car ? "нет машины — не может" : r.breakdown))))),
+    e.others.length ? h("div", { class: "card" }, h("div", { style: "font-weight:700" }, "Не участвовали"),
+      e.others.map((o) => h("div", { class: "small", style: "padding:3px 0" }, h("b", {}, o.name), " — " + o.reason))) : null);
 }
 
 async function openAudit(actorId, more) {

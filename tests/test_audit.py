@@ -237,3 +237,38 @@ async def test_redo_single_duty(team):  # noqa: F811
         k: v for k, v in before.items() if k != water["duty_id"]}
     _, log = await api(OWNER, "audit")
     assert any(e["text"].startswith("🔁 Пересчитал") for e in log["entries"])
+
+
+async def test_explain_distribution(team):  # noqa: F811
+    """«🧮 Почему так»: очки каждого, минусы на момент распределения, кто не участвовал и почему."""
+    from datetime import datetime
+
+    from bot import webhook
+    from bot.models import Penalty
+
+    marat, pasha, nurik = tg_user(3, "Марат"), tg_user(4, "Паша"), tg_user(5, "Нурик")
+    marat_id = await _member(marat)
+    await _member(pasha)
+    nurik_id = await _member(nurik)
+    await api(nurik, "profile", car=True)
+    async with webhook._sessionmaker() as s:
+        s.add(Penalty(user_id=nurik_id, points=1, created_at=datetime.utcnow() - timedelta(days=2)))
+        await s.commit()
+    day = (config.now() + timedelta(days=2)).date().isoformat()
+    _, res = await api(OWNER, "create_game", date=day, minutes=21 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    for u in (OWNER, marat, nurik):
+        await api(u, "rsvp", game_id=gid, status="yes")
+    await api(pasha, "rsvp", game_id=gid, status="no")
+    await api(OWNER, "distribute", game_id=gid)
+    assert (await api(marat, "explain", game_id=gid))[0] == 403
+    status, res = await api(OWNER, "explain", game_id=gid)
+    assert status == 200, res
+    e = res["explain"]
+    assert e["candidates"] == 3
+    assert {o["name"]: o["reason"] for o in e["others"]}["Паша"] == "«Не буду»"
+    nurik_rows = [r for d in e["duties"] for r in d["ranking"] if r["name"] == "Нурик"]
+    assert all(r["minus"] == 1 and "минусы 1" in r["breakdown"] for r in nurik_rows)
+    balls = next(d for d in e["duties"] if d["name"] == "Мячи")
+    assert balls["ranking"][0]["name"] == "Нурик" and balls["history"][0]["name"] == "Нурик"
+    assert marat_id
