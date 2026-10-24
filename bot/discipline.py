@@ -4,8 +4,8 @@
 - не выполнил обязанность — NOT_DONE_POINTS;
 - отдал обязанность другому: 1-й раз за TRANSFER_WINDOW — бесплатно, 2-й — минус 1,
   3-й — минус 2, 4-й — минус 3 и т. д. (каждый следующий на 1 больше);
-- всего минусов 3 → 25 бёрпи на тренировке, 6 → 50 бёрпи, 9 → исключение из команды;
-  каждый следующий раз бёрпи за BURPEES_WINDOW — на BURPEES_STEP больше (25 → 50 → 75…).
+- долг 3 минуса → бёрпи на тренировке: в первый раз 25, каждый следующий раз за BURPEES_WINDOW —
+  на BURPEES_STEP больше (25 → 50 → 75…). Из команды за минусы не исключаем.
 Минусы, как и раньше, отрабатываются выполненными обязанностями (одна — один минус).
 """
 
@@ -17,13 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import notifier, texts
 from bot.config import config
-from bot.models import DutyTransfer, Game, Penalty, PenaltyReason, PenaltyStatus, User, UserStatus
+from bot.models import DutyTransfer, Game, Penalty, PenaltyReason, PenaltyStatus, User
 from bot.services import games as svc
 
 NOT_DONE_POINTS = 2
 TRANSFER_WINDOW = timedelta(days=30)
-EXCLUDE_AT = 9
-BURPEES = ((6, 50), (3, 25))  # (минусов от, бёрпи)
+BURPEES_AT = 3  # с какого долга — бёрпи
+BURPEES_BASE = 25  # в первый раз
 BURPEES_STEP = 25  # прибавка за каждый уже сделанный раз бёрпи за окно
 BURPEES_WINDOW = timedelta(days=90)
 
@@ -35,19 +35,14 @@ def transfer_points(n: int) -> int:
 
 def burpees(total: int, rounds: int = 0) -> int | None:
     """Сколько бёрпи при долге total, если за окно бёрпи уже делал rounds раз."""
-    for limit, count in BURPEES:
-        if total >= limit:
-            return count + BURPEES_STEP * rounds
-    return None
+    return BURPEES_BASE + BURPEES_STEP * rounds if total >= BURPEES_AT else None
 
 
 def level_text(total: int, rounds: int = 0) -> str | None:
-    if total >= EXCLUDE_AT:
-        return f"−{total}: исключение из команды"
     b = burpees(total, rounds)
     if b:
         again = f" ({rounds + 1}-й раз за {BURPEES_WINDOW.days // 30} мес.)" if rounds else ""
-        return f"−{total}: на тренировке {b} бёрпи{again}. При −{EXCLUDE_AT} — исключение из команды"
+        return f"−{total}: на тренировке {b} бёрпи{again}"
     return None
 
 
@@ -75,7 +70,7 @@ async def burpee_info(session: AsyncSession, user_id: int) -> dict | None:
     if not times:
         return None
     reset = (times[-1] + BURPEES_WINDOW).replace(tzinfo=timezone.utc).astimezone(config.tz)
-    return {"rounds": len(times), "next": burpees(BURPEES[-1][0], len(times)), "reset": texts.fmt_date(reset)}
+    return {"rounds": len(times), "next": burpees(BURPEES_AT, len(times)), "reset": texts.fmt_date(reset)}
 
 
 async def level(session: AsyncSession, user: User, total: int) -> str | None:
@@ -100,29 +95,13 @@ async def add_penalty(session: AsyncSession, user: User, game: Game | None, poin
 
 
 async def check_level(bot: Bot, session: AsyncSession, user: User, before: int, after: int) -> None:
-    """Перешёл порог — сообщить игроку и админам; на EXCLUDE_AT — исключить из команды."""
-    crossed = [lim for lim in (3, 6, EXCLUDE_AT) if before < lim <= after]
-    if not crossed:
-        return
-    if after >= EXCLUDE_AT and user.status == UserStatus.APPROVED:
-        moves = await svc.set_user_status(session, user, UserStatus.BLOCKED, config.now())
-        user.is_admin = False
-        for game, reassigned in moves:
-            await notifier.refresh_game(bot, session, game)
-            await notifier.announce_reassignments(bot, game, reassigned)
-        await notifier.send_dm(
-            bot, user, f"⛔ У тебя −{after}. По правилам команды при −{EXCLUDE_AT} — исключение. Вопросы — к админу."
-        )
-        await notifier.notify_admins(
-            bot, f"⛔ {texts.h(user.name)}: −{after} — исключён из команды по правилам. "
-                 "Вернуть можно в «Игроки» → «Удалены» → «♻️ Вернуть в команду» (минусы стоит снять)."
-        )
+    """Долг дошёл до порога бёрпи — сообщить игроку и админам (и напомнить, если растёт дальше: −6, −9…)."""
+    if not [lim for lim in range(BURPEES_AT, after + 1, BURPEES_AT) if before < lim]:
         return
     b = burpees(after, (await burpee_rounds(session, [user.id])).get(user.id, 0))
     await notifier.send_dm(
-        bot, user, f"❗ У тебя −{after}: на ближайшей тренировке — {b} бёрпи. Сделаешь — минусы обнулятся. "
-                   f"При −{EXCLUDE_AT} — исключение из команды.\n"
-                   "Ещё минус снимает каждая выполненная обязанность."
+        bot, user, f"❗ У тебя −{after}: на ближайшей тренировке — {b} бёрпи. Сделаешь — минусы обнулятся.\n"
+                   f"Следующий раз будет на {BURPEES_STEP} больше. Ещё минус снимает каждая выполненная обязанность."
     )
     await notifier.notify_admins(bot, f"❗ {texts.h(user.name)}: −{after} — на тренировке {b} бёрпи.")
 

@@ -14,8 +14,9 @@ from tests.test_webhook import fake  # noqa: F401
 
 def test_rules_numbers():
     assert [discipline.transfer_points(n) for n in (1, 2, 3, 4, 5)] == [0, 1, 2, 3, 4]
-    assert [discipline.burpees(n) for n in (2, 3, 5, 6, 8)] == [None, 25, 25, 50, 50]
-    assert "исключение" in discipline.level_text(9) and "25 бёрпи" in discipline.level_text(3)
+    assert [discipline.burpees(n) for n in (2, 3, 5, 6, 9)] == [None, 25, 25, 25, 25]
+    assert [discipline.burpees(3, r) for r in (0, 1, 2, 3)] == [25, 50, 75, 100]
+    assert "исключ" not in discipline.level_text(9) and "25 бёрпи" in discipline.level_text(3)
 
 
 async def _member(user):
@@ -101,17 +102,17 @@ async def test_giving_away_escalates_and_thresholds(team):  # noqa: F811
     g = next(x for x in st["state"]["games"] if x["id"] == gid)
     assert next(u for u in g["participants"]["yes"] if u["id"] == meir_id)["burpees"] == 25
 
-    # −9 — исключение из команды
+    # −9 — из команды не исключаем, только напоминание о бёрпи
     async with webhook._sessionmaker() as s:
         user = await svc.get_user_by_tg(s, 2)
         await discipline.penalize(_Bot(), s, user, None, 6, PenaltyReason.NOT_DONE)
         await s.commit()
     async with webhook._sessionmaker() as s:
-        assert (await svc.get_user_by_tg(s, 2)).status == UserStatus.BLOCKED
+        assert (await svc.get_user_by_tg(s, 2)).status == UserStatus.APPROVED
         rows = (await s.scalars(select(Penalty).where(Penalty.user_id == meir_id))).all()
         assert sum(p.points for p in rows if p.status == PenaltyStatus.OPEN) == 9
     _, st = await api(meir, "state")
-    assert st["state"]["access"] == "blocked"
+    assert st["state"]["access"] == "ok" and "25 бёрпи" in st["state"]["user"]["level"]
 
 
 class _Bot:
