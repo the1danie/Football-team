@@ -229,3 +229,11 @@ async def test_real_past_game_cannot_be_deleted(team):  # noqa: F811
     assert next(g for g in arch["archive"] if g["id"] == gid)["can_delete"] is False
     status, body = await api(ADMIN_TG, "delete_game", game_id=gid)
     assert status == 400 and "остаётся в истории" in body["error"]
+
+
+def test_default_after_duties_85_minutes(monkeypatch):
+    """21:30 → обязанности «после тренировки» в 22:55."""
+    from bot.config import Config
+
+    monkeypatch.delenv("AFTER_DUTIES_MINUTES", raising=False)
+    assert Config().after_duties_minutes == 85

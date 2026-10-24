@@ -79,7 +79,7 @@ class Config:
     # Сбор за столько минут до начала («сбор в 22:30»); 0 — не показывать.
     gather_minutes: float = field(default_factory=lambda: _float("GATHER_MINUTES", 30))
     # Через сколько минут после начала распределять обязанности «после тренировки».
-    after_duties_minutes: float = field(default_factory=lambda: _float("AFTER_DUTIES_MINUTES", 60))
+    after_duties_minutes: float = field(default_factory=lambda: _float("AFTER_DUTIES_MINUTES", 85))
     # Через сколько часов после начала игра считается завершённой.
     finish_after_hours: float = field(default_factory=lambda: _float("FINISH_AFTER_HOURS", 3))
 
