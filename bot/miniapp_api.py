@@ -526,6 +526,13 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
 
             period = "month" if body.get("period") == "month" else "all"
             return {"url": f"{config.public_url}/api/app?report={report_pdf.make_token(tg_id, period)}"}
+        elif action == "balance_pdf":
+            if not config.public_url:
+                raise ApiError("PDF доступен, когда бот работает на Vercel.")
+            from bot import report_pdf
+
+            period = "month" if body.get("period") == "month" else "all"
+            return {"url": f"{config.public_url}/api/app?report={report_pdf.make_token(tg_id, period, kind='bal')}"}
         elif action == "stats":
             return await stats_view(session, body.get("period", "all"))
         elif action == "player_stats":

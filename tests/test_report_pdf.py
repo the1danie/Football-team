@@ -52,3 +52,59 @@ def test_pdf_layout_many_players():
             for i in range(60)]
     body = report_pdf.build(rows, "FC QALAMGER", "за всё время", "23 октября")
     assert body.startswith(b"%PDF") and body.count(b"/Type /Page\n") >= 2 or b"/Count 2" in body or b"/Count 3" in body
+
+
+async def test_balance_pdf_for_team(team, monkeypatch):  # noqa: F811
+    """Итог в PDF может скачать и игрок — это то же, что в «Рейтинге»."""
+    monkeypatch.setattr(config, "public_url", "https://team.example")
+    pasha = tg_user(2, "Паша")
+    await api(pasha, "register", car=False)
+    _, pl = await api(ADMIN, "players")
+    await api(ADMIN, "player", user_id=next(p["id"] for p in pl["players"] if p["name"] == "Паша"), op="approve")
+    status, link = await api(pasha, "balance_pdf", period="all")
+    assert status == 200
+    code, headers, body = await fetch("report=" + link["url"].split("report=")[1])
+    assert code == 200 and body.startswith(b"%PDF")
+    from urllib.parse import unquote
+
+    assert "Итог" in unquote(headers[b"content-disposition"].decode())
+    stranger = report_pdf.make_token(77, "all", kind="bal")  # не из команды
+    assert (await fetch(f"report={stranger}"))[0] == 404
+
+
+async def test_monthly_reports_once(team):  # noqa: F811
+    from aiogram.methods import SendDocument
+
+    from bot import monthly
+
+    fake = team  # noqa: F811
+    coach = tg_user(5, "Серик")
+    await api(coach, "register", car=False)
+    _, pl = await api(ADMIN, "players")
+    cid = next(p["id"] for p in pl["players"] if p["name"] == "Серик")
+    await api(ADMIN, "player", user_id=cid, op="approve")
+    await api(ADMIN, "player", user_id=cid, op="staff", name="Тренер")
+    bot = webhook.make_bot()
+    first = datetime(2026, 11, 1, 10, 5)
+    async with webhook._sessionmaker() as s:
+        assert not await monthly.send_if_due(bot, s, datetime(2026, 10, 24, 12, 0))  # установили — сентябрь не шлём
+        assert not await monthly.send_if_due(bot, s, datetime(2026, 10, 25, 12, 0))
+        assert not await monthly.send_if_due(bot, s, datetime(2026, 11, 1, 9, 0))  # 1-е, но рано
+        assert await monthly.send_if_due(bot, s, first)
+        assert not await monthly.send_if_due(bot, s, first + timedelta(hours=2))  # второй раз — нет
+        assert not await monthly.send_if_due(bot, s, datetime(2026, 11, 15, 12, 0))
+    docs = [c for c in fake.calls if isinstance(c, SendDocument)]
+    assert {c.chat_id for c in docs} == {int(ADMIN["id"]), 5}
+    assert len(docs) == 4
+    assert any("Посещаемость за октябрь 2026" in c.caption for c in docs)
+    assert any("Итог за октябрь 2026" in c.caption for c in docs)
+    assert monthly.previous_month(datetime(2026, 1, 1, 10)) == (datetime(2025, 12, 1), datetime(2026, 1, 1))
+
+
+async def test_monthly_catch_up_if_missed_first_day(team):  # noqa: F811
+    from bot import monthly
+
+    bot = webhook.make_bot()
+    async with webhook._sessionmaker() as s:
+        await monthly.send_if_due(bot, s, datetime(2026, 10, 20, 12, 0))
+        assert await monthly.send_if_due(bot, s, datetime(2026, 11, 3, 8, 0))  # 1-го бот спал — догоняем

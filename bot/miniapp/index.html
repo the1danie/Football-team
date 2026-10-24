@@ -733,6 +733,8 @@ function statsTab() {
   const canReport = S.data.is_admin || (S.data.user && S.data.user.staff);
   return h("div", {}, head,
     canReport ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openReport() }, "📊 Посещаемость: кто пропускает") : null,
+    canReport && board === "balance" ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
+      const r = await api("balance_pdf", { period }); if (r) openLink(r.url); } }, "📄 Итог в PDF — скинуть команде") : null,
     h("p", { class: "muted small", style: "margin:0 4px 12px" }, BOARDS[board].hint),
     podium || (anyValue ? null : h("div", { class: "card empty muted" }, board === "minuses" ? "Минусов ни у кого нет 👍"
       : period === "month" ? "За последний месяц пока пусто." : "Пока пусто — сыграйте первую игру.")),

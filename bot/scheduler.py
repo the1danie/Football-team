@@ -46,6 +46,15 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
             log.exception("Game %s: tick failed", game_id)
             await session.rollback()
 
+    try:  # 1-го числа — отчёты за прошлый месяц админам и штабу
+        from bot import monthly
+
+        await monthly.send_if_due(bot, session, now)
+        await session.commit()
+    except Exception:
+        log.exception("Monthly reports failed")
+        await session.rollback()
+
 
 async def _process_game(bot: Bot, session: AsyncSession, game: Game, now) -> None:
     # Через 15 минут после начала — админам список «кто пришёл».

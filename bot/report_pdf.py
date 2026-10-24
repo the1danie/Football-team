@@ -1,4 +1,4 @@
-"""Посещаемость в PDF: таблица с процентами и историей последних игр цветными клетками."""
+"""Отчёты в PDF: посещаемость (таблица с процентами и историей игр цветными клетками) и «Итог» (помощь − минусы)."""
 
 import hashlib
 import hmac
@@ -29,49 +29,132 @@ def _sig(payload: str) -> str:
     return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()[:24]
 
 
-def make_token(telegram_id: int, period: str, now: float | None = None) -> str:
-    payload = f"{telegram_id}.{period}.{int((now or time.time()) + LINK_TTL)}"
+KINDS = ("att", "bal")  # посещаемость, итог
+
+
+def make_token(telegram_id: int, period: str, now: float | None = None, kind: str = "att") -> str:
+    payload = f"{kind}.{telegram_id}.{period}.{int((now or time.time()) + LINK_TTL)}"
     return f"{payload}.{_sig(payload)}"
 
 
-def parse_token(token: str, now: float | None = None) -> tuple[int, str] | None:
+def parse_token(token: str, now: float | None = None) -> tuple[int, str, str] | None:
     try:
-        raw_id, period, exp, sig = (token or "").split(".")
+        kind, raw_id, period, exp, sig = (token or "").split(".")
         telegram_id, expires = int(raw_id), int(exp)
     except ValueError:
         return None
-    payload = f"{raw_id}.{period}.{exp}"
+    payload = f"{kind}.{raw_id}.{period}.{exp}"
     if not config.bot_token or not hmac.compare_digest(_sig(payload), sig):
         return None
-    if expires < (now or time.time()) or period not in ("month", "all"):
+    if expires < (now or time.time()) or period not in ("month", "all") or kind not in KINDS:
         return None
-    return telegram_id, period
+    return telegram_id, period, kind
 
 
 async def from_token(session: AsyncSession, token: str, team: str) -> tuple[bytes, str] | None:
-    """PDF по ссылке — если ссылка цела и человек всё ещё админ или в штабе."""
+    """PDF по ссылке. Посещаемость — админ или штаб; итог — любой из команды (он и так виден в «Рейтинге»)."""
     parsed = parse_token(token)
     if parsed is None:
         return None
-    telegram_id, period = parsed
+    telegram_id, period, kind = parsed
     user = await svc.get_user_by_tg(session, telegram_id)
-    if not config.is_admin(telegram_id) and not (user is not None and user.is_staff):
+    allowed = config.is_admin(telegram_id) or (user is not None and user.is_staff)
+    if kind == "bal":
+        allowed = allowed or (user is not None and user.is_approved)
+    if not allowed:
         return None
     now = config.now()
     since = now - timedelta(days=30) if period == "month" else None
-    rows = [r for r in await svc.attendance_report(session, now, since) if r["games"]]
     title = "за последний месяц" if since else "за всё время"
-    filename = f"Посещаемость {team} {now:%d.%m.%Y}.pdf"
-    return build(rows, team, title, texts.fmt_date(now)), filename
+    if kind == "bal":
+        return await balance_pdf(session, team, now, since, title)
+    return await attendance_pdf(session, team, now, since, title)
 
 
-def build(rows: list[dict], team: str, period_title: str, date_label: str) -> bytes:
+async def attendance_pdf(session: AsyncSession, team: str, now, since, title: str) -> tuple[bytes, str]:
+    rows = [r for r in await svc.attendance_report(session, now, since) if r["games"]]
+    return build(rows, team, title, texts.fmt_date(now)), f"Посещаемость {team} {now:%d.%m.%Y}.pdf"
+
+
+async def balance_pdf(session: AsyncSession, team: str, now, since, title: str) -> tuple[bytes, str]:
+    rows = await svc.leaderboard(session, now, since)
+    return build_balance(rows, team, title, texts.fmt_date(now)), f"Итог {team} {now:%d.%m.%Y}.pdf"
+
+
+def _pdf(title: str) -> FPDF:
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_font("DejaVu", "", str(FONTS / "DejaVuSans.ttf"))
     pdf.add_font("DejaVu", "B", str(FONTS / "DejaVuSans-Bold.ttf"))
-    pdf.set_title(f"Посещаемость — {team}")
+    pdf.set_title(title)
     pdf.add_page()
+    return pdf
+
+
+def _fit(pdf: FPDF, text: str, width: float) -> str:
+    while pdf.get_string_width(text) > width - 2 and len(text) > 3:
+        text = text[:-2] + "…"
+    return text
+
+
+def build_balance(rows: list[dict], team: str, period_title: str, date_label: str) -> bytes:
+    """«Итог» для команды: помощь − минусы, места как в приложении (при равенстве — одно место)."""
+    rows = sorted(rows, key=lambda r: (-r["balance"], -r["duties"], r["name"]))
+    pdf = _pdf(f"Итог — {team}")
+    pdf.set_font("DejaVu", "B", 16)
+    pdf.cell(0, 9, f"Итог команды — {team}", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("DejaVu", "", 10)
+    pdf.set_text_color(90, 90, 90)
+    pdf.cell(0, 6, f"{period_title.capitalize()} · на {date_label}", new_x="LMARGIN", new_y="NEXT")
+    pdf.multi_cell(0, 5, "Итог = помощь − минусы: +1 за каждую выполненную обязанность, −1 за каждый минус. "
+                         "Спасибо всем, кто помогает команде!", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(3)
+    cols = [("Место", 16), ("Игрок", 74), ("Помощь", 24), ("Минусы", 24), ("Посещения", 24), ("Итог", 24)]
+
+    def header() -> None:
+        pdf.set_font("DejaVu", "B", 9)
+        pdf.set_fill_color(235, 235, 235)
+        for name, w in cols:
+            pdf.cell(w, 8, name, border=1, align="C", fill=True)
+        pdf.ln()
+
+    header()
+    rank, prev = 0, None
+    medals = {1: (212, 175, 55), 2: (170, 170, 170), 3: (176, 112, 60)}
+    for i, r in enumerate(rows):
+        if r["balance"] != prev:  # одинаковый итог — одно место, как в приложении
+            rank, prev = i + 1, r["balance"]
+        if pdf.get_y() > 280:
+            pdf.add_page()
+            header()
+        fill = i % 2 == 1
+        pdf.set_fill_color(248, 248, 248)
+        top = rank <= 3 and r["balance"] > 0
+        pdf.set_font("DejaVu", "B" if top else "", 10)
+        if top:
+            pdf.set_text_color(*medals[rank])
+        pdf.cell(cols[0][1], 8, str(rank), border=1, align="C", fill=fill)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(cols[1][1], 8, _fit(pdf, r["name"], cols[1][1]), border=1, fill=fill)
+        pdf.set_font("DejaVu", "", 10)
+        pdf.cell(cols[2][1], 8, f"+{r['duties']}" if r["duties"] else "0", border=1, align="C", fill=fill)
+        pdf.cell(cols[3][1], 8, f"−{r['minuses']}" if r["minuses"] else "0", border=1, align="C", fill=fill)
+        pdf.cell(cols[4][1], 8, str(r["games"]), border=1, align="C", fill=fill)
+        b = r["balance"]
+        pdf.set_text_color(*((190, 40, 40) if b < 0 else (30, 130, 50) if b > 0 else (0, 0, 0)))
+        pdf.set_font("DejaVu", "B", 11)
+        pdf.cell(cols[5][1], 8, f"+{b}" if b > 0 else f"−{-b}" if b < 0 else "0", border=1, align="C", fill=fill)
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln()
+    if not rows:
+        pdf.set_font("DejaVu", "", 10)
+        pdf.cell(0, 8, "Пока пусто — сыграйте первую игру.", new_x="LMARGIN", new_y="NEXT")
+    return bytes(pdf.output())
+
+
+def build(rows: list[dict], team: str, period_title: str, date_label: str) -> bytes:
+    pdf = _pdf(f"Посещаемость — {team}")
 
     pdf.set_font("DejaVu", "B", 16)
     pdf.cell(0, 9, f"Посещаемость — {team}", new_x="LMARGIN", new_y="NEXT")
@@ -118,9 +201,7 @@ def build(rows: list[dict], team: str, period_title: str, date_label: str) -> by
             pdf.set_font("DejaVu", "", 9)
         fill = i % 2 == 1
         pdf.set_fill_color(248, 248, 248)
-        name = r["name"] + (" ✍" if r["manual"] else "")
-        while pdf.get_string_width(name) > cols[0][1] - 2 and len(name) > 3:
-            name = name[:-2] + "…"
+        name = _fit(pdf, r["name"] + (" ✍" if r["manual"] else ""), cols[0][1])
         pdf.cell(cols[0][1], 7, name, border=1, fill=fill)
         rate = r["rate"]
         color = (190, 40, 40) if rate < 50 else (200, 130, 0) if rate < 75 else (30, 130, 50)

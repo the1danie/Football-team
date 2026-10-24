@@ -1159,7 +1159,9 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
         Penalty.status.not_in((PenaltyStatus.CANCELLED, PenaltyStatus.BURPEES))
     )
     if since is not None:
-        pen_q = pen_q.where(Penalty.created_at >= since - timedelta(days=1))
+        from bot.deadlines import to_utc  # noqa: PLC0415
+
+        pen_q = pen_q.where(Penalty.created_at >= since - timedelta(days=1), Penalty.created_at <= to_utc(now))
     minuses: dict[int, int] = {}
     no_shows: dict[int, int] = {}
     for uid, reason, pts in (await session.execute(pen_q.group_by(Penalty.user_id, Penalty.reason))).all():
