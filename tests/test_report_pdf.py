@@ -108,3 +108,33 @@ async def test_monthly_catch_up_if_missed_first_day(team):  # noqa: F811
     async with webhook._sessionmaker() as s:
         await monthly.send_if_due(bot, s, datetime(2026, 10, 20, 12, 0))
         assert await monthly.send_if_due(bot, s, datetime(2026, 11, 3, 8, 0))  # 1-го бот спал — догоняем
+
+
+async def test_inactive_players_shown_with_mark(team, monkeypatch):  # noqa: F811
+    """Временно не в составе — в посещаемости видны, с пометкой, внизу и без «требуют внимания»."""
+    monkeypatch.setattr(config, "public_url", "https://team.example")
+    timur = tg_user(3, "Тимур")
+    await api(timur, "register", car=False)
+    _, pl = await api(ADMIN, "players")
+    tid = next(p["id"] for p in pl["players"] if p["name"] == "Тимур")
+    await api(ADMIN, "player", user_id=tid, op="approve")
+    day = (config.now() + timedelta(days=1)).date().isoformat()
+    _, res = await api(ADMIN, "create_game", date=day, minutes=20 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    await api(ADMIN, "rsvp", game_id=gid, status="yes")
+    await api(timur, "rsvp", game_id=gid, status="no")
+    await api(ADMIN, "player", user_id=tid, op="active")  # убрал из состава
+    async with webhook._sessionmaker() as s:
+        game = await s.get(Game, gid)
+        game.created_at = datetime.utcnow() - timedelta(days=3)
+        game.starts_at = config.now() - timedelta(days=1)
+        game.status = GameStatus.FINISHED
+        await s.commit()
+    _, rep = await api(ADMIN, "attendance_report", period="month")
+    rows = rep["rows"]
+    t = next(r for r in rows if r["id"] == tid)
+    assert t["inactive"] is True and t["games"] == 1 and t["no"] == 1
+    assert rows[-1]["id"] == tid  # внизу
+    _, link = await api(ADMIN, "attendance_pdf", period="month")
+    code, _, body = await fetch("report=" + link["url"].split("report=")[1])
+    assert code == 200 and body.startswith(b"%PDF")

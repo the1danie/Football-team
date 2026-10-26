@@ -1239,7 +1239,8 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
     games = list((await session.scalars(q)).all())
     users = [
         u for u in await all_users(session)
-        if u.status == UserStatus.APPROVED and u.profile_completed and not u.is_staff and u.is_active
+        # временно не в составе — тоже показываем, с пометкой (внизу списка)
+        if u.status == UserStatus.APPROVED and u.profile_completed and not u.is_staff
     ]
     marks: dict[tuple[int, int], GameParticipant] = {}
     if games:
@@ -1266,10 +1267,12 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
 
     rows = []
     for u in users:
-        r = {"id": u.id, "name": u.name, "manual": u.is_manual, "games": 0, "came": 0, "no": 0, "maybe": 0,
+        r = {"id": u.id, "name": u.name, "manual": u.is_manual, "inactive": not u.is_active, "games": 0, "came": 0, "no": 0, "maybe": 0,
              "silent": 0, "no_show": 0, "history": [], "kinds": [], "failed": failed.get(u.id, 0), "gave": gave.get(u.id, 0)}
         for g in games:
             p = marks.get((g.id, u.id))
+            if p is None and not u.is_active:
+                continue  # не в составе опросы не приходят — молчанием не считаем
             if p is None:
                 joined_by = max(g.created_at, to_utc(rsvp_deadline(g) - MIN_RSVP_WINDOW))
                 if u.created_at > joined_by:
@@ -1295,5 +1298,5 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
         r["kinds"] = r["kinds"][-10:]
         r["rate"] = round(100 * r["came"] / r["games"]) if r["games"] else None
         rows.append(r)
-    rows.sort(key=lambda r: (r["rate"] if r["rate"] is not None else 101, -r["silent"] - r["no_show"], r["name"]))
+    rows.sort(key=lambda r: (r["inactive"], r["rate"] if r["rate"] is not None else 101, -r["silent"] - r["no_show"], r["name"]))
     return rows

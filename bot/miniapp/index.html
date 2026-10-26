@@ -1130,9 +1130,9 @@ async function openReport(period) {
   if (r) openSheet({ type: "report", rows: r.rows });
 }
 function reportSheet() {
-  const rows = S.sheet.rows.filter((r) => r.games);
+  const rows = S.sheet.rows.filter((r) => r.games || r.inactive);
   const cls = (r) => (r.rate < 50 ? "bad" : r.rate < 75 ? "mid" : "good");
-  const problem = rows.filter((r) => (r.games >= 2 && (r.rate < 50 || r.silent + r.no_show >= 2)) || r.failed || r.gave >= 2);
+  const problem = rows.filter((r) => !r.inactive && (r.games >= 2 && (r.rate < 50 || r.silent + r.no_show >= 2)) || r.failed || r.gave >= 2);
   return h("div", {}, h("h3", {}, "📊 Посещаемость"),
     h("div", { class: "seg", style: "margin-bottom:10px" }, [["month", "За месяц"], ["all", "За всё время"]].map(([k, l]) =>
       h("button", { class: S.reportPeriod === k ? "on" : "", onclick: () => openReport(k) }, l))),
@@ -1141,15 +1141,15 @@ function reportSheet() {
       const r = await api("attendance_pdf", { period: S.reportPeriod }); if (r) openLink(r.url); } }, "📄 Скачать PDF") : null,
     problem.length ? h("div", { class: "banner", style: "margin-bottom:10px" }, h("b", {}, `⚠️ Требуют внимания: ${problem.length}`),
       h("div", { class: "small", style: "margin-top:4px" }, problem.map((r) => r.name).join(", "))) : null,
-    rows.length ? h("div", { class: "list" }, rows.map((r) => h("div", { class: "item" },
+    rows.length ? h("div", { class: "list" }, rows.map((r) => h("div", { class: "item", style: r.inactive ? "opacity:.6" : "" },
       avatar(r.name, r.id),
       h("div", { class: "grow" },
-        h("div", { style: "font-weight:600" }, r.name + (r.manual ? " ✍️" : "")),
+        h("div", { style: "font-weight:600" }, r.name + (r.manual ? " ✍️" : ""), r.inactive ? h("span", { class: "chip", style: "margin-left:6px" }, "⏸ не в составе") : null),
         h("div", { class: "small muted" }, [`был ${r.came} из ${r.games}`, r.no ? `не буду ${r.no}` : null, r.maybe ? `не знаю ${r.maybe}` : null,
           r.silent ? `молчал ${r.silent}` : null, r.no_show ? `неявка ${r.no_show}` : null,
           r.failed ? `❌ не выполнил ${r.failed}` : null, r.gave ? `🔁 отдал ${r.gave}` : null].filter(Boolean).join(" · ")),
         h("div", { class: "history" }, r.history)),
-      h("div", { class: "rate " + cls(r) }, `${r.rate}%`))))
+      h("div", { class: "rate " + (r.games ? cls(r) : "") }, r.games ? `${r.rate}%` : "—"))))
       : h("div", { class: "card empty muted" }, "Прошедших игр за этот период нет."));
 }
 

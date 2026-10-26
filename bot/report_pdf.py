@@ -72,7 +72,7 @@ async def from_token(session: AsyncSession, token: str, team: str) -> tuple[byte
 
 
 async def attendance_pdf(session: AsyncSession, team: str, now, since, title: str) -> tuple[bytes, str]:
-    rows = [r for r in await svc.attendance_report(session, now, since) if r["games"]]
+    rows = [r for r in await svc.attendance_report(session, now, since) if r["games"] or r.get("inactive")]
     return build(rows, team, title, texts.fmt_date(now)), f"Посещаемость {team} {now:%d.%m.%Y}.pdf"
 
 
@@ -174,7 +174,7 @@ def build(rows: list[dict], team: str, period_title: str, date_label: str) -> by
     pdf.set_text_color(0, 0, 0)
 
     problem = [r["name"] for r in rows
-               if (r["games"] >= 2 and (r["rate"] < 50 or r["silent"] + r["no_show"] >= 2)) or r["failed"] or r["gave"] >= 2]
+               if not r.get("inactive") and (r["games"] >= 2 and (r["rate"] < 50 or r["silent"] + r["no_show"] >= 2)) or r["failed"] or r["gave"] >= 2]
     if problem:
         pdf.set_fill_color(255, 243, 205)
         pdf.set_font("DejaVu", "B", 10)
@@ -182,8 +182,8 @@ def build(rows: list[dict], team: str, period_title: str, date_label: str) -> by
                        new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
-    cols = [("Игрок", 44), ("%", 13), ("Был", 15), ("Не буду", 16), ("Не знаю", 16), ("Молчал", 16),
-            ("Неявка", 15), ("Последние игры", 55)]
+    cols = [("Игрок", 52), ("%", 12), ("Был", 14), ("Не буду", 15), ("Не знаю", 15), ("Молчал", 15),
+            ("Неявка", 14), ("Последние игры", 53)]
 
     def header() -> None:
         pdf.set_font("DejaVu", "B", 8)
@@ -201,13 +201,16 @@ def build(rows: list[dict], team: str, period_title: str, date_label: str) -> by
             pdf.set_font("DejaVu", "", 9)
         fill = i % 2 == 1
         pdf.set_fill_color(248, 248, 248)
-        name = _fit(pdf, r["name"] + (" ✍" if r["manual"] else ""), cols[0][1])
+        inactive = r.get("inactive")
+        if inactive:
+            pdf.set_text_color(130, 130, 130)
+        name = _fit(pdf, r["name"] + (" ✍" if r["manual"] else "") + (" (не в составе)" if inactive else ""), cols[0][1])
         pdf.cell(cols[0][1], 7, name, border=1, fill=fill)
         rate = r["rate"]
-        color = (190, 40, 40) if rate < 50 else (200, 130, 0) if rate < 75 else (30, 130, 50)
-        pdf.set_text_color(*color)
+        if rate is not None:
+            pdf.set_text_color(*((190, 40, 40) if rate < 50 else (200, 130, 0) if rate < 75 else (30, 130, 50)))
         pdf.set_font("DejaVu", "B", 9)
-        pdf.cell(cols[1][1], 7, f"{rate}%", border=1, align="C", fill=fill)
+        pdf.cell(cols[1][1], 7, f"{rate}%" if rate is not None else "—", border=1, align="C", fill=fill)
         pdf.set_text_color(0, 0, 0)
         pdf.set_font("DejaVu", "", 9)
         pdf.cell(cols[2][1], 7, f"{r['came']} из {r['games']}", border=1, align="C", fill=fill)
@@ -224,6 +227,11 @@ def build(rows: list[dict], team: str, period_title: str, date_label: str) -> by
         pdf.set_font("DejaVu", "", 10)
         pdf.cell(0, 8, "Прошедших игр за этот период нет.", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(3)
+    if any(r.get("inactive") for r in rows):
+        pdf.set_font("DejaVu", "", 8)
+        pdf.set_text_color(110, 110, 110)
+        pdf.multi_cell(0, 4.5, "«Не в составе» — временно убраны из состава админом (опросы им не приходят, "
+                                "молчанием это не считается). Показаны внизу.", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("DejaVu", "", 8)
     pdf.set_text_color(110, 110, 110)
     pdf.multi_cell(0, 4.5, "Сверху — кто пропускает чаще. «Последние игры» — до 10 игр, слева направо (старые → новые). "
