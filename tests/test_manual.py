@@ -231,9 +231,9 @@ async def test_real_past_game_cannot_be_deleted(team):  # noqa: F811
     assert status == 400 and "остаётся в истории" in body["error"]
 
 
-def test_default_after_duties_85_minutes(monkeypatch):
-    """21:30 → обязанности «после тренировки» в 22:55."""
+def test_default_after_duties_60_minutes(monkeypatch):
+    """21:30 → обязанности «после тренировки» в 22:30."""
     from bot.config import Config
 
     monkeypatch.delenv("AFTER_DUTIES_MINUTES", raising=False)
-    assert Config().after_duties_minutes == 85
+    assert Config().after_duties_minutes == 60
