@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import io
+import json
 
 from PIL import Image, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,27 @@ from bot.config import config
 from bot.models import User, UserPhoto
 
 SIZE = 320
+# Внешний вид аватара: телосложение, кожа, бутсы, празднование. Значения проверяем по этому списку.
+STYLE_OPTIONS = {
+    "build": ("normal", "slim", "small", "athletic", "stocky", "tall"),
+    "skin": ("1", "2", "3", "4", "5"),
+    "boots": ("black", "white", "gold", "red", "blue", "neon", "pink"),
+    "celebration": ("goal", "siu", "sky", "fist", "zen", "arms"),
+}
+
+
+def clean_style(raw: dict | None) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    return {k: str(raw[k]) for k, allowed in STYLE_OPTIONS.items() if str(raw.get(k)) in allowed}
+
+
+def style_of(user: User) -> dict:
+    try:
+        return clean_style(json.loads(user.avatar_style or "{}"))
+    except ValueError:
+        return {}
+
+
 MAX_UPLOAD = 6 * 1024 * 1024  # исходник до 6 МБ (обычно приложение присылает уже уменьшенное)
 
 

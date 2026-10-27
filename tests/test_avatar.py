@@ -57,3 +57,17 @@ async def test_photo_and_number(team):  # noqa: F811
     assert res["state"]["user"]["photo"] is None
     _, log = await api(ADMIN, "audit")
     assert any("Аватар Рус: номер 10" in e["text"] for e in log["entries"])
+
+
+async def test_avatar_style(team):  # noqa: F811
+    rus = tg_user(3, "Рус")
+    rus_id = await _member(rus)
+    status, res = await api(rus, "avatar", op="style",
+                            style={"build": "athletic", "celebration": "siu", "boots": "white", "skin": "3", "evil": "x"})
+    assert status == 200 and res["note"] == "Внешний вид сохранён"
+    assert res["state"]["faces"][str(rus_id)]["style"] == {
+        "build": "athletic", "celebration": "siu", "boots": "white", "skin": "3"}
+    _, res = await api(rus, "avatar", op="style", style={"build": "<script>", "celebration": "zen"})  # чужое значение — отбрасываем
+    assert res["state"]["faces"][str(rus_id)]["style"] == {"celebration": "zen"}
+    _, res = await api(rus, "avatar", op="style", style={})
+    assert str(rus_id) not in res["state"]["faces"]

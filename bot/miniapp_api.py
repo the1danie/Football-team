@@ -377,8 +377,8 @@ async def _game(session: AsyncSession, body: dict) -> Game:
 async def faces(session: AsyncSession) -> dict:
     """Аватары команды: {id: {"photo": ссылка, "number": номер}} — только у кого что-то задано."""
     return {
-        u.id: {"photo": photos.url(u), "number": u.jersey_number}
-        for u in await svc.all_users(session) if u.photo_version or u.jersey_number is not None
+        u.id: {"photo": photos.url(u), "number": u.jersey_number, "style": photos.style_of(u)}
+        for u in await svc.all_users(session) if u.photo_version or u.jersey_number is not None or u.avatar_style
     }
 
 
@@ -472,6 +472,10 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                         raise ApiError("Номер — от 0 до 99.")
                     target.jersey_number = num
                     note = "Номер сохранён"
+                elif op == "style":
+                    style = photos.clean_style(body.get("style"))
+                    target.avatar_style = json.dumps(style) if style else None
+                    note = "Внешний вид сохранён"
                 else:
                     raise ApiError("Неизвестное действие.")
             except photos.PhotoError as e:
@@ -480,7 +484,8 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                 raise ApiError("Номер — число от 0 до 99.") from None
             if target.id != user.id:
                 await audit.record(session, f"📷 Аватар {target.name}: " + {"photo": "новое фото", "photo_delete": "фото убрано",
-                                                                          "number": f"номер {target.jersey_number}"}[op])
+                                                                          "number": f"номер {target.jersey_number}",
+                                                                          "style": "внешний вид"}[op])
         elif action == "swap_targets":
             a = await session.get(svc.Assignment, int(body.get("assignment_id", 0)))
             if a is None or a.user_id != user.id:

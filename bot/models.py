@@ -90,6 +90,8 @@ class User(Base):
     # Аватар: версия фото (0 — нет фото; растёт при замене — для ссылки и кэша) и номер на футболке.
     photo_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     jersey_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Внешний вид футболиста: JSON {"build", "skin", "boots", "celebration"} (см. bot/photos.py STYLE_OPTIONS).
+    avatar_style: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     @property
     def is_approved(self) -> bool:
