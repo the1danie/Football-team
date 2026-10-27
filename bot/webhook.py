@@ -359,6 +359,15 @@ async def handle_app_page(request: Request) -> tuple[int, Any]:
         async with sessionmaker() as session:
             body = await calendar_feed.build(session)
         return 200, Raw(body.encode(), "text/calendar; charset=utf-8", "no-cache, max-age=0")
+    if "photo" in request.query:  # фото для аватара — по подписанной ссылке, кэш навсегда (в ссылке версия)
+        from bot import photos
+
+        sessionmaker, _ = await _ensure_ready()
+        async with sessionmaker() as session:
+            data = await photos.load(session, request.query.get("photo", ""))
+        if data is None:
+            return 404, {"ok": False, "error": "not found"}
+        return 200, Raw(data, "image/jpeg", "private, max-age=31536000, immutable")
     if "report" in request.query:  # посещаемость в PDF (админ или тренер, ссылка на сутки)
         from bot import report_pdf
 

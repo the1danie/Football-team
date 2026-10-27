@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -87,6 +87,9 @@ class User(Base):
     pin_fails: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     pin_locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # Аватар: версия фото (0 — нет фото; растёт при замене — для ссылки и кэша) и номер на футболке.
+    photo_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    jersey_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     @property
     def is_approved(self) -> bool:
@@ -282,6 +285,16 @@ class Penalty(Base):
     burpees_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     game: Mapped["Game | None"] = relationship(foreign_keys=[game_id], lazy="joined")
+
+
+class UserPhoto(Base):
+    """Фото игрока для аватара (квадрат 320×320, JPEG). Отдаётся по подписанной ссылке."""
+
+    __tablename__ = "user_photos"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class Setting(Base):

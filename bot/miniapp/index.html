@@ -128,6 +128,37 @@
   .item + .item { border-top: 1px solid var(--sep); }
   .avatar { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none;
     font-weight: 700; color: #fff; font-size: 15px; }
+  .avatar.photo { background-size: cover !important; background-position: center !important; }
+
+  /* Аватар-футболист: лицо с фото на нарисованной фигурке, анимации по нажатию */
+  .fb { display: inline-block; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .fb svg { display: block; overflow: visible; }
+  .fb .part { transform-box: view-box; }
+  .fb .upper { animation: fb-breathe 2.6s ease-in-out infinite alternate; }
+  .fb .arm-l { transform-origin: 42px 68px; }
+  .fb .arm-r { transform-origin: 78px 68px; }
+  .fb .leg-r { transform-origin: 66px 116px; }
+  .fb .whole { transform-origin: 60px 160px; }
+  @keyframes fb-breathe { to { transform: translateY(-1.6px); } }
+  .fb.wave .arm-r { animation: fb-wave 2.2s ease-in-out; }
+  @keyframes fb-wave { 0% { transform: rotate(0); } 18% { transform: rotate(-150deg); } 30% { transform: rotate(-125deg); }
+    42% { transform: rotate(-160deg); } 54% { transform: rotate(-125deg); } 66% { transform: rotate(-160deg); } 82% { transform: rotate(-140deg); } 100% { transform: rotate(0); } }
+  .fb.wave .head { animation: fb-tilt 2.2s ease-in-out; transform-origin: 60px 56px; }
+  @keyframes fb-tilt { 20%, 80% { transform: rotate(-6deg); } }
+  .fb.juggle .leg-r { animation: fb-kick 2.4s ease-in-out; }
+  @keyframes fb-kick { 0%, 30%, 63%, 96%, 100% { transform: rotate(0); } 12%, 45%, 78% { transform: rotate(-38deg); } }
+  .fb.juggle .ball { animation: fb-ball 2.4s ease-in-out; }
+  @keyframes fb-ball { 0%, 100% { transform: translate(0, 0); } 12%, 45%, 78% { transform: translate(-4px, -8px); }
+    28%, 61%, 94% { transform: translate(-6px, -58px) rotate(200deg); } }
+  .fb.juggle .ball { transform-box: fill-box; transform-origin: center; }
+  .fb.celebrate .whole { animation: fb-jump 2s ease-in-out; }
+  @keyframes fb-jump { 0%, 50%, 100% { transform: translateY(0); } 25%, 75% { transform: translateY(-16px); } }
+  .fb.celebrate .arm-l, .fb.champ .arm-l { animation: fb-up-l 2s ease-in-out; }
+  .fb.celebrate .arm-r, .fb.champ .arm-r { animation: fb-up-r 2s ease-in-out; }
+  @keyframes fb-up-l { 15%, 85% { transform: rotate(150deg); } }
+  @keyframes fb-up-r { 15%, 85% { transform: rotate(-150deg); } }
+  .fb.champ .arm-l, .fb.champ .arm-r { animation-duration: 3.2s; animation-iteration-count: infinite; }
+  .fb-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 6px; }
   .bar { height: 6px; border-radius: 3px; background: var(--soft); margin-top: 6px; overflow: hidden; }
   .bar > div { height: 100%; background: var(--accent); border-radius: 3px; }
   .num { font-weight: 700; font-size: 18px; min-width: 28px; text-align: right; }
@@ -324,9 +355,110 @@ function confirmBox(text) {
     else resolve(window.confirm(text));
   });
 }
+function initials(name) { return (name || "?").split(/\s+/).map((p) => p[0]).join("").slice(0, 2).toUpperCase(); }
+function face(id) { return (S.data && S.data.faces && S.data.faces[id]) || {}; }
 function avatar(name, id) {
-  const letters = (name || "?").split(/\s+/).map((p) => p[0]).join("").slice(0, 2).toUpperCase();
-  return h("div", { class: "avatar", style: `background:${COLORS[(id || 0) % COLORS.length]}` }, letters);
+  const photo = face(id).photo;
+  if (photo) return h("div", { class: "avatar photo", style: `background:#888 url('${photo}')` });
+  return h("div", { class: "avatar", style: `background:${COLORS[(id || 0) % COLORS.length]}` }, initials(name));
+}
+
+// Аватар-футболист. anim: wave | juggle | celebrate (разово) или champ (руки вверх по кругу).
+let fbSeq = 0;
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function footballer(p, { size = 150, anim = null, tap = true } = {}) {
+  const f = face(p.id), id = "fb" + ++fbSeq, kit = (S.data && S.data.kit_color) || "#1f8a4c";
+  const skin = "#e2b48c", dark = "#1d2430", num = f.number !== undefined && f.number !== null ? f.number : "";
+  const head = f.photo
+    ? `<image href="${esc(f.photo)}" x="38" y="14" width="44" height="44" clip-path="url(#${id})" preserveAspectRatio="xMidYMid slice"/>`
+    : `<circle cx="60" cy="36" r="22" fill="${COLORS[(p.id || 0) % COLORS.length]}"/><text x="60" y="43" text-anchor="middle" font-size="18" font-weight="800" fill="#fff" font-family="system-ui">${esc(initials(p.name))}</text>`;
+  const svg = `<svg viewBox="0 0 120 172" width="${size}" height="${Math.round(size * 172 / 120)}" aria-label="${esc(p.name)}">
+  <defs><clipPath id="${id}"><circle cx="60" cy="36" r="22"/></clipPath></defs>
+  <ellipse cx="60" cy="164" rx="30" ry="5" fill="rgba(0,0,0,.18)"/>
+  <g class="part whole">
+    <g><rect x="48" y="118" width="9" height="22" rx="4" fill="${skin}"/><rect x="47.5" y="134" width="10" height="17" rx="3" fill="${kit}"/>
+      <ellipse cx="51" cy="155" rx="8" ry="4.5" fill="${dark}"/></g>
+    <g class="part leg-r"><rect x="63" y="118" width="9" height="22" rx="4" fill="${skin}"/><rect x="62.5" y="134" width="10" height="17" rx="3" fill="${kit}"/>
+      <ellipse cx="70" cy="155" rx="8" ry="4.5" fill="${dark}"/></g>
+    <rect x="43" y="102" width="34" height="22" rx="6" fill="${dark}"/>
+    <g class="part upper">
+      <g class="part arm-l"><rect x="30" y="64" width="13" height="15" rx="6" fill="${kit}"/><rect x="31.5" y="76" width="9" height="22" rx="4.5" fill="${skin}"/><circle cx="36" cy="100" r="5" fill="${skin}"/></g>
+      <g class="part arm-r"><rect x="77" y="64" width="13" height="15" rx="6" fill="${kit}"/><rect x="79.5" y="76" width="9" height="22" rx="4.5" fill="${skin}"/><circle cx="84" cy="100" r="5" fill="${skin}"/></g>
+      <rect x="54" y="52" width="12" height="14" rx="4" fill="${skin}"/>
+      <rect x="39" y="62" width="42" height="46" rx="11" fill="${kit}"/>
+      <path d="M52 62 Q60 72 68 62" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="60" y="96" text-anchor="middle" font-size="19" font-weight="800" fill="#fff" font-family="system-ui">${esc(num)}</text>
+      <g class="part head">${head}<circle cx="60" cy="36" r="22" fill="none" stroke="#fff" stroke-width="2"/></g>
+    </g>
+  </g>
+  <g class="part ball"><circle cx="82" cy="158" r="7" fill="#fff" stroke="${dark}" stroke-width="1.2"/><path d="M82 154.5 l3 2.2 -1.2 3.5 h-3.6 l-1.2 -3.5z" fill="${dark}"/></g>
+</svg>`;
+  const el = h("div", { class: "fb" + (anim === "champ" ? " champ" : "") });
+  el.innerHTML = svg;
+  const order = ["wave", "juggle", "celebrate"];
+  let next = 0;
+  el.play = (name) => {
+    el.classList.remove(...order);
+    void el.offsetWidth;  // перезапуск анимации
+    el.classList.add(name);
+    clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove(name), 2600);
+  };
+  if (tap) el.addEventListener("click", (e) => { e.stopPropagation(); haptic(); el.play(order[next++ % order.length]); });
+  if (anim && anim !== "champ") setTimeout(() => el.play(anim), 250);
+  return el;
+}
+
+// Загрузить фото: уменьшаем на телефоне (до 800 px) и отправляем.
+function pickPhoto(userId) {
+  const input = h("input", { type: "file", accept: "image/*", style: "display:none" });
+  input.addEventListener("change", async () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    try {
+      const url = URL.createObjectURL(file);
+      const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
+      const k = Math.min(1, 800 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      const r = await api("avatar", { op: "photo", image: c.toDataURL("image/jpeg", 0.88), user_id: userId || null });
+      if (r) { haptic("ok"); await refreshAvatarViews(userId); }
+    } catch (e) { toast("Не получилось открыть фото — попробуйте другое."); }
+  });
+  document.body.append(input);
+  input.click();
+}
+async function avatarOp(userId, op, extra = {}) {
+  const r = await api("avatar", { op, user_id: userId || null, ...extra });
+  if (r) { haptic("ok"); await refreshAvatarViews(userId); }
+}
+async function refreshAvatarViews(userId) {
+  if (S.sheet && S.sheet.type === "player" && userId) {
+    const r = await api("player_detail", { user_id: userId }); if (r) S.sheet.player = r;
+  }
+  S.stats = null;
+  render();
+}
+function avatarEditor(p, userId) {
+  const f = face(p.id);
+  const numInput = h("input", { class: "field", style: "width:90px;text-align:center", inputmode: "numeric", maxlength: 2,
+    placeholder: "№", value: f.number !== undefined && f.number !== null ? f.number : "" });
+  const fig = footballer(p, { size: 150, anim: "wave" });
+  return h("div", { class: "card", style: "text-align:center" }, fig,
+    h("div", { class: "fb-actions" },
+      h("button", { class: "btn small secondary", onclick: () => fig.play("wave") }, "👋 Помахать"),
+      h("button", { class: "btn small secondary", onclick: () => fig.play("juggle") }, "⚽ Чеканка"),
+      h("button", { class: "btn small secondary", onclick: () => fig.play("celebrate") }, "🎉 Гол!")),
+    h("div", { class: "fb-actions", style: "margin-top:10px" },
+      h("button", { class: "btn small", onclick: () => pickPhoto(userId) }, f.photo ? "📷 Сменить фото" : "📷 Загрузить фото"),
+      f.photo ? h("button", { class: "btn small secondary", onclick: async () => {
+        if (await confirmBox("Убрать фото с аватара?")) avatarOp(userId, "photo_delete"); } }, "Убрать фото") : null),
+    h("div", { class: "row", style: "justify-content:center;margin-top:10px;gap:8px" },
+      h("span", { class: "small muted" }, "Номер на футболке"), numInput,
+      h("button", { class: "btn small secondary", onclick: () => avatarOp(userId, "number", { number: numInput.value.trim() }) }, "OK")),
+    h("div", { class: "small muted", style: "margin-top:8px" }, "Нажми на футболиста — он помашет, почеканит или отпразднует гол. Фото видит только команда."));
 }
 function openLink(url) { if (tg && tg.openLink && tg.initData) tg.openLink(url); else window.open(url, "_blank"); }
 
@@ -725,7 +857,7 @@ function statsTab() {
   const podium = top.length ? h("div", { class: "podium" },
     [top[1], top[0], top[2]].map((p, i) => p ? h("button", { class: "podium-col" + (p.id === me ? " me" : ""), onclick: () => openPlayerStats(p.id) },
       h("div", { class: "podium-medal" }, medal(p.rank)),
-      avatar(p.name, p.id),
+      footballer(p, { size: p.rank === 1 ? 72 : 62, anim: p.rank === 1 && p[board] > 0 ? "champ" : null, tap: false }),
       h("div", { class: "podium-name ellipsis" }, p.id === me ? "Ты" : p.name),
       h("div", { class: "podium-num" }, p[board]),
       h("div", { class: "podium-step step-" + Math.min(p.rank, 3) }, p.rank)) : h("div", { class: "podium-col" }))) : null;
@@ -799,6 +931,7 @@ function profileTab() {
       h("div", { class: "grow" }, h("div", { style: "font-weight:700;font-size:18px" }, u.name),
         h("div", { class: "muted small" }, [u.staff, S.data.is_owner ? "Главный админ" : S.data.is_admin ? "Админ" : u.staff ? null : "Игрок команды"].filter(Boolean).join(" · "))),
       h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "rename", value: u.name }) }, "Изменить")),
+    S.data.access === "ok" ? avatarEditor(u, null) : null,
     h("div", { class: "card" },
       h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🚗 Есть машина"),
         h("div", { class: "small muted" }, u.car_locked ? "Отметил администратор — изменить может только он." : "Мячи возят только те, кто на машине.")),
@@ -1338,6 +1471,7 @@ function playerSheet() {
       h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Нажмите на имя — заявка станет этим игроком: его минусы и отметки сохранятся, отмечаться он будет сам."),
       h("div", { class: "people" }, S.players.filter((x) => x.manual && x.status === "approved").map((x) => h("button", { class: "chip",
         onclick: async () => { if (await confirmBox(`${p.name} — это «${x.name}»? Профили объединятся.`)) playerOp(p, "link_to", { target_id: x.id }); } }, "✍️ " + x.name)))) : null,
+    p.status === "approved" ? avatarEditor(p, p.id) : null,
     p.manual ? h("div", { class: "card" },
       h("div", { style: "font-weight:600" }, "✍️ Добавлен вручную — ещё не в Telegram"),
       h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Получает минусы за молчание. Отмечайте за него в карточке игры (нажмите на имя) или отправьте приглашение: по ссылке он зайдёт в бота, и Telegram привяжется к этому профилю. В приглашении есть и ссылка на сайт — можно без Telegram."),
@@ -1392,7 +1526,8 @@ function playerSheet() {
 
 function playerStatsSheet() {
   const p = S.sheet.player;
-  return h("div", {}, h("div", { class: "row", style: "margin-bottom:12px" }, avatar(p.name, p.id), h("h3", { style: "margin:0" }, p.name + (p.car ? " 🚗" : ""))),
+  return h("div", {}, h("div", { style: "text-align:center" }, footballer(p, { size: 120, anim: "wave" })),
+    h("h3", { style: "text-align:center;margin:6px 0 12px" }, p.name + (p.car ? " 🚗" : "")),
     h("div", { class: "list" }, p.duties.map((x) => h("div", { class: "item" }, h("span", { style: "font-size:20px" }, x.emoji), h("div", { class: "grow" }, x.name), h("div", { class: "num" }, x.count)))),
     p.minuses.length ? h("div", { class: "card small" }, `⚠️ Минусы: ${p.minuses.length}`, h("div", { class: "muted" }, p.minuses.map((m) => m.game).join(", "))) : null);
 }

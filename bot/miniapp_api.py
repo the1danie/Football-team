@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, audit, discipline, operations, texts, whatsapp
+from bot import actions, audit, discipline, operations, photos, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
@@ -223,7 +223,10 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
         data["user"]["help"], data["user"]["minus_total"], data["user"]["balance"] = (
             me_row["duties"], me_row["minuses"], me_row["balance"])
     data["access"] = "ok" if (user.is_approved or is_admin) else user.status
+    data["user"]["photo"], data["user"]["number"] = photos.url(user), user.jersey_number
     if data["access"] == "ok":
+        data["faces"] = await faces(session)
+        data["kit_color"] = config.kit_color
         games = [
             g for g in await svc.upcoming_games(session, config.now(), grace_hours=PAST_AFTER_HOURS)
             if g.status in GameStatus.ACTIVE
@@ -371,6 +374,14 @@ async def _game(session: AsyncSession, body: dict) -> Game:
     return game
 
 
+async def faces(session: AsyncSession) -> dict:
+    """Аватары команды: {id: {"photo": ссылка, "number": номер}} — только у кого что-то задано."""
+    return {
+        u.id: {"photo": photos.url(u), "number": u.jersey_number}
+        for u in await svc.all_users(session) if u.photo_version or u.jersey_number is not None
+    }
+
+
 async def _user(session: AsyncSession, raw_id: Any) -> User:
     user = await session.get(User, int(raw_id or 0))
     if user is None:
@@ -442,6 +453,34 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             if "car" in body:
                 await operations.set_own_car(bot, session, user, bool(body["car"]))
                 note = "Сохранено"
+        elif action == "avatar":
+            target = await _user(session, body["user_id"]) if body.get("user_id") else user
+            if target.id != user.id and not is_admin:
+                raise ApiError("Фото другого игрока меняет только админ.", 403)
+            op = body.get("op")
+            try:
+                if op == "photo":
+                    await photos.save(session, target, photos.decode_upload(str(body.get("image") or "")))
+                    note = "📷 Фото сохранено"
+                elif op == "photo_delete":
+                    await photos.delete(session, target)
+                    note = "Фото убрано"
+                elif op == "number":
+                    raw = body.get("number")
+                    num = None if raw in (None, "") else int(raw)
+                    if num is not None and not 0 <= num <= 99:
+                        raise ApiError("Номер — от 0 до 99.")
+                    target.jersey_number = num
+                    note = "Номер сохранён"
+                else:
+                    raise ApiError("Неизвестное действие.")
+            except photos.PhotoError as e:
+                raise ApiError(str(e)) from None
+            except (TypeError, ValueError):
+                raise ApiError("Номер — число от 0 до 99.") from None
+            if target.id != user.id:
+                await audit.record(session, f"📷 Аватар {target.name}: " + {"photo": "новое фото", "photo_delete": "фото убрано",
+                                                                          "number": f"номер {target.jersey_number}"}[op])
         elif action == "swap_targets":
             a = await session.get(svc.Assignment, int(body.get("assignment_id", 0)))
             if a is None or a.user_id != user.id:
