@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.config import config
 from bot.models import User, UserPhoto
 
-SIZE = 320
+SIZE = 400
 # Внешний вид аватара: телосложение, кожа, бутсы, празднование. Значения проверяем по этому списку.
 STYLE_OPTIONS = {
     "build": ("normal", "slim", "small", "athletic", "stocky", "tall"),

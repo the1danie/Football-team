@@ -518,7 +518,10 @@ function avatarStyleSheet() {
     } }, "Сохранить"));
 }
 
-// Загрузить фото: уменьшаем на телефоне (до 800 px) и отправляем.
+// Загрузить фото → окно кадрирования (двигать пальцем, приближать щипком или ползунком) → отправить квадрат.
+function loadImage(src) {
+  return new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = src; });
+}
 function pickPhoto(userId) {
   const input = h("input", { type: "file", accept: "image/*", style: "display:none" });
   input.addEventListener("change", async () => {
@@ -527,18 +530,85 @@ function pickPhoto(userId) {
     if (!file) return;
     try {
       const url = URL.createObjectURL(file);
-      const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
-      const k = Math.min(1, 800 / Math.max(img.naturalWidth, img.naturalHeight));
+      const img = await loadImage(url);
+      // Большие фото уменьшаем до 1600 px — чтобы телефон не тормозил при кадрировании.
+      const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
       const c = document.createElement("canvas");
       c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
       c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
-      const r = await api("avatar", { op: "photo", image: c.toDataURL("image/jpeg", 0.88), user_id: userId || null });
-      if (r) { haptic("ok"); await refreshAvatarViews(userId); }
+      openCrop(c.toDataURL("image/jpeg", 0.92), userId);
     } catch (e) { toast("Не получилось открыть фото — попробуйте другое."); }
   });
   document.body.append(input);
   input.click();
+}
+async function openCrop(src, userId) {
+  try {
+    const img = await loadImage(src);
+    openSheet({ type: "crop", src, userId, w: img.naturalWidth, h: img.naturalHeight, zoom: 1, x: null, y: null });
+  } catch (e) { toast("Не получилось открыть фото."); }
+}
+const CROP_V = 260;  // размер окна кадрирования, px
+function cropSheet() {
+  const c = S.sheet, V = CROP_V;
+  const base = V / Math.min(c.w, c.h);  // при zoom=1 фото ровно закрывает окно
+  const scale = () => base * c.zoom;
+  const clamp = () => {
+    const sw = c.w * scale(), sh = c.h * scale();
+    c.x = Math.min(0, Math.max(V - sw, c.x)); c.y = Math.min(0, Math.max(V - sh, c.y));
+  };
+  if (c.x === null) { c.x = (V - c.w * base) / 2; c.y = (V - c.h * base) * 0.3; }  // лицо обычно выше центра
+  clamp();
+  const img = h("img", { src: c.src, draggable: "false", alt: "",
+    style: "position:absolute;left:0;top:0;transform-origin:0 0;max-width:none;user-select:none;-webkit-user-drag:none;pointer-events:none" });
+  const place = () => { img.style.width = c.w * scale() + "px"; img.style.height = c.h * scale() + "px"; img.style.transform = `translate(${c.x}px,${c.y}px)`; };
+  const setZoom = (z, cx = V / 2, cy = V / 2) => {  // приближаем относительно точки (cx, cy) окна
+    const old = scale();
+    c.zoom = Math.min(5, Math.max(1, z));
+    const k = scale() / old;
+    c.x = cx - (cx - c.x) * k; c.y = cy - (cy - c.y) * k;
+    clamp(); place(); slider.value = c.zoom;
+  };
+  const slider = h("input", { type: "range", min: 1, max: 5, step: 0.01, value: c.zoom, style: "width:100%",
+    oninput: (e) => setZoom(Number(e.target.value)) });
+  const box = h("div", { style: `position:relative;width:${V}px;height:${V}px;margin:0 auto;overflow:hidden;border-radius:16px;touch-action:none;background:#111;cursor:grab` }, img,
+    h("div", { style: `position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 ${V}px rgba(0,0,0,.55);pointer-events:none;border:2px solid rgba(255,255,255,.85)` }));
+  // Палец: один — двигаем, два — щипок (приближение).
+  const pts = new Map();
+  let last = null;
+  const rel = (e) => { const r = box.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const pinch = () => { const [a, b] = [...pts.values()]; return { d: Math.hypot(a[0] - b[0], a[1] - b[1]), cx: (a[0] + b[0]) / 2, cy: (a[1] + b[1]) / 2 }; };
+  box.addEventListener("pointerdown", (e) => { box.setPointerCapture(e.pointerId); pts.set(e.pointerId, rel(e)); last = pts.size === 2 ? pinch() : null; });
+  box.addEventListener("pointermove", (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId), cur = rel(e);
+    pts.set(e.pointerId, cur);
+    if (pts.size === 1) { c.x += cur[0] - prev[0]; c.y += cur[1] - prev[1]; clamp(); place(); }
+    else if (pts.size === 2 && last) { const p = pinch(); setZoom(c.zoom * p.d / last.d, p.cx, p.cy); last = p; }
+  });
+  const up = (e) => { pts.delete(e.pointerId); last = pts.size === 2 ? pinch() : null; };
+  box.addEventListener("pointerup", up); box.addEventListener("pointercancel", up);
+  box.addEventListener("wheel", (e) => { e.preventDefault(); const [x, y] = rel(e); setZoom(c.zoom * (e.deltaY < 0 ? 1.1 : 0.9), x, y); }, { passive: false });
+  place();
+  const save = h("button", { class: "btn", onclick: async () => {
+    save.disabled = true;
+    try {
+      const source = await loadImage(c.src), out = document.createElement("canvas"), N = 512, sc = scale();
+      out.width = out.height = N;
+      out.getContext("2d").drawImage(source, -c.x / sc, -c.y / sc, V / sc, V / sc, 0, 0, N, N);
+      const r = await api("avatar", { op: "photo", image: out.toDataURL("image/jpeg", 0.9), user_id: c.userId || null });
+      if (!r) return;
+      haptic("ok");
+      if (c.userId) openPlayer(c.userId); else closeSheet();
+    } finally { save.disabled = false; }
+  } }, "Сохранить");
+  return h("div", {}, h("h3", {}, "✂️ Кадрирование"),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Двигайте фото пальцем, приближайте двумя пальцами или ползунком. В круге — то, что будет на аватаре."),
+    box,
+    h("div", { class: "row", style: "gap:10px;margin:14px 4px 0" }, h("span", {}, "➖"), slider, h("span", {}, "➕")),
+    h("div", { class: "btns", style: "margin-top:14px" },
+      h("button", { class: "btn secondary", onclick: () => (c.userId ? openPlayer(c.userId) : closeSheet()) }, "Отмена"), save));
 }
 async function avatarOp(userId, op, extra = {}) {
   const r = await api("avatar", { op, user_id: userId || null, ...extra });
@@ -563,6 +633,7 @@ function avatarEditor(p, userId) {
       h("button", { class: "btn small secondary", onclick: () => fig.play("celebrate") }, "🎉 Празднование")),
     h("div", { class: "fb-actions", style: "margin-top:10px" },
       h("button", { class: "btn small", onclick: () => pickPhoto(userId) }, f.photo ? "📷 Сменить фото" : "📷 Загрузить фото"),
+      f.photo ? h("button", { class: "btn small secondary", onclick: () => openCrop(f.photo, userId) }, "✂️ Кадрировать") : null,
       h("button", { class: "btn small secondary", onclick: () => openAvatarStyle(p, userId) }, "🎨 Внешний вид"),
       f.photo ? h("button", { class: "btn small secondary", onclick: async () => {
         if (await confirmBox("Убрать фото с аватара?")) avatarOp(userId, "photo_delete"); } }, "Убрать фото") : null),
@@ -1237,7 +1308,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, avatarStyle: avatarStyleSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, avatarStyle: avatarStyleSheet, crop: cropSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;

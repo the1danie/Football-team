@@ -37,7 +37,7 @@ async def test_photo_and_number(team):  # noqa: F811
     assert st["state"]["faces"][str(pasha_id)]["photo"] == url  # команда видит
     code, headers, body = await fetch(url.split("?", 1)[1])
     assert code == 200 and headers[b"content-type"] == b"image/jpeg"
-    assert Image.open(io.BytesIO(body)).size == (320, 320)
+    assert Image.open(io.BytesIO(body)).size == (400, 400)
 
     token = url.split("photo=")[1]
     assert (await fetch("photo=" + token[:-2] + "00"))[0] == 404  # подделка
