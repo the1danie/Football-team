@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import io
 import json
+import time
 
 from PIL import Image, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,7 +82,7 @@ def _sig(user_id: int, version: int) -> str:
 
 
 def url(user: User) -> str | None:
-    if not user.photo_version:
+    if (user.photo_version or 0) <= 0:  # 0 — фото не было, минус — убрано (помним номер последней версии)
         return None
     return f"/api/app?photo={user.id}.{user.photo_version}.{_sig(user.id, user.photo_version)}"
 
@@ -104,7 +105,9 @@ async def save(session: AsyncSession, user: User, raw: bytes) -> None:
         session.add(UserPhoto(user_id=user.id, data=data))
     else:
         row.data = data
-    user.photo_version = (user.photo_version or 0) + 1
+    # Версия — время загрузки: у каждого нового фото своя ссылка. Раньше было +1, и после «Убрать фото»
+    # новое фото получало ту же ссылку, что и старое, а телефон показывал старое из кэша.
+    user.photo_version = max(int(time.time()), abs(user.photo_version or 0) + 1)
     await session.flush()
 
 
@@ -112,7 +115,7 @@ async def delete(session: AsyncSession, user: User) -> None:
     row = await session.get(UserPhoto, user.id)
     if row is not None:
         await session.delete(row)
-    user.photo_version = 0
+    user.photo_version = -abs(user.photo_version or 0)  # ссылка перестаёт работать, а номер не повторится
     await session.flush()
 
 
@@ -122,7 +125,7 @@ async def load(session: AsyncSession, token: str) -> bytes | None:
         return None
     user_id, version = parsed
     user = await session.get(User, user_id)
-    if user is None or user.photo_version != version:
+    if user is None or version <= 0 or user.photo_version != version:
         return None
     row = await session.get(UserPhoto, user_id)
     return row.data if row else None

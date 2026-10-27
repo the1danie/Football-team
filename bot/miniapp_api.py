@@ -378,7 +378,7 @@ async def faces(session: AsyncSession) -> dict:
     """Аватары команды: {id: {"photo": ссылка, "number": номер}} — только у кого что-то задано."""
     return {
         u.id: {"photo": photos.url(u), "number": u.jersey_number, "style": photos.style_of(u)}
-        for u in await svc.all_users(session) if u.photo_version or u.jersey_number is not None or u.avatar_style
+        for u in await svc.all_users(session) if (u.photo_version or 0) > 0 or u.jersey_number is not None or u.avatar_style
     }
 
 

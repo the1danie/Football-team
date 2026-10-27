@@ -71,3 +71,14 @@ async def test_avatar_style(team):  # noqa: F811
     assert res["state"]["faces"][str(rus_id)]["style"] == {"celebration": "zen"}
     _, res = await api(rus, "avatar", op="style", style={})
     assert str(rus_id) not in res["state"]["faces"]
+
+
+async def test_new_photo_after_delete_gets_new_link(team):  # noqa: F811
+    """Убрал фото и загрузил другое — ссылка новая (иначе телефон покажет старое из кэша)."""
+    pasha = tg_user(2, "Паша")
+    await _member(pasha)
+    _, res = await api(pasha, "avatar", op="photo", image=_photo())
+    first = res["state"]["user"]["photo"]
+    await api(pasha, "avatar", op="photo_delete")
+    _, res = await api(pasha, "avatar", op="photo", image=_photo(400, 400))
+    assert res["state"]["user"]["photo"] != first
