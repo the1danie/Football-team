@@ -272,3 +272,32 @@ async def test_explain_distribution(team):  # noqa: F811
     balls = next(d for d in e["duties"] if d["name"] == "Мячи")
     assert balls["ranking"][0]["name"] == "Нурик" and balls["history"][0]["name"] == "Нурик"
     assert marat_id
+
+
+async def test_reassign_sends_change_for_whatsapp(team):  # noqa: F811
+    """Команда в WhatsApp: после замены — понятные сообщения игрокам и текст замены для группы."""
+    fake = team  # noqa: F811
+    marat, pasha, rus = tg_user(3, "Марат"), tg_user(4, "Паша"), tg_user(7, "Рустам")
+    for u in (marat, pasha, rus):
+        await _member(u)
+    day = (config.now() + timedelta(days=2)).date().isoformat()
+    _, res = await api(OWNER, "create_game", date=day, minutes=21 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    for u in (OWNER, marat, pasha, rus):
+        await api(u, "rsvp", game_id=gid, status="yes")
+    _, res = await api(OWNER, "distribute", game_id=gid)
+    water = next(d for d in res["state"]["games"][0]["duties"] if d["name"] == "Вода")
+    old = water["user"]
+    new_id = next(p["id"] for p in res["state"]["games"][0]["participants"]["yes"] if p["id"] != old["id"])
+    new_name = next(p["name"] for p in res["state"]["games"][0]["participants"]["yes"] if p["id"] == new_id)
+    status, res = await api(OWNER, "assign", game_id=gid, duty_id=water["duty_id"], user_id=new_id)
+    assert status == 200
+    wa = res["whatsapp"]["text"]
+    assert "Замена в обязанностях" in wa and f"Вода: теперь {new_name} (вместо {old['name']})" in wa
+    assert "Актуально:" in wa and f"Вода — {new_name}" in wa and res["whatsapp"]["url"].startswith("https://wa.me/")
+
+    # игрок отказался — замену сам находит бот, а админу приходит текст для WhatsApp
+    fake.reset()
+    loser = next(u for u in (marat, pasha, rus) if u["first_name"] == new_name) if new_name != "Даниял" else OWNER
+    await api(loser, "rsvp", game_id=gid, status="no")
+    assert any("Замена в обязанностях" in m.text for m in fake.sent(int(OWNER["id"])))

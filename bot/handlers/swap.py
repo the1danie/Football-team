@@ -129,6 +129,12 @@ async def swap_accept(cb: CallbackQuery, session: AsyncSession, bot: Bot):
         f"✅ {texts.h(target.name)} согласился на обмен ({texts.game_header(game)}).\n"
         f"Твоя обязанность теперь: {duty_list(theirs)}",
     )
+    given = await session.get(Assignment, req.from_assignment_id)
+    taken = await session.get(Assignment, req.to_assignment_id) if req.to_assignment_id else None
+    await notifier.duties_changed(bot, session, game, [
+        *([(given.duty, initiator, target)] if given else []),
+        *([(taken.duty, target, initiator)] if taken else []),
+    ])
     if req.to_assignment_id is None:  # отдал свою обязанность, ничего не взяв взамен
         from bot import discipline
 

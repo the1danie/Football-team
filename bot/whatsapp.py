@@ -126,6 +126,17 @@ def duties(
     return "\n".join(lines)
 
 
+def duty_change(game: Game, changes, assignments: list[Assignment], unassigned: list[Duty]) -> str:
+    """Замена в обязанностях: что поменялось и актуальный список — чтобы в группе не путались со старым."""
+    lines = _header(game) + ["", "🔁 *Замена в обязанностях*"]
+    for duty, old, new in changes:
+        lines.append(f"{duty.name}: теперь {new.name if new else 'не назначено'}" + (f" (вместо {old.name})" if old else ""))
+    lines += ["", "*Актуально:*"]
+    lines += [f"{a.duty.name} — {a.user.name}" for a in assignments]
+    lines += [f"{d.name} — не назначено" for d in unassigned]
+    return "\n".join(lines)
+
+
 def penalties(game: Game, users: list[User], points: int) -> str:
     names = ", ".join(u.name for u in users)
     return "\n".join(_header(game) + ["", f"Не ответили на опрос: {names} — по −{points}."])

@@ -1397,9 +1397,17 @@ function createdSheet() {
     h("button", { class: "btn secondary", style: "margin-top:8px", onclick: closeSheet }, "Готово"));
 }
 
+// После замены — сразу текст для группы WhatsApp, чтобы игроки не путались со старым списком.
+function offerChange(r) {
+  if (!r || !r.whatsapp) return false;
+  openSheet({ type: "whatsapp", text: r.whatsapp.text, url: r.whatsapp.url, title: "🔁 Замена — отправьте в группу WhatsApp",
+    hint: "Игрокам бот уже написал. Отправьте это в группу, чтобы все видели актуальный список." });
+  return true;
+}
 function whatsappSheet() {
   const s = S.sheet;
   return h("div", {}, h("h3", {}, s.title || "Текст для WhatsApp"),
+    s.hint ? h("p", { class: "muted small", style: "margin:-6px 2px 10px" }, s.hint) : null,
     h("div", { class: "card small", style: "white-space:pre-wrap" }, s.text),
     h("button", { class: "btn", onclick: () => openLink(s.url) }, "📤 Открыть WhatsApp"),
     h("button", { class: "btn secondary", style: "margin-top:8px", onclick: async () => {
@@ -1437,10 +1445,10 @@ function assignSheet() {
       h("div", { class: "row" }, h("span", { style: "font-size:22px" }, x.emoji), h("b", { class: "grow" }, x.name), x.requires_car ? h("span", { class: "chip" }, "нужна 🚗") : null,
         !past && S.data.is_owner ? h("button", { class: "btn small secondary", onclick: async () => {
           if (!(await confirmBox(`Пересчитать «${x.name}»? Бот отдаст её следующему по очереди${x.user ? ` вместо ${x.user.name}` : ""}.`))) return;
-          const r = await api("redo_duty", { game_id: g.id, duty_id: x.duty_id }); if (r) { haptic("ok"); render(); } } }, "🔁") : null),
+          const r = await api("redo_duty", { game_id: g.id, duty_id: x.duty_id }); if (r) { haptic("ok"); if (!offerChange(r)) render(); } } }, "🔁") : null),
       h("select", { class: "field", style: "margin-top:10px", onchange: async (e) => {
         const r = await api("assign", { game_id: g.id, duty_id: x.duty_id, user_id: Number(e.target.value) || null });
-        if (r) { haptic("ok"); if (past) await loadArchive(); render(); } } },
+        if (r) { haptic("ok"); if (past) await loadArchive(); if (!offerChange(r)) render(); } } },
         h("option", { value: "0", selected: !x.user }, "— не назначено —"),
         pool.filter((u) => past || u.car || !x.requires_car).map((u) => h("option", { value: u.id, selected: x.user && x.user.id === u.id }, u.name + (u.car ? " 🚗" : "")))))));
 }

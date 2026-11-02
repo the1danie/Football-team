@@ -313,11 +313,13 @@ async def edit_set(cb: CallbackQuery, session: AsyncSession, bot: Bot):
         await cb.message.edit_text("Игра неактуальна.")
         return
     try:
-        await operations.assign_duty(bot, session, game, duty, user)
+        wa = await operations.assign_duty(bot, session, game, duty, user)
     except operations.OpError as e:
         await cb.message.edit_text(texts.h(str(e)))
         return
     await cb.message.edit_text(f"✅ {duty.title} — {texts.h(user.name) if user else 'не назначено'}")
+    if wa:
+        await whatsapp.send_draft(bot, wa, chat_ids=[cb.from_user.id], note="🔁 Отправьте замену в группу WhatsApp 👇")
 
 
 # ----------------------------------------------------------------- обязанности

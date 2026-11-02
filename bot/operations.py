@@ -493,7 +493,7 @@ async def create_from_schedule(bot: Bot, session: AsyncSession, schedule, starts
     return game
 
 
-async def redo_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty) -> str:
+async def redo_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty) -> tuple[str, str | None]:
     """Пересчитать одну обязанность (мячи, вода, манишки…) — остальные назначения не трогаем."""
     if game.status != GameStatus.DISTRIBUTED:
         raise OpError("Сначала распределите обязанности.")
@@ -504,20 +504,34 @@ async def redo_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty) -> 
         session, f"🔁 Пересчитал {duty.title}: {old_user.name if old_user else '—'} → {user.name if user else 'никто'}", game
     )
     await notifier.refresh_game(bot, session, game)
+    await _duty_moved_dms(bot, game, duty, old_user, user)
+    wa = await notifier.duties_changed(bot, session, game, [(duty, old_user, user)], draft_to_admins=False)
+    if user is None:
+        return f"{duty.title}: некому назначить" + (" (нужна машина)" if duty.requires_car else ""), wa
+    if old_user is not None and old_user.id == user.id:
+        return f"{duty.title}: больше некому — остаётся {user.name}", wa
+    return f"{duty.title} → {user.name}", wa
+
+
+async def _duty_moved_dms(bot: Bot, game: Game, duty: Duty, old_user: User | None, user: User | None) -> None:
+    """Обоим понятно, кто теперь отвечает, — чтобы не путались со старым сообщением."""
     if old_user is not None and (user is None or old_user.id != user.id):
-        await notifier.send_dm(bot, old_user, f"Обязанность {duty.title} ({texts.game_header(game)}) передана другому игроку — с тебя снята.")
+        await notifier.send_dm(
+            bot, old_user,
+            f"🔁 {duty.emoji} {texts.h(duty.name)} ({texts.game_header(game)}) с тебя снята — "
+            + (f"теперь отвечает {texts.h(user.name)}." if user else "пока никто не назначен."),
+        )
     if user is not None and (old_user is None or old_user.id != user.id):
         await notifier.send_dm(
-            bot, user, f"Тебе назначена обязанность на {texts.game_header(game)}:\n{duty.emoji} {texts.h(duty.action)}"
+            bot, user,
+            f"🔁 Теперь ты отвечаешь за {duty.emoji} {texts.h(duty.name)}"
+            + (f" вместо {texts.h(old_user.name)}" if old_user else "")
+            + f" ({texts.game_header(game)}):\n{duty.emoji} {texts.h(duty.action)}",
         )
-    if user is None:
-        return f"{duty.title}: некому назначить" + (" (нужна машина)" if duty.requires_car else "")
-    if old_user is not None and old_user.id == user.id:
-        return f"{duty.title}: больше некому — остаётся {user.name}"
-    return f"{duty.title} → {user.name}"
 
 
-async def assign_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty, user: User | None) -> None:
+async def assign_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty, user: User | None) -> str | None:
+    """Назначить вручную. Возвращает текст замены для WhatsApp (если нужен)."""
     finished = game.status == GameStatus.FINISHED
     if game.status != GameStatus.DISTRIBUTED and not finished:
         raise OpError("Сначала распределите обязанности.")
@@ -534,19 +548,13 @@ async def assign_duty(bot: Bot, session: AsyncSession, game: Game, duty: Duty, u
         await audit.record(
             session, f"🔧 Исправил задним числом {duty.title}: {old_user.name if old_user else '—'} → {user.name if user else 'никто'}", game
         )
-        return
+        return None
     await audit.record(
         session, f"🔧 Назначение {duty.title}: {old_user.name if old_user else '—'} → {user.name if user else 'никто'}", game
     )
     await notifier.refresh_game(bot, session, game)
-    if old_user is not None and (user is None or old_user.id != user.id):
-        await notifier.send_dm(
-            bot, old_user, f"Администратор снял с тебя обязанность {duty.title} ({texts.game_header(game)})."
-        )
-    if user is not None and (old_user is None or old_user.id != user.id):
-        await notifier.send_dm(
-            bot, user, f"Тебе назначена обязанность на {texts.game_header(game)}:\n{duty.emoji} {texts.h(duty.action)}"
-        )
+    await _duty_moved_dms(bot, game, duty, old_user, user)
+    return await notifier.duties_changed(bot, session, game, [(duty, old_user, user)], draft_to_admins=False)
 
 
 # ----------------------------------------------------------------- не выполнил обязанность

@@ -119,8 +119,8 @@ async def announce_reassignments(bot: Bot, game: Game, reassigned: list[svc.Reas
     for r in reassigned:
         await send_dm(
             bot, r.old_user,
-            f"У тебя были назначены {r.duty.emoji} {texts.h(r.duty.name.lower())} ({texts.game_header(game)}).\n"
-            "Обязанность будет передана другому игроку.",
+            f"🔁 {r.duty.emoji} {texts.h(r.duty.name)} ({texts.game_header(game)}) с тебя снята — "
+            + (f"теперь отвечает {texts.h(r.new_user.name)}." if r.new_user else "передадим другому игроку."),
         )
         if r.new_user is not None:
             await send_dm(
@@ -134,6 +134,34 @@ async def announce_reassignments(bot: Bot, game: Game, reassigned: list[svc.Reas
                 f"⚠️ {texts.game_header(game)}\n{texts.h(r.old_user.name)} отказался, "
                 f"а замену для «{r.duty.title}» найти не удалось. Назначьте вручную.",
             )
+    session = async_object_session(game)
+    if session is not None and reassigned:
+        await duties_changed(bot, session, game, [(r.duty, r.old_user, r.new_user) for r in reassigned])
+
+
+async def duties_changed(bot: Bot, session: AsyncSession, game: Game, changes, draft_to_admins: bool = True) -> str | None:
+    """Обязанность перешла к другому: обновить группу и подготовить текст замены для WhatsApp.
+
+    changes — [(duty, прежний, новый)]. Возвращает текст для WhatsApp (если команда в WhatsApp).
+    draft_to_admins — прислать этот текст админам в бот (когда меняли не они сами в приложении).
+    """
+    changes = [(d, o, n) for d, o, n in changes if (o.id if o else None) != (n.id if n else None)]
+    if not changes or game.status not in (GameStatus.DISTRIBUTED,):
+        return None
+    assignments = await svc.active_assignments(session, game.id)
+    unassigned = await svc.unassigned_duties(session, game)
+    if game.chat_id:
+        lines = [f"🔁 <b>Замена в обязанностях</b> — {texts.game_header(game)}"]
+        lines += [f"{d.emoji} {texts.h(d.name)}: теперь {texts.mention(n) if n else 'не назначено'}"
+                  + (f" (вместо {texts.h(o.name)})" if o else "") for d, o, n in changes]
+        await send_raw(bot, game.chat_id, "\n".join(lines))
+        return None
+    from bot import whatsapp  # noqa: PLC0415
+
+    text = whatsapp.duty_change(game, changes, assignments, unassigned)
+    if draft_to_admins:
+        await whatsapp.send_draft(bot, text, note="🔁 Замена в обязанностях — отправьте в группу WhatsApp, чтобы не путались 👇")
+    return text
 
 
 async def announce_new_assignments(bot: Bot, game: Game, assignments) -> None:

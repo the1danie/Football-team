@@ -273,7 +273,10 @@ async def test_full_flow(h: Harness):
     async with h.sm() as s:
         assert len(await svc.user_assignments(s, game_id, a1.user_id)) == 2
         assert await svc.user_assignments(s, game_id, a2.user_id) == []
-    assert any("снял с тебя обязанность" in m.text for m in fake.sent(a2.user.telegram_id))
+    old_msg = next(m.text for m in fake.sent(a2.user.telegram_id) if "с тебя снята" in m.text)
+    assert f"теперь отвечает {a1.user.name}" in old_msg
+    # в группе — короткое сообщение о замене, чтобы не путались со старым списком
+    assert any("Замена в обязанностях" in m.text and f"вместо {a2.user.name}" in m.text for m in fake.sent(GROUP))
 
     # --- статистика
     fake.reset()

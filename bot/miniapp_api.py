@@ -425,6 +425,7 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         raise ApiError("Только для администратора.", 403)
 
     note = None
+    wa_change = None  # текст замены для WhatsApp — приложение сразу предложит отправить его в группу
     try:
         if action == "state":
             pass
@@ -744,7 +745,8 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             duty = await session.get(Duty, int(body.get("duty_id", 0)))
             if duty is None:
                 raise ApiError("Обязанность не найдена.", 404)
-            note = "🔁 " + await operations.redo_duty(bot, session, game, duty)
+            text, wa_change = await operations.redo_duty(bot, session, game, duty)
+            note = "🔁 " + text
         elif action == "undistribute":
             if not config.is_owner(tg_id):
                 raise ApiError("Отменить распределение может только главный админ.", 403)
@@ -758,7 +760,7 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             if duty is None:
                 raise ApiError("Обязанность не найдена.", 404)
             target = await _user(session, body["user_id"]) if body.get("user_id") else None
-            await operations.assign_duty(bot, session, game, duty, target)
+            wa_change = await operations.assign_duty(bot, session, game, duty, target)
             note = f"{duty.title} — {target.name if target else 'не назначено'}"
         elif action == "burpees_done":
             if not (is_admin or staff_view):
@@ -887,4 +889,7 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         raise ApiError("Неверные данные запроса.") from e
 
     await session.flush()
-    return {"note": note, "state": await state_view(bot, session, tg, user)}
+    result = {"note": note, "state": await state_view(bot, session, tg, user)}
+    if wa_change:
+        result["whatsapp"] = {"text": wa_change, "url": whatsapp.share_url(wa_change)}
+    return result
