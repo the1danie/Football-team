@@ -193,6 +193,9 @@ class GameParticipant(Base):
     attended: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Поставлено ботом при закрытии сбора: "silent" — молчал, "maybe" — был «Не знаю». Сам ответил — None.
     auto_from: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Отвечал «Не буду» / «Не знаю», а админ отметил «пришёл»: первым получает обязанность «после»,
+    # со 2-го раза за 30 дней — минус (как с передачей обязанности).
+    came_unannounced: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(lazy="joined")
@@ -252,10 +255,12 @@ class PenaltyReason:
     NO_SHOW = "no_show"  # сказал «Буду», но не пришёл
     NOT_DONE = "not_done"  # не выполнил обязанность
     GAVE_AWAY = "gave_away"  # слишком часто отдаёт обязанность другим
+    CAME_UNANNOUNCED = "came_unannounced"  # нажал «Не буду», а сам пришёл (не первый раз)
 
     LABELS = {
         NO_RESPONSE: "не ответил на опрос", NO_SHOW: "сказал «Буду», но не пришёл",
         NOT_DONE: "не выполнил обязанность", GAVE_AWAY: "отдал обязанность другому",
+        CAME_UNANNOUNCED: "нажал «Не буду», а сам пришёл",
     }
 
 

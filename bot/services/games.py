@@ -430,6 +430,10 @@ async def build_candidates(
         )
 
     penalties = await open_penalty_points(session, ids)
+    # Пришёл без «Буду» — первым получает обязанность «после» (вода уже распределена без него).
+    unannounced = set((await session.scalars(
+        select(GameParticipant.user_id).where(GameParticipant.game_id == game.id, GameParticipant.came_unannounced.is_(True))
+    )).all())
     return [
         Candidate(
             user_id=u.id,
@@ -437,7 +441,7 @@ async def build_candidates(
             duty_counts=per_user.get(u.id, {}),
             total=sum(per_user.get(u.id, {}).values()),
             busy_last_game=u.id in busy_last,
-            penalty_bonus=penalties.get(u.id, 0) * config.penalty_priority,
+            penalty_bonus=(penalties.get(u.id, 0) + (1 if u.id in unannounced else 0)) * config.penalty_priority,
         )
         for u in users
     ]
@@ -1074,6 +1078,8 @@ class AttendanceResult:
     penalty_total: int | None = None  # начислен минус за неявку — сколько всего у игрока
     penalty_removed: bool = False
     reassigned: list[Reassignment] = field(default_factory=list)
+    came_unannounced: bool = False  # отвечал «Не буду», а пришёл
+    unannounced_undone: bool = False  # отметку «пришёл» сняли
 
 
 async def set_attendance(
@@ -1087,6 +1093,10 @@ async def set_attendance(
         if p is None:
             p = GameParticipant(game_id=game.id, user_id=user.id, status=Rsvp.YES, user=user)
             session.add(p)
+        elif p.status != Rsvp.YES and p.auto_from != "silent":
+            # Сам ответил «Не буду» / «Не знаю», а пришёл (молчавшим и так минус за молчание).
+            p.came_unannounced = True
+            result.came_unannounced = True
         p.status = Rsvp.YES
         p.attended = True
         p.auto_from = None
@@ -1102,7 +1112,11 @@ async def set_attendance(
         await session.flush()
         return result
 
-    said_yes = p is not None and p.status == Rsvp.YES
+    said_yes = p is not None and p.status == Rsvp.YES and not p.came_unannounced
+    if p is not None and p.came_unannounced:  # отметили «пришёл» по ошибке — возвращаем как было
+        p.came_unannounced = False
+        p.status = Rsvp.NO
+        result.unannounced_undone = True
     if p is None:
         p = GameParticipant(game_id=game.id, user_id=user.id, status=Rsvp.NO, user=user)
         session.add(p)
@@ -1268,7 +1282,8 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
     rows = []
     for u in users:
         r = {"id": u.id, "name": u.name, "manual": u.is_manual, "inactive": not u.is_active, "games": 0, "came": 0, "no": 0, "maybe": 0,
-             "silent": 0, "no_show": 0, "history": [], "kinds": [], "failed": failed.get(u.id, 0), "gave": gave.get(u.id, 0)}
+             "silent": 0, "no_show": 0, "history": [], "kinds": [], "failed": failed.get(u.id, 0), "gave": gave.get(u.id, 0),
+             "unannounced": 0}
         for g in games:
             p = marks.get((g.id, u.id))
             if p is None and not u.is_active:
@@ -1292,6 +1307,8 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
                 kind = "no"
             r["games"] += 1
             r[kind] += 1
+            if p is not None and p.came_unannounced:
+                r["unannounced"] += 1
             r["history"].append(ATTENDANCE_ICONS[kind])
             r["kinds"].append(kind)
         r["history"] = "".join(r["history"][-10:])

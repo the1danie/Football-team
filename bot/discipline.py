@@ -113,6 +113,48 @@ async def penalize(bot: Bot, session: AsyncSession, user: User, game: Game | Non
     return after
 
 
+async def unannounced_in_window(session: AsyncSession, user_id: int, now: datetime | None = None) -> int:
+    """Сколько раз за TRANSFER_WINDOW нажал «Не буду» (или «Не знаю»), а сам пришёл."""
+    from bot.models import GameParticipant  # noqa: PLC0415
+
+    since = (now or config.now()) - TRANSFER_WINDOW
+    return int(await session.scalar(
+        select(func.count()).select_from(GameParticipant).join(Game, Game.id == GameParticipant.game_id)
+        .where(GameParticipant.user_id == user_id, GameParticipant.came_unannounced.is_(True), Game.starts_at >= since)
+    ) or 0)
+
+
+async def came_unannounced(bot: Bot, session: AsyncSession, game: Game, user: User) -> str:
+    """Пришёл без «Буду»: 1-й раз за 30 дней — без минуса, дальше −1, −2… Возвращает текст игроку."""
+    n = await unannounced_in_window(session, user.id)
+    points = transfer_points(n)
+    days = TRANSFER_WINDOW.days
+    text = (f"👍 Здорово, что пришёл на {texts.game_header(game)}! Ты отвечал «Не буду», поэтому вода "
+            "распределилась без тебя — после тренировки обязанность (мячи или манишки) в первую очередь достанется тебе.\n"
+            "В следующий раз, если идёшь, нажми «Буду» — так обязанности делятся честно.")
+    if not points:
+        return text + f"\nПервый раз за {days} дней — без минуса, дальше −1, −2 и т. д."
+    exists = await session.scalar(select(Penalty).where(
+        Penalty.user_id == user.id, Penalty.game_id == game.id, Penalty.reason == PenaltyReason.CAME_UNANNOUNCED,
+        Penalty.status == PenaltyStatus.OPEN))
+    if exists is not None:
+        return text
+    total = await penalize(bot, session, user, game, points, PenaltyReason.CAME_UNANNOUNCED)
+    await notifier.notify_admins(
+        bot, f"🙈 {texts.h(user.name)} нажал «Не буду», а пришёл — {n}-й раз за {days} дней: −{points} (всего −{total})."
+    )
+    return text + f"\n⚠️ Уже {n}-й раз за {days} дней: −{points}. Всего минусов: {total}."
+
+
+async def unannounced_undone(session: AsyncSession, game: Game, user: User) -> None:
+    """Отметку «пришёл» сняли — снимаем и минус за неё."""
+    for p in (await session.scalars(select(Penalty).where(
+        Penalty.user_id == user.id, Penalty.game_id == game.id, Penalty.reason == PenaltyReason.CAME_UNANNOUNCED,
+        Penalty.status == PenaltyStatus.OPEN))).all():
+        p.status = PenaltyStatus.CANCELLED
+    await session.flush()
+
+
 async def transfers_in_window(session: AsyncSession, user_id: int, now: datetime | None = None) -> int:
     since = (now or datetime.utcnow()) - TRANSFER_WINDOW
     return int(await session.scalar(

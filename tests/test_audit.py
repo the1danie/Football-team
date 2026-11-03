@@ -301,3 +301,51 @@ async def test_reassign_sends_change_for_whatsapp(team):  # noqa: F811
     loser = next(u for u in (marat, pasha, rus) if u["first_name"] == new_name) if new_name != "Даниял" else OWNER
     await api(loser, "rsvp", game_id=gid, status="no")
     assert any("Замена в обязанностях" in m.text for m in fake.sent(int(OWNER["id"])))
+
+
+async def test_explain_after_phase_uses_its_own_moment(team):  # noqa: F811
+    """«Почему так»: манишки «после» — среди тех, кто был на момент их распределения
+    (в т.ч. отмеченных «пришёл» после «Не буду»), а не на момент закрытия сбора."""
+    from datetime import datetime
+
+    from sqlalchemy import select
+
+    from bot import webhook
+    from bot.models import Assignment, Duty, Game, GameParticipant
+    from bot.services import games as svc
+
+    artur = tg_user(5, "Артур")
+    aid = await _member(artur)
+    await _member(tg_user(4, "Паша"))
+    async with webhook._sessionmaker() as s:
+        for d in (await s.scalars(select(Duty))).all():
+            d.phase = "after" if d.code in ("balls", "bibs") else "before"
+        await s.commit()
+    day = (config.now() + timedelta(days=1)).date().isoformat()
+    _, res = await api(OWNER, "create_game", date=day, minutes=21 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    await api(OWNER, "rsvp", game_id=gid, status="yes")
+    await api(tg_user(4, "Паша"), "rsvp", game_id=gid, status="yes")
+    await api(artur, "rsvp", game_id=gid, status="no")
+    await api(OWNER, "distribute", game_id=gid)
+    early = datetime.utcnow() - timedelta(hours=4)
+    async with webhook._sessionmaker() as s:
+        g = await s.get(Game, gid)
+        g.starts_at = config.now() - timedelta(minutes=30)
+        for a in (await s.scalars(select(Assignment).where(Assignment.game_id == gid))).all():
+            a.created_at = early
+        for p in (await s.scalars(select(GameParticipant).where(GameParticipant.game_id == gid))).all():
+            p.updated_at = early - timedelta(minutes=5)
+        await s.commit()
+    await api(OWNER, "attendance", game_id=gid, user_id=aid, present=True)
+    async with webhook._sessionmaker() as s:
+        await svc.distribute_game(s, await s.get(Game, gid), phase="after")
+        await s.commit()
+    _, res = await api(OWNER, "explain", game_id=gid)
+    e = res["explain"]
+    water = next(d for d in e["duties"] if d["name"] == "Вода")
+    bibs = next(d for d in e["duties"] if d["name"] == "Манишки")
+    assert "Артур" not in {r["name"] for r in water["ranking"]}
+    artur_row = next(r for r in bibs["ranking"] if r["name"] == "Артур")
+    assert "пришёл без «Буду»" in artur_row["breakdown"]
+    assert bibs["ranking"][0]["name"] == "Артур"  # первым — он

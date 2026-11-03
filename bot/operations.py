@@ -852,6 +852,12 @@ async def mark_attendance(bot: Bot, session: AsyncSession, game: Game, user: Use
         )
     if result.penalty_removed:
         await notifier.send_dm(bot, user, f"✅ Минус за неявку ({texts.game_header(game)}) снят.")
+    from bot import discipline as _discipline  # noqa: PLC0415
+
+    if result.came_unannounced:
+        await notifier.send_dm(bot, user, await _discipline.came_unannounced(bot, session, game, user))
+    if result.unannounced_undone:
+        await _discipline.unannounced_undone(session, game, user)
     return f"{user.name}: {'пришёл' if present else 'не пришёл'}"
 
 

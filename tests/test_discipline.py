@@ -248,3 +248,51 @@ async def test_removed_player_not_in_rating(team):  # noqa: F811
     _, stats = await api(ADMIN, "stats")
     assert temir_id not in {r["id"] for r in stats["board"]}
     assert temir_id not in {r["id"] for r in stats["team"]}
+
+
+async def test_came_without_yes(team):  # noqa: F811
+    """Нажал «Не буду», а пришёл: стал «Буду», первым на обязанность «после», 1-й раз без минуса, 2-й — −1."""
+    from datetime import datetime
+
+    fake = team  # noqa: F811
+    artur = tg_user(5, "Артур")
+    aid = await _member(artur)
+    await _member(tg_user(6, "Мейр"))
+
+    async def game_with_no(days_ago):
+        day = (config.now() + timedelta(days=1)).date().isoformat()
+        _, res = await api(ADMIN, "create_game", date=day, minutes=21 * 60, kind="training")
+        gid = max(g["id"] for g in res["state"]["games"])
+        await api(ADMIN, "rsvp", game_id=gid, status="yes")
+        await api(tg_user(6, "Мейр"), "rsvp", game_id=gid, status="yes")
+        await api(artur, "rsvp", game_id=gid, status="no")
+        await api(ADMIN, "distribute", game_id=gid)
+        async with webhook._sessionmaker() as s:
+            g = await s.get(Game, gid)
+            g.created_at = datetime.utcnow() - timedelta(days=days_ago + 2)
+            g.starts_at = config.now() - timedelta(days=days_ago, minutes=-30) if days_ago else config.now() - timedelta(minutes=30)
+            await s.commit()
+        return gid
+
+    gid = await game_with_no(3)
+    status, res = await api(ADMIN, "attendance", game_id=gid, user_id=aid, present=True)
+    assert status == 200
+    async with webhook._sessionmaker() as s:
+        game = await s.get(Game, gid)
+        cands = {c.user_id: c for c in await svc.build_candidates(s, game)}
+        assert cands[aid].penalty_bonus == config.penalty_priority  # первым на «после»
+    assert await _open_points(aid) == 0
+    assert any("Здорово, что пришёл" in m.text and "без минуса" in m.text for m in fake.sent(5))
+    _, rep = await api(ADMIN, "attendance_report", period="month")
+    assert next(r for r in rep["rows"] if r["id"] == aid)["unannounced"] == 1
+
+    gid2 = await game_with_no(0)
+    await api(ADMIN, "attendance", game_id=gid2, user_id=aid, present=True)
+    assert await _open_points(aid) == 1  # 2-й раз за 30 дней — −1
+    assert any("2-й раз" in m.text for m in fake.sent(5))
+    # сняли отметку — минус уходит, снова «Не буду», минуса за неявку нет
+    await api(ADMIN, "attendance", game_id=gid2, user_id=aid, present=False)
+    assert await _open_points(aid) == 0
+    _, st = await api(ADMIN, "state")
+    g = next(x for x in st["state"]["games"] if x["id"] == gid2)
+    assert aid in {u["id"] for u in g["participants"]["no"]}
