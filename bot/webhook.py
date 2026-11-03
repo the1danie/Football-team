@@ -43,7 +43,7 @@ async def _ensure_ready() -> tuple[async_sessionmaker[AsyncSession], Dispatcher]
     global _engine, _sessionmaker, _dp, _db_ready
     async with _init_lock:
         if _engine is None:
-            _engine = make_engine(config.database_url, serverless=True)
+            _engine = make_engine(config.database_url, serverless=not config.on_server)
             _sessionmaker = make_sessionmaker(_engine)
             _dp = make_dispatcher(_sessionmaker)
         if not _db_ready:
@@ -258,8 +258,10 @@ async def handle_health(request: Request) -> tuple[int, Any]:
         "CRON_SECRET": bool(config.cron_secret),
     }
     hints = [
-        f"Не задана переменная {name}: Settings → Environment Variables, затем Deployments → Redeploy "
-        "(без передеплоя новые переменные не подхватываются)."
+        (f"Не задана переменная {name}: допишите её в /etc/football.env и выполните systemctl restart football."
+         if config.on_server else
+         f"Не задана переменная {name}: Settings → Environment Variables, затем Deployments → Redeploy "
+         "(без передеплоя новые переменные не подхватываются).")
         for name, ok in env.items()
         if not ok
     ]

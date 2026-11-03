@@ -79,6 +79,13 @@ class Config:
     # Сбор за столько минут до начала («сбор в 22:30»); 0 — не показывать.
     gather_minutes: float = field(default_factory=lambda: _float("GATHER_MINUTES", 30))
     # Через сколько минут после начала распределять обязанности «после тренировки».
+    # Свой сервер (bot/server.py): пул соединений с базой вместо «одно соединение на вызов» как на Vercel,
+    # и встроенный планировщик раз в минуту (cron-job.org не нужен).
+    on_server: bool = field(default_factory=lambda: os.getenv("FOOTBALL_SERVER", "") not in ("", "0"))
+    run_scheduler: bool = field(default_factory=lambda: os.getenv("RUN_SCHEDULER", "1") not in ("", "0"))
+    # Подключать Telegram к этому серверу (webhook и кнопка «Открыть»). До переноса базы — 0,
+    # чтобы сервер не перехватил бота у Vercel с пустой базой.
+    manage_webhook: bool = field(default_factory=lambda: os.getenv("MANAGE_WEBHOOK", "1") not in ("", "0"))
     # Цвет формы на аватарах (футболки).
     kit_color: str = field(default_factory=lambda: os.getenv("KIT_COLOR", "#1f8a4c"))
     after_duties_minutes: float = field(default_factory=lambda: _float("AFTER_DUTIES_MINUTES", 60))
