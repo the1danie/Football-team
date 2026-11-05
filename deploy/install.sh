@@ -9,7 +9,7 @@ ENV_FILE=/etc/football.env
 APP_USER=football
 DB_NAME=football
 DB_USER=football
-PG_VERSION=17
+PG_VERSION=18  # как в Neon (проект Qalamger): pg_dump не выгружает базу новее себя
 
 say() { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 [ "$(id -u)" = 0 ] || { echo "Запустите от root (sudo -i)"; exit 1; }
