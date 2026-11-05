@@ -1,32 +1,4 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": [
-    "fra1"
-  ],
-  "functions": {
-    "api/*.py": {
-      "maxDuration": 60,
-      "includeFiles": "bot/**"
-    }
-  },
-  "crons": [
-    {
-      "path": "/api/tick",
-      "schedule": "0 3 * * *"
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/",
-      "destination": "/api/app"
-    },
-    {
-      "source": "/app",
-      "destination": "/api/app"
-    },
-    {
-      "source": "/sw.js",
-      "destination": "/api/app?asset=sw.js"
-    }
-  ]
+  "rewrites": [{ "source": "/(.*)", "destination": "https://78-40-108-124.sslip.io/$1" }]
 }

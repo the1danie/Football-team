@@ -1,6 +1,3 @@
-.venv
-tests
-*.db
-.pytest_cache
-Dockerfile
-docker-compose.yml
+api/
+bot/
+tests/
