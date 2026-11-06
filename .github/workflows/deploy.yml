@@ -1,0 +1,48 @@
+# CI/CD: каждый пуш в рабочую ветку → тесты → если зелёные, обновление бота на сервере.
+# Настройка один раз — deploy/README.md, раздел «Автообновление (CI/CD)».
+name: Тесты и выкладка на сервер
+
+on:
+  push:
+    branches: [claude/telegram-duty-bot]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/claude/telegram-duty-bot'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Обновить бота на сервере
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          test -n "$SSH_KEY" && test -n "$KNOWN_HOSTS" && test -n "$HOST" \
+            || { echo "::error::Нет секретов DEPLOY_SSH_KEY / DEPLOY_KNOWN_HOSTS / DEPLOY_HOST — см. deploy/README.md"; exit 1; }
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # На сервере ключ привязан к одной команде (обновить бота), что бы ни передали здесь.
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes -o ConnectTimeout=20 "deploy@$HOST"

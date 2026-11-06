@@ -68,7 +68,7 @@ bash /opt/football/deploy/migrate_from_neon.sh 'postgresql://…neon.tech/neondb
 |---|---|
 | Логи бота | `journalctl -u football -f` |
 | Перезапуск | `systemctl restart football` |
-| Обновить до свежей версии | `bash /opt/football/deploy/update.sh` |
+| Обновить до свежей версии | само после пуша (см. «Автообновление»), вручную — `bash /opt/football/deploy/update.sh` |
 | Бэкап вручную | `football-backup` (файлы в `/var/backups/football`, 14 дней) |
 | Восстановить из бэкапа | `systemctl stop football && gunzip -c ФАЙЛ.sql.gz \| sudo -u postgres psql football && systemctl start football` |
 | Настройки | `/etc/football.env`, после правки — `systemctl restart football` |
@@ -76,6 +76,27 @@ bash /opt/football/deploy/migrate_from_neon.sh 'postgresql://…neon.tech/neondb
 
 Бэкапы лежат на том же сервере. Раз в месяц полезно скачать свежий к себе:
 `scp root@IP:/var/backups/football/football-$(date +%F).sql.gz .`
+
+## Автообновление (CI/CD)
+
+Каждый пуш в ветку `claude/telegram-duty-bot` → GitHub Actions прогоняет тесты → если всё зелёное,
+заходит на сервер и запускает `update.sh` (`.github/workflows/deploy.yml`). Тесты упали — на сервер
+ничего не уходит. Бот после обновления не запустился — выкладка в GitHub помечается красной.
+
+Настройка один раз (≈ 3 минуты):
+
+1. На сервере:
+   ```bash
+   sudo bash /opt/football/deploy/setup-cicd.sh
+   ```
+   Скрипт создаст пользователя `deploy`, которому по ключу можно только одно — обновить бота,
+   и напечатает три значения.
+2. GitHub → репозиторий → **Settings → Secrets and variables → Actions → New repository secret** —
+   добавьте `DEPLOY_HOST`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_SSH_KEY` (ключ целиком, со строками BEGIN/END).
+3. Проверка: **Actions → «Тесты и выкладка на сервер» → Run workflow**.
+
+Если поменялся сам `deploy/update.sh` — запустите `setup-cicd.sh` ещё раз (он берёт копию скрипта
+и выдаёт новый ключ — обновите `DEPLOY_SSH_KEY`).
 
 ## Вернуться на Vercel
 

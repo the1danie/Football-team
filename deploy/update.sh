@@ -10,4 +10,5 @@ chown -R football:football /opt/football
 systemctl restart football
 sleep 3
 systemctl --no-pager --lines=3 status football | tail -4
+systemctl is-active --quiet football || { echo "Бот не запустился: journalctl -u football -n 50"; exit 1; }
 echo "Обновлено до $(git log -1 --format='%h %s')"
