@@ -5,7 +5,8 @@
 - отдал обязанность другому: 1-й раз за TRANSFER_WINDOW — бесплатно, 2-й — минус 1,
   3-й — минус 2, 4-й — минус 3 и т. д. (каждый следующий на 1 больше);
 - долг 3 минуса → бёрпи на тренировке: в первый раз 25, каждый следующий раз за BURPEES_WINDOW —
-  на BURPEES_STEP больше (25 → 50 → 75…). Из команды за минусы не исключаем.
+  на BURPEES_STEP больше (25 → 50 → 75…). За каждые следующие 3 минуса долга — ещё BURPEES_STEP
+  (−3 → 25, −6 → 50, −9 → 75; плюс надбавка за повтор). Из команды за минусы не исключаем.
 Минусы, как и раньше, отрабатываются выполненными обязанностями (одна — один минус).
 """
 
@@ -34,8 +35,12 @@ def transfer_points(n: int) -> int:
 
 
 def burpees(total: int, rounds: int = 0) -> int | None:
-    """Сколько бёрпи при долге total, если за окно бёрпи уже делал rounds раз."""
-    return BURPEES_BASE + BURPEES_STEP * rounds if total >= BURPEES_AT else None
+    """Сколько бёрпи при долге total, если за окно бёрпи уже делал rounds раз.
+
+    +BURPEES_STEP за каждый уже сделанный раз за окно и за каждые следующие BURPEES_AT минусов долга."""
+    if total < BURPEES_AT:
+        return None
+    return BURPEES_BASE + BURPEES_STEP * (rounds + total // BURPEES_AT - 1)
 
 
 def level_text(total: int, rounds: int = 0) -> str | None:
@@ -101,7 +106,8 @@ async def check_level(bot: Bot, session: AsyncSession, user: User, before: int, 
     b = burpees(after, (await burpee_rounds(session, [user.id])).get(user.id, 0))
     await notifier.send_dm(
         bot, user, f"❗ У тебя −{after}: на ближайшей тренировке — {b} бёрпи. Сделаешь — минусы обнулятся.\n"
-                   f"Следующий раз будет на {BURPEES_STEP} больше. Ещё минус снимает каждая выполненная обязанность."
+                   f"Каждые следующие −{BURPEES_AT} — ещё +{BURPEES_STEP} бёрпи, и следующий раз тоже будет на {BURPEES_STEP} больше. "
+                   f"Ещё минус снимает каждая выполненная обязанность."
     )
     await notifier.notify_admins(bot, f"❗ {texts.h(user.name)}: −{after} — на тренировке {b} бёрпи.")
 
