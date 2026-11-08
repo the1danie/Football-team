@@ -154,6 +154,7 @@ def kind_choice() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text=texts.KIND_TITLES["game"], callback_data="newkind:game"),
                 InlineKeyboardButton(text=texts.KIND_TITLES["training"], callback_data="newkind:training"),
+                InlineKeyboardButton(text=texts.KIND_TITLES["match"], callback_data="newkind:match"),
             ]
         ]
     )

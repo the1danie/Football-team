@@ -11,8 +11,8 @@ MONTHS = [
 ]
 WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
-KIND_TITLES = {"game": "⚽ Игра", "training": "🏃 Тренировка"}
-KIND_WORDS = {"game": "игра", "training": "тренировка"}
+KIND_TITLES = {"game": "⚽ Игра", "training": "🏃 Тренировка", "match": "🏆 Матч"}
+KIND_WORDS = {"game": "игра", "training": "тренировка", "match": "матч"}
 
 RSVP_LABELS = {Rsvp.YES: "✅ Буду", Rsvp.NO: "❌ Не буду", Rsvp.MAYBE: "🤔 Пока не знаю"}
 

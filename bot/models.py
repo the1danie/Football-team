@@ -80,6 +80,8 @@ class User(Base):
     # Штаб команды (тренер, директор…): не играет — не отмечается, без опросов, минусов и обязанностей,
     # но видит, кто идёт. None — обычный игрок.
     staff_title: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Капитан: играет как все, но вместе с тренером и админами ведёт план на месяц и вносит замеры/голы.
+    is_captain: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Версия личных веб-ссылок: увеличение делает все выданные ссылки недействительными.
     web_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Вход на сайт по имени и PIN (выдаёт админ): хэш PIN, неудачные попытки, блокировка.
@@ -359,3 +361,90 @@ class DutyTransfer(Base):
     to_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     kind: Mapped[str] = mapped_column(String(16), default="swap")  # swap | dropped
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class Cycle(Base):
+    """План на месяц от тренера: задачи, цель по голам со стандартов, сколько тренировок."""
+
+    __tablename__ = "cycles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(100))
+    starts_on: Mapped[datetime] = mapped_column(DateTime)  # локальная дата начала (00:00)
+    ends_on: Mapped[datetime] = mapped_column(DateTime)  # локальная дата конца (включительно)
+    trainings: Mapped[int] = mapped_column(Integer, default=8)
+    # Цель: минимум столько голов со стандартов в каждом матче (0 — без цели).
+    set_piece_goal: Mapped[int] = mapped_column(Integer, default=2)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    tasks: Mapped[list["CycleTask"]] = relationship(
+        back_populates="cycle", cascade="all, delete-orphan", order_by="CycleTask.sort_order"
+    )
+    plans: Mapped[list["CyclePlan"]] = relationship(
+        back_populates="cycle", cascade="all, delete-orphan", order_by="CyclePlan.number"
+    )
+
+
+class CycleTask(Base):
+    """Задача цикла и как её мерить на тренировке: «удачно из N» (success из attempts)."""
+
+    __tablename__ = "cycle_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cycle_id: Mapped[int] = mapped_column(ForeignKey("cycles.id", ondelete="CASCADE"), index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    title: Mapped[str] = mapped_column(String(200))
+    attempts_label: Mapped[str] = mapped_column(String(60), default="попыток")
+    success_label: Mapped[str] = mapped_column(String(60), default="удачно")
+
+    cycle: Mapped[Cycle] = relationship(back_populates="tasks")
+
+
+class CyclePlan(Base):
+    """План N-й тренировки цикла (что отрабатываем)."""
+
+    __tablename__ = "cycle_plans"
+    __table_args__ = (UniqueConstraint("cycle_id", "number"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cycle_id: Mapped[int] = mapped_column(ForeignKey("cycles.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(String(1000), default="")
+
+    cycle: Mapped[Cycle] = relationship(back_populates="plans")
+
+
+class TaskMeasure(Base):
+    """Замер задачи на тренировке: из attempts удачно success."""
+
+    __tablename__ = "task_measures"
+    __table_args__ = (UniqueConstraint("game_id", "task_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("cycle_tasks.id", ondelete="CASCADE"), index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    success: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class GoalSource:
+    PLAY = "play"
+    CORNER = "corner"
+    THROW_IN = "throw_in"
+    FREE_KICK = "free_kick"
+    PENALTY = "penalty"
+    ALL = (PLAY, CORNER, THROW_IN, FREE_KICK, PENALTY)
+    SET_PIECES = (CORNER, THROW_IN, FREE_KICK, PENALTY)
+
+
+class GameGoals(Base):
+    """Сколько голов в игре: наши (side=for) / пропущенные (against) — по источнику (игра, угловой, аут…)."""
+
+    __tablename__ = "game_goals"
+    __table_args__ = (UniqueConstraint("game_id", "side", "source"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), index=True)
+    side: Mapped[str] = mapped_column(String(8))  # for | against
+    source: Mapped[str] = mapped_column(String(16))
+    count: Mapped[int] = mapped_column(Integer, default=0)
