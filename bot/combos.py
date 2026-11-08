@@ -16,11 +16,11 @@ from bot.config import config
 from bot.models import ComboGoals, Game, GameStatus, GoalSource, SetPiece, SetPieceImage, User
 from bot.photos import MAX_UPLOAD, PhotoError
 
-KINDS = {GoalSource.CORNER: "🚩 Угловые", GoalSource.THROW_IN: "🤾 Ауты", GoalSource.FREE_KICK: "🎯 Штрафные"}
+KINDS = {GoalSource.CORNER: "🚩 Угловые", GoalSource.THROW_IN: "🦶 Ауты", GoalSource.FREE_KICK: "🎯 Штрафные"}
 STATUSES = {"learning": "📚 Разучиваем", "ready": "✅ Отработана"}
 TARGET_PER_KIND = 2
 MAX_COMBOS = 30
-MAX_ROLES = 10
+MAX_ROLES = 5  # мини-футбол 4+1: четверо полевых (+ запас на вратаря)
 IMAGE_SIDE = 1200
 
 

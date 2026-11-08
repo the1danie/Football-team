@@ -1190,9 +1190,10 @@ function pickScheme(id) {
   input.click();
 }
 
-const ROLE_HINTS = { corner: ["подаёт", "ближняя штанга", "дальняя штанга", "на добивании", "страхует сзади"],
-  throw_in: ["вбрасывает", "открывается в ноги", "в штрафную", "страхует сзади"],
-  free_kick: ["бьёт", "ложный замах", "в стенке", "на добивании", "страхует сзади"] };
+// Мини-футбол 4+1: на стандарте четверо полевых, вратарь остаётся в воротах.
+const ROLE_HINTS = { corner: ["подаёт", "ближняя штанга", "удар с ходу", "страхует сзади"],
+  throw_in: ["вводит ногой", "открывается в ноги", "в штрафную", "страхует сзади"],
+  free_kick: ["бьёт", "ложный замах", "на добивании", "страхует сзади"] };
 function openComboEdit(c) {
   const kind = c ? c.kind : Object.keys(S.cycle.combos.kinds)[0];
   openSheet({ type: "comboEdit", form: c
@@ -1218,7 +1219,7 @@ function comboEditSheet() {
         h("option", { value: "" }, "— игрок —"),
         team.map((u) => h("option", { value: u.id, selected: u.id === r.user_id }, u.name))),
       h("button", { class: "btn small secondary", "aria-label": "убрать", onclick: () => { f.roles.splice(i, 1); render(); } }, "✕"))),
-    f.roles.length < 10 ? h("button", { class: "toggle-link", onclick: () => { f.roles.push({ role: "", user_id: null }); render(); } }, "＋ Роль") : null,
+    f.roles.length < 5 ? h("button", { class: "toggle-link", onclick: () => { f.roles.push({ role: "", user_id: null }); render(); } }, "＋ Роль") : null,
     h("div", { class: "label" }, "Статус"),
     h("div", { class: "seg" }, Object.entries(lib.statuses).map(([k, t]) => h("button", { class: f.status === k ? "on" : "", onclick: () => { f.status = k; render(); } }, t))),
     h("button", { class: "btn", style: "margin-top:16px", onclick: async (e) => {

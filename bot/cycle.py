@@ -18,7 +18,7 @@ from bot.models import (
 SOURCE_TITLES = {
     GoalSource.PLAY: "⚽ С игры",
     GoalSource.CORNER: "🚩 Угловой",
-    GoalSource.THROW_IN: "🤾 Аут",
+    GoalSource.THROW_IN: "🦶 Аут",
     GoalSource.FREE_KICK: "🎯 Штрафной",
     GoalSource.PENALTY: "⚪ Пенальти",
 }
