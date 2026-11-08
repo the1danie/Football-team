@@ -136,6 +136,8 @@ class Game(Base):
     after_duties_done: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Админам отправлен список «кто пришёл».
     attendance_asked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Пропустившим разослали «что было на тренировке» (план «📈»): сколько человек получили, 0 — не рассылали.
+    recap_sent: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     # Повторяющаяся тренировка: из какого расписания создана.
     schedule_id: Mapped[int | None] = mapped_column(

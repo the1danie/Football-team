@@ -915,7 +915,14 @@ function planTab() {
       h("div", { class: "small muted" }, c.dates_label + (c.finished ? " · завершён" : ` · осталось ${c.days_left} ${plural(c.days_left, "день", "дня", "дней")}`))),
       r.planner ? h("button", { class: "chip accent", style: "padding:7px 12px", onclick: () => openCycleEdit(c) }, "✏️ Изменить") : null),
     h("div", { style: "margin-top:12px;font-weight:600" }, `🏃 Тренировок: ${c.trainings_done} из ${c.trainings}`),
-    h("div", { class: "bar" }, h("div", { style: `width:${Math.min(100, pct(c.trainings_done, c.trainings))}%` })));
+    h("div", { class: "bar" }, h("div", { style: `width:${Math.min(100, pct(c.trainings_done, c.trainings))}%` })),
+    c.avg_attendance !== null ? h("div", { class: "small muted", style: "margin-top:8px" }, `👥 В среднем приходят ${c.avg_attendance} чел.`) : null);
+  const me = S.data.user && S.data.user.id;
+  const missedByMe = c.sessions.filter((s) => s.recap && s.attendance && s.attendance.missed.some((u) => u.id === me));
+  const missedCard = missedByMe.length ? h("div", { class: "card", style: "background:var(--maybe-soft)" },
+    h("div", { style: "font-weight:700" }, "📋 Ты пропустил — посмотри, что было"),
+    missedByMe.slice(-3).reverse().map((s) => h("button", { class: "toggle-link", style: "display:block;text-align:left;margin:6px 0 0",
+      onclick: () => openSheet({ type: "recap", text: s.recap }) }, (s.kind === "match" ? "🏆 Матч" : `🏃 Тренировка ${s.number}`) + ` · ${s.date_label}`))) : null;
 
   const srcChips = (by) => h("div", { class: "people", style: "margin-top:8px" },
     c.set_piece_sources.filter((s) => by[s]).map((s) => h("span", { class: "chip" }, `${c.sources[s]}: ${by[s]}`)));
@@ -951,13 +958,19 @@ function planTab() {
       h("div", { class: "grow" },
         h("div", { style: "font-weight:600" }, (s.kind === "match" ? "🏆 Матч" : `🏃 Тренировка ${s.number}`) + ` · ${s.date_label}, ${s.time}`),
         s.plan ? h("div", { class: "small", style: "margin-top:2px;white-space:pre-line" }, s.plan) : null,
+        s.attendance ? h("button", { class: "toggle-link", style: "margin:4px 0 0;font-size:13px", onclick: () => { S.openSess = S.openSess === s.game_id ? null : s.game_id; render(); } },
+          `👥 Пришли ${s.attendance.came.length}` + (s.attendance.missed.length ? ` · не были ${s.attendance.missed.length}` : "") + (S.openSess === s.game_id ? " ▲" : " ▼")) : null,
+        s.attendance && S.openSess === s.game_id ? h("div", { class: "small", style: "margin-top:4px" },
+          h("div", {}, "✅ " + (s.attendance.came.map((u) => u.name).join(", ") || "—")),
+          s.attendance.missed.length ? h("div", { class: "muted", style: "margin-top:2px" }, "❌ " + s.attendance.missed.map((u) => u.name).join(", ")) : null,
+          s.recap_sent ? h("div", { class: "muted", style: "margin-top:2px" }, "📤 Пропустившим отправлено, что было") : null) : null,
         g.entered ? h("div", { class: "small muted", style: "margin-top:4px" }, `Счёт ${g.scored}:${g.conceded} · со стандартов ${g.set_pieces}`) : null,
         Object.keys(s.measures).length ? h("div", { class: "small muted", style: "margin-top:2px" },
           c.tasks.filter((t) => s.measures[t.id]).map((t) => `${c.tasks.indexOf(t) + 1}) ${s.measures[t.id].success}/${s.measures[t.id].attempts}`).join(" · ")) : null),
       r.planner && s.past ? h("button", { class: "btn small " + (filled ? "secondary" : ""), onclick: () => openSheet({ type: "cycleSession", gid: s.game_id }) }, filled ? "✏️" : "Внести") : null);
   };
   const plans = Array.from({ length: c.trainings }, (_, i) => i + 1);
-  return h("div", {}, head, top, goalCard,
+  return h("div", {}, head, top, missedCard, goalCard,
     h("div", { class: "label" }, "Задачи"), taskCards,
     combosSection(),
     h("div", { class: "label" }, "Занятия и матчи"),
@@ -1027,6 +1040,10 @@ function combosGoalRows(f, s) {
       h("div", { class: "grow" }, h("div", {}, x.name), h("div", { class: "small muted" }, lib.kinds[x.kind])),
       stepper(f.combos[x.id] || 0, 0, f.for[x.kind], (v) => { f.combos[x.id] = v; render(); })))));
 }
+function recapSheet() {
+  return h("div", {}, h("div", { class: "card", style: "white-space:pre-line;margin:0" }, S.sheet.text),
+    h("button", { class: "btn secondary", style: "margin-top:12px", onclick: closeSheet }, "Понятно"));
+}
 function cycleSessionSheet() {
   const c = S.cycle.cycle, s = c.sessions.find((x) => x.game_id === S.sheet.gid);
   if (!s) return h("div", {}, "Занятие не найдено");
@@ -1055,6 +1072,19 @@ function cycleSessionSheet() {
       h("div", { class: "label" }, `Мы забили: ${sum("for")} (со стандартов ${setPieces})`), h("div", { class: "card" }, goalRows("for")),
       combosGoalRows(f, s),
       h("div", { class: "label" }, `Пропустили: ${sum("against")}`), h("div", { class: "card" }, goalRows("against"))) : null,
+    s.attendance ? h("div", { class: "card", style: "margin-top:12px" },
+      h("div", { style: "font-weight:600" }, `👥 Пришли ${s.attendance.came.length}`),
+      h("div", { class: "small", style: "margin-top:4px" }, s.attendance.came.map((u) => u.name).join(", ") || "—"),
+      s.attendance.missed.length ? h("div", { class: "small muted", style: "margin-top:6px" }, `Не были (${s.attendance.missed.length}): ` + s.attendance.missed.map((u) => u.name).join(", ")) : null,
+      h("div", { class: "small muted", style: "margin-top:6px" }, "Список — по ответам «Буду» и отметкам «👥 Кто пришёл» в карточке игры."),
+      s.attendance.missed.length ? h("button", { class: "btn secondary", style: "margin-top:10px", onclick: async (e) => {
+        if (!(await confirmBox(`Отправить ${s.attendance.missed.length} пропустившим, что было? Сначала сохраните замеры — они попадут в сообщение.`))) return;
+        e.target.disabled = true;
+        const r = await api("cycle_recap", { game_id: s.game_id });
+        e.target.disabled = false;
+        if (r) { S.cycle = r; haptic("ok"); render(); } } },
+        s.recap_sent ? "📤 Отправить пропустившим ещё раз" : `📤 Отправить пропустившим, что было (${s.attendance.missed.length})`) : null,
+      s.recap ? h("button", { class: "toggle-link", onclick: () => openSheet({ type: "recap", text: s.recap }) }, "Посмотреть сообщение") : null) : null,
     h("button", { class: "btn", style: "margin-top:16px", onclick: async (e) => {
       e.target.disabled = true;
       let r = null, ok = true;
@@ -1445,7 +1475,7 @@ function renderSheet() {
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
     rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, crop: cropSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet,
-    cycleEdit: cycleEditSheet, cycleSession: cycleSessionSheet, combo: comboSheet, comboEdit: comboEditSheet }[S.sheet.type]();
+    cycleEdit: cycleEditSheet, cycleSession: cycleSessionSheet, combo: comboSheet, comboEdit: comboEditSheet, recap: recapSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;

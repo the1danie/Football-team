@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import texts
 from bot.config import config
-from bot.models import Cycle, CyclePlan, CycleTask, Game, GameGoals, GameStatus, GoalSource, TaskMeasure, User
+from bot.models import (
+    ComboGoals, Cycle, CyclePlan, CycleTask, Game, GameGoals, GameParticipant, GameStatus, GoalSource, Rsvp, SetPiece, TaskMeasure, User, UserStatus,
+)
 
 SOURCE_TITLES = {
     GoalSource.PLAY: "⚽ С игры",
@@ -179,6 +181,61 @@ async def set_goals(session: AsyncSession, game: Game, side: str, source: str, c
     await session.flush()
 
 
+async def _attendance(session: AsyncSession, games: list[Game], now: datetime) -> dict[int, dict]:
+    """Кто был на прошедших занятиях: пришёл = отмечен «пришёл» или «Буду» без отметки «не пришёл».
+    Пропустил — остальные из состава (в команде на момент занятия, не штаб, в составе)."""
+    past = [g for g in games if g.starts_at <= now]
+    if not past:
+        return {}
+    parts = (await session.scalars(
+        select(GameParticipant).where(GameParticipant.game_id.in_([g.id for g in past])))).unique().all()
+    team = (await session.scalars(select(User).where(
+        User.status == UserStatus.APPROVED, User.is_active.is_(True), User.staff_title.is_(None),
+        User.profile_completed.is_(True)).order_by(User.name))).all()
+    out = {}
+    for g in past:
+        came_ids = {p.user_id for p in parts if p.game_id == g.id
+                    and (p.attended is True or (p.status == Rsvp.YES and p.attended is None))}
+        if not came_ids:
+            continue  # никто не отмечался — данных о посещении нет
+        users = {u.id: u for u in team}
+        users.update({p.user_id: p.user for p in parts if p.game_id == g.id and p.user_id in came_ids})
+        came = sorted((users[i] for i in came_ids if i in users), key=lambda u: u.name.lower())
+        joined_before = g.starts_at + timedelta(days=1)
+        missed = [u for u in team if u.id not in came_ids and u.created_at <= joined_before]
+        out[g.id] = {"came": [{"id": u.id, "name": u.name} for u in came],
+                     "missed": [{"id": u.id, "name": u.name} for u in missed]}
+    return out
+
+
+def recap_text(cycle_view: dict, s: dict, html: bool = True) -> str:
+    """Что было на занятии — для тех, кого не было (html=False — простой текст для приложения)."""
+    e = texts.h if html else (lambda x: x)
+    b = (lambda x: f"<b>{x}</b>") if html else (lambda x: x)
+    title = "🏆 Матч" if s["kind"] == "match" else f"🏃 Тренировка {s['number']} из {cycle_view['trainings']}"
+    lines = [b(f"📋 Что было без тебя: {title}, {s['date_label']}")]
+    if s.get("plan"):
+        lines += ["", b("Отрабатывали:"), e(s["plan"])]
+    results = []
+    for t in cycle_view["tasks"]:
+        m = s["measures"].get(t["id"])
+        if m:
+            results.append(f"• {e(t['title'])}: {m['success']} из {m['attempts']} {e(t['attempts_label'])} "
+                           f"— {e(t['success_label'])} ({round(100 * m['success'] / m['attempts'])}%)")
+    if results:
+        lines += ["", b("Результаты:"), *results]
+    g = s["goals"]
+    if g["entered"]:
+        lines += ["", f"⚽ Счёт {g['scored']}:{g['conceded']}, со стандартов — {g['set_pieces']}."]
+    if s.get("combos_scored"):
+        lines.append("Забили комбинациями: " + ", ".join(f"«{e(n)}»" for n in s["combos_scored"]) + ".")
+    att = s.get("attendance")
+    if att:
+        lines += ["", f"👥 Были {len(att['came'])}: " + ", ".join(e(u["name"]) for u in att["came"])]
+    lines += ["", "Посмотри комбинации и свою роль во вкладке «📈 План» — на следующей тренировке продолжаем."]
+    return "\n".join(lines)
+
+
 def _goals_summary(rows: list[GameGoals]) -> dict:
     by = {"for": {s: 0 for s in GoalSource.ALL}, "against": {s: 0 for s in GoalSource.ALL}}
     for r in rows:
@@ -201,6 +258,10 @@ async def view(session: AsyncSession, cycle: Cycle | None, now: datetime | None 
     ids = [g.id for g in games]
     measures = (await session.scalars(select(TaskMeasure).where(TaskMeasure.game_id.in_(ids)))).all() if ids else []
     goals = (await session.scalars(select(GameGoals).where(GameGoals.game_id.in_(ids)))).all() if ids else []
+    attendance = await _attendance(session, games, now)
+    combo_rows = (await session.execute(
+        select(ComboGoals.game_id, SetPiece.name).join(SetPiece, SetPiece.id == ComboGoals.set_piece_id)
+        .where(ComboGoals.game_id.in_(ids), ComboGoals.count > 0).order_by(SetPiece.name))).all() if ids else []
 
     sessions = []
     n = 0
@@ -216,6 +277,9 @@ async def view(session: AsyncSession, cycle: Cycle | None, now: datetime | None 
             "plan": _plan_text(cycle, number) if number and number <= cycle.trainings else "",
             "measures": {m.task_id: {"attempts": m.attempts, "success": m.success} for m in measures if m.game_id == g.id},
             "goals": _goals_summary([r for r in goals if r.game_id == g.id]),
+            "attendance": attendance.get(g.id),
+            "recap_sent": g.recap_sent or 0,
+            "combos_scored": [name for gid, name in combo_rows if gid == g.id],
         })
 
     tasks = []
@@ -246,11 +310,13 @@ async def view(session: AsyncSession, cycle: Cycle | None, now: datetime | None 
         }
 
     done = sum(1 for s in sessions if s["kind"] == "training" and s["past"])
+    counts = [len(s["attendance"]["came"]) for s in sessions if s["kind"] == "training" and s.get("attendance")]
     return {
         "id": cycle.id, "title": cycle.title,
         "starts_on": cycle.starts_on.date().isoformat(), "ends_on": cycle.ends_on.date().isoformat(),
         "dates_label": f"{texts.fmt_date(cycle.starts_on)} — {texts.fmt_date(cycle.ends_on)}",
         "trainings": cycle.trainings, "trainings_done": done, "set_piece_goal": goal,
+        "avg_attendance": round(sum(counts) / len(counts), 1) if counts else None,
         "days_left": max(0, (cycle.ends_on.date() - now.date()).days),
         "finished": now.date() > cycle.ends_on.date(),
         "tasks": tasks,
@@ -302,3 +368,34 @@ def whatsapp_text(v: dict, lib: dict | None = None) -> str:
     if scored:
         lines += ["", "Сработали в матчах: " + ", ".join(f"«{c['name']}» — {c['goals_matches']}" for c in scored)]
     return "\n".join(lines)
+
+
+def with_recaps(v: dict | None) -> dict | None:
+    """Текст «что было» к каждому прошедшему занятию — для приложения."""
+    if v:
+        for s in v["sessions"]:
+            if s["past"]:
+                s["recap"] = recap_text(v, s, html=False)
+    return v
+
+
+async def send_recap(bot, session: AsyncSession, game: Game) -> int:
+    """Разослать пропустившим «что было». Возвращает, скольким дошло."""
+    from bot import notifier  # noqa: PLC0415
+
+    c = await current(session, game.starts_at.date())
+    v = await view(session, c) if c else None
+    s = next((x for x in (v or {}).get("sessions", []) if x["game_id"] == game.id), None)
+    if s is None or not s["past"]:
+        raise CycleError("Занятие не в плане или ещё не прошло.")
+    if not s.get("attendance") or not s["attendance"]["missed"]:
+        raise CycleError("Пропустивших нет — рассылать некому.")
+    text = recap_text(v, s)
+    sent = 0
+    for u in s["attendance"]["missed"]:
+        user = await session.get(User, u["id"])
+        if user is not None and await notifier.send_dm(bot, user, text):
+            sent += 1
+    game.recap_sent = max(sent, 1)
+    await session.flush()
+    return sent

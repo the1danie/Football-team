@@ -393,10 +393,10 @@ async def _user(session: AsyncSession, raw_id: Any) -> User:
 
 
 CYCLE_EDIT_ACTIONS = {"cycle_save", "cycle_delete", "cycle_measure", "cycle_goals",
-                      "cycle_combo_save", "cycle_combo_delete", "cycle_combo_image", "cycle_combo_goals"}
+                      "cycle_combo_save", "cycle_combo_delete", "cycle_combo_image", "cycle_combo_goals", "cycle_recap"}
 
 
-async def _cycle_action(session: AsyncSession, action: str, body: dict, planner: bool) -> dict:
+async def _cycle_action(bot: Bot, session: AsyncSession, action: str, body: dict, planner: bool) -> dict:
     """План на месяц: смотреть — все в команде; менять — тренер, капитан, админы."""
     if action in CYCLE_EDIT_ACTIONS and not planner:
         raise ApiError("План ведут тренер, капитан и админы.", 403)
@@ -432,11 +432,16 @@ async def _cycle_action(session: AsyncSession, action: str, body: dict, planner:
         elif action == "cycle_combo_goals":
             game = await _game(session, body)
             await combos.set_goals(session, game, int(body.get("combo_id", 0)), body.get("count"))
+        elif action == "cycle_recap":
+            game = await _game(session, body)
+            sent = await cycle.send_recap(bot, session, game)
+            await audit.record(session, f"📋 Разослал пропустившим, что было ({sent})", game)
+            note = f"📤 Отправлено: {sent}" if sent else "Никому не дошло: пропустившие не писали боту и не включили уведомления."
         elif action != "cycle":
             raise ApiError("Неизвестное действие.", 404)
     except (cycle.CycleError, combos.ComboError, photos.PhotoError) as e:
         raise ApiError(str(e)) from e
-    v = await cycle.view(session, await cycle.current(session))
+    v = cycle.with_recaps(await cycle.view(session, await cycle.current(session)))
     lib = await combos.view(session)
     if planner:  # кого можно поставить на роль в комбинации
         lib["team"] = [{"id": u.id, "name": u.name} for u in await svc.all_users(session)
@@ -933,7 +938,7 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             await session.flush()
             return {"note": note, "player": await player_view(session, target, True), **await players_view(session)}
         elif action.startswith("cycle"):
-            return await _cycle_action(session, action, body, cycle.can_plan(user, is_admin, staff_view))
+            return await _cycle_action(bot, session, action, body, cycle.can_plan(user, is_admin, staff_view))
         elif action == "penalty_cancel":
             penalty = await svc.cancel_penalty(session, int(body.get("penalty_id", 0)))
             if penalty is None:

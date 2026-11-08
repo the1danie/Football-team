@@ -153,3 +153,39 @@ async def test_combo_library_roles_scheme_and_goals(team):  # noqa: F811
 
     _, r = await api(ADMIN, "cycle_combo_delete", id=c["id"])
     assert r["combos"]["items"] == []
+
+
+async def test_attendance_and_recap_for_absent(team):  # noqa: F811
+    fake = team  # noqa: F811
+    meir, arman, timur = tg_user(2, "Мейр"), tg_user(3, "Арман"), tg_user(4, "Тимур")
+    await _member(meir)
+    await _member(arman)
+    timur_id = await _member(timur)
+    _, r = await api(ADMIN, "cycle")
+    _, r = await api(ADMIN, "cycle_save", **_body(r["template"]))
+    task = r["cycle"]["tasks"][1]
+    gid = await _create("training", 1)
+    for u, st in ((meir, "yes"), (arman, "yes"), (timur, "no")):
+        await api(u, "rsvp", game_id=gid, status=st)
+    status, _ = await api(ADMIN, "cycle_recap", game_id=gid)
+    assert status == 400  # ещё не прошла
+    async with webhook._sessionmaker() as s:
+        (await s.get(Game, gid)).starts_at = config.now() - timedelta(hours=2)
+        await s.commit()
+    await api(ADMIN, "cycle_measure", game_id=gid, task_id=task["id"], attempts=8, success=2)
+    _, r = await api(timur, "cycle")
+    sess = next(x for x in r["cycle"]["sessions"] if x["game_id"] == gid)
+    came = {u["name"] for u in sess["attendance"]["came"]}
+    missed = {u["name"] for u in sess["attendance"]["missed"]}
+    assert came == {"Мейр", "Арман"} and "Тимур" in missed and not came & missed
+    assert r["cycle"]["avg_attendance"] == 2
+    assert "Угловые: комбинации А и Б" in sess["recap"] and "2 из 8 розыгрышей" in sess["recap"]
+
+    status, _ = await api(timur, "cycle_recap", game_id=gid)
+    assert status == 403
+    _, r = await api(ADMIN, "cycle_recap", game_id=gid)
+    assert next(x for x in r["cycle"]["sessions"] if x["game_id"] == gid)["recap_sent"] >= 1
+    got = [m.text for m in fake.sent(4) if "Что было без тебя" in m.text]
+    assert got and "Были 2: Арман, Мейр" in got[-1]
+    assert not any("Что было без тебя" in m.text for m in fake.sent(2))
+    assert timur_id
