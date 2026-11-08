@@ -448,3 +448,41 @@ class GameGoals(Base):
     side: Mapped[str] = mapped_column(String(8))  # for | against
     source: Mapped[str] = mapped_column(String(16))
     count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SetPiece(Base):
+    """Комбинация на стандарте (угловой, аут, штрафной): схема, как разыгрываем и кто где стоит."""
+
+    __tablename__ = "set_pieces"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))  # GoalSource: corner | throw_in | free_kick
+    name: Mapped[str] = mapped_column(String(60))
+    description: Mapped[str] = mapped_column(String(1500), default="")
+    status: Mapped[str] = mapped_column(String(16), default="learning")  # learning | ready
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    # Роли: [{"role": "подаёт", "user_id": 5}, …] (user_id может быть пустым — роль без игрока).
+    roles: Mapped[list] = mapped_column(JSON, default=list)
+    image_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class SetPieceImage(Base):
+    """Схема комбинации (фото доски/рисунок), JPEG до 1200 px."""
+
+    __tablename__ = "set_piece_images"
+
+    set_piece_id: Mapped[int] = mapped_column(ForeignKey("set_pieces.id", ondelete="CASCADE"), primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class ComboGoals(Base):
+    """Сколько голов в игре забили этой комбинацией."""
+
+    __tablename__ = "combo_goals"
+    __table_args__ = (UniqueConstraint("game_id", "set_piece_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), index=True)
+    set_piece_id: Mapped[int] = mapped_column(ForeignKey("set_pieces.id", ondelete="CASCADE"), index=True)
+    count: Mapped[int] = mapped_column(Integer, default=0)

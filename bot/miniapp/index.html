@@ -141,6 +141,10 @@
   .spark-bar > div { width: 100%; background: var(--accent); border-radius: 6px 6px 0 0; }
   .spark-val, .spark-lbl { font-size: 11px; color: var(--hint); margin: 2px 0; }
   textarea.field { resize: vertical; font: inherit; }
+  select.field { font: inherit; color: var(--text); }
+  .combo-thumb { width: 46px; height: 46px; border-radius: 10px; background: var(--soft) center/cover no-repeat; flex: none;
+    display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .combo-img { display: block; width: 100%; border-radius: 12px; margin-top: 12px; background: var(--soft); }
   .num { font-weight: 700; font-size: 18px; min-width: 28px; text-align: right; }
   .rank { width: 26px; text-align: center; font-weight: 700; color: var(--hint); flex: none; font-size: 15px; }
   .item.me-row { background: var(--accent-soft); }
@@ -903,7 +907,7 @@ function planTab() {
     h("p", { class: "muted small" }, r.planner
       ? "Задайте задачи на месяц, что делаем на каждой тренировке и цель по голам — команда будет видеть прогресс."
       : "Когда тренер загрузит план на месяц, он появится здесь."),
-    r.planner ? h("button", { class: "btn", onclick: () => openCycleEdit(null) }, "＋ Составить план на месяц") : null));
+    r.planner ? h("button", { class: "btn", onclick: () => openCycleEdit(null) }, "＋ Составить план на месяц") : null), combosSection());
 
   const goal = c.set_piece_goal, m = c.matches, sc = c.scrimmages;
   const top = h("div", { class: "card" },
@@ -955,6 +959,7 @@ function planTab() {
   const plans = Array.from({ length: c.trainings }, (_, i) => i + 1);
   return h("div", {}, head, top, goalCard,
     h("div", { class: "label" }, "Задачи"), taskCards,
+    combosSection(),
     h("div", { class: "label" }, "Занятия и матчи"),
     c.sessions.length ? h("div", { class: "list" }, c.sessions.map(sessionRow))
       : h("div", { class: "card small muted" }, "В датах плана пока нет тренировок и матчей. Создайте их во вкладке «Игры» — они появятся здесь по порядку."),
@@ -1013,12 +1018,22 @@ function cycleEditSheet() {
       const r = await api("cycle_delete", { id: f.id }); if (r) { S.cycle = r; closeSheet(); } } }, "Удалить план") : null);
 }
 
+function combosGoalRows(f, s) {
+  const lib = S.cycle.combos;
+  const items = lib ? lib.items.filter((x) => f.for[x.kind] > 0) : [];
+  if (!items.length) return null;
+  return h("div", {}, h("div", { class: "label" }, "Какой комбинацией забили"),
+    h("div", { class: "card" }, items.map((x) => h("div", { class: "switch-row" },
+      h("div", { class: "grow" }, h("div", {}, x.name), h("div", { class: "small muted" }, lib.kinds[x.kind])),
+      stepper(f.combos[x.id] || 0, 0, f.for[x.kind], (v) => { f.combos[x.id] = v; render(); })))));
+}
 function cycleSessionSheet() {
   const c = S.cycle.cycle, s = c.sessions.find((x) => x.game_id === S.sheet.gid);
   if (!s) return h("div", {}, "Занятие не найдено");
   const f = S.sheet.form || (S.sheet.form = {
     measures: Object.fromEntries(c.tasks.map((t) => [t.id, { ...(s.measures[t.id] || { attempts: 0, success: 0 }) }])),
-    for: { ...s.goals.for }, against: { ...s.goals.against }, showGoals: s.kind === "match" || s.goals.entered });
+    for: { ...s.goals.for }, against: { ...s.goals.against }, showGoals: s.kind === "match" || s.goals.entered,
+    combos: Object.fromEntries((S.cycle.combos ? S.cycle.combos.items : []).map((x) => [x.id, ((S.cycle.combos.per_game || {})[s.game_id] || {})[x.id] || 0])) });
   const goalRows = (side) => Object.entries(c.sources).map(([src, title]) => h("div", { class: "switch-row" },
     h("div", { class: "grow" }, title), stepper(f[side][src], 0, 30, (v) => { f[side][src] = v; render(); })));
   const sum = (side) => Object.values(f[side]).reduce((a, b) => a + b, 0);
@@ -1038,6 +1053,7 @@ function cycleSessionSheet() {
     s.kind === "training" && !f.showGoals ? h("button", { class: "btn secondary", onclick: () => { f.showGoals = true; render(); } }, "⚽ Была двусторонка — внести голы") : null,
     f.showGoals ? h("div", {},
       h("div", { class: "label" }, `Мы забили: ${sum("for")} (со стандартов ${setPieces})`), h("div", { class: "card" }, goalRows("for")),
+      combosGoalRows(f, s),
       h("div", { class: "label" }, `Пропустили: ${sum("against")}`), h("div", { class: "card" }, goalRows("against"))) : null,
     h("button", { class: "btn", style: "margin-top:16px", onclick: async (e) => {
       e.target.disabled = true;
@@ -1051,10 +1067,140 @@ function cycleSessionSheet() {
       for (const side of ["for", "against"]) for (const src of Object.keys(c.sources)) if (f[side][src] !== s.goals[side][src]) {
         r = await api("cycle_goals", { game_id: s.game_id, side, source: src, count: f[side][src] }); ok = ok && !!r;
       }
+      const was = (S.cycle.combos.per_game || {})[s.game_id] || {};
+      for (const [cid, n] of Object.entries(f.combos)) if (n !== (was[cid] || 0)) {
+        r = await api("cycle_combo_goals", { game_id: s.game_id, combo_id: Number(cid), count: n }); ok = ok && !!r;
+      }
       e.target.disabled = false;
       if (r) S.cycle = r;
       if (ok) { haptic("ok"); toast("Сохранено"); closeSheet(); } else render();
     } }, "Сохранить"));
+}
+
+// ---------------------------------------------------------------- библиотека комбинаций на стандартах
+function myComboRoles() {
+  const lib = S.cycle && S.cycle.combos, me = S.data.user && S.data.user.id;
+  if (!lib || !me) return [];
+  return lib.items.flatMap((c) => c.roles.filter((r) => r.user_id === me).map((r) => ({ combo: c, role: r.role })));
+}
+function combosSection() {
+  const r = S.cycle, lib = r.combos;
+  if (!lib) return null;
+  const mine = myComboRoles();
+  const groups = Object.entries(lib.kinds).map(([kind, title]) => {
+    const items = lib.items.filter((c) => c.kind === kind);
+    return h("div", { class: "card" },
+      h("div", { class: "head-row" }, h("b", {}, title),
+        h("span", { class: "chip " + (items.filter((c) => c.status === "ready").length >= lib.target ? "good" : "") },
+          `отработано ${items.filter((c) => c.status === "ready").length} из ${lib.target}`)),
+      items.length ? h("div", { class: "list", style: "margin-top:8px" }, items.map((c) => h("button", { class: "item", onclick: () => openSheet({ type: "combo", id: c.id }) },
+        c.image ? h("div", { class: "combo-thumb", style: `background-image:url('${c.image}')` }) : h("div", { class: "combo-thumb empty" }, "📋"),
+        h("div", { class: "grow" }, h("div", { style: "font-weight:600" }, c.name),
+          h("div", { class: "small muted" }, [lib.statuses[c.status], c.roles.length ? `${c.roles.length} ${plural(c.roles.length, "роль", "роли", "ролей")}` : null].filter(Boolean).join(" · "))),
+        c.goals_matches ? h("span", { class: "chip good" }, `⚽ ${c.goals_matches}`) : null)))
+        : h("div", { class: "small muted", style: "margin-top:6px" }, r.planner ? "Пока нет — добавьте комбинацию." : "Пока нет."));
+  });
+  return h("div", {},
+    h("div", { class: "label" }, "Стандарты: комбинации"),
+    mine.length ? h("div", { class: "card", style: "background:var(--accent-soft)" },
+      h("div", { style: "font-weight:700" }, "🙋 Твои роли"),
+      mine.map((m) => h("button", { class: "toggle-link", style: "display:block;text-align:left;margin:6px 0 0", onclick: () => openSheet({ type: "combo", id: m.combo.id }) },
+        `${lib.kinds[m.combo.kind].split(" ")[0]} ${m.combo.name} — ${m.role}`))) : null,
+    groups,
+    r.planner ? h("button", { class: "btn secondary", onclick: () => openComboEdit(null) }, "＋ Комбинация") : null);
+}
+
+function comboSheet() {
+  const lib = S.cycle.combos, c = lib.items.find((x) => x.id === S.sheet.id);
+  if (!c) return h("div", {}, "Комбинация удалена");
+  const me = S.data.user && S.data.user.id, planner = S.cycle.planner;
+  return h("div", {},
+    h("div", { class: "small muted" }, lib.kinds[c.kind]),
+    h("h3", { style: "margin:2px 0 8px" }, c.name),
+    h("div", { class: "people" }, h("span", { class: "chip " + (c.status === "ready" ? "good" : "warn") }, lib.statuses[c.status]),
+      c.goals_matches ? h("span", { class: "chip good" }, `⚽ в матчах: ${c.goals_matches}`) : null,
+      c.goals_trainings ? h("span", { class: "chip" }, `на тренировках: ${c.goals_trainings}`) : null),
+    c.image ? h("img", { class: "combo-img", src: c.image, alt: "Схема", onclick: () => openLink(location.origin + c.image) }) : null,
+    planner ? h("div", { class: "btns", style: "margin-top:8px" },
+      h("button", { class: "btn small secondary", onclick: () => pickScheme(c.id) }, c.image ? "📷 Заменить схему" : "📷 Добавить схему"),
+      c.image ? h("button", { class: "btn small secondary", onclick: async () => { const r = await api("cycle_combo_image", { id: c.id }); if (r) { S.cycle = r; render(); } } }, "Убрать") : null) : null,
+    c.description ? h("div", { class: "card", style: "white-space:pre-line;margin-top:12px" }, c.description) : null,
+    c.roles.length ? h("div", {}, h("div", { class: "label" }, "Кто где"),
+      h("div", { class: "list" }, c.roles.map((r) => h("div", { class: "item" + (r.user_id === me ? " me-row" : "") },
+        r.user_id ? avatar(r.name || "?", r.user_id) : h("div", { class: "avatar", style: "background:var(--soft);color:var(--hint)" }, "?"),
+        h("div", { class: "grow" }, h("div", { style: "font-weight:600" }, r.user_id === me ? `${r.name} (ты)` : (r.name || "не назначен")),
+          h("div", { class: "small muted" }, r.role)))))) : null,
+    planner ? h("div", { style: "margin-top:16px" },
+      h("button", { class: "btn", onclick: () => openComboEdit(c) }, "✏️ Изменить"),
+      h("button", { class: "btn danger", style: "margin-top:8px", onclick: async () => {
+        if (!(await confirmBox(`Удалить комбинацию «${c.name}»? Голы ею в матчах тоже удалятся.`))) return;
+        const r = await api("cycle_combo_delete", { id: c.id }); if (r) { S.cycle = r; closeSheet(); } } }, "Удалить")) : null);
+}
+
+function pickScheme(id) {
+  const input = h("input", { type: "file", accept: "image/*", style: "display:none" });
+  input.addEventListener("change", async () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    try {
+      const url = URL.createObjectURL(file);
+      const img = await loadImage(url);
+      const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.naturalWidth * k); cv.height = Math.round(img.naturalHeight * k);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      toast("Загружаю…");
+      const r = await api("cycle_combo_image", { id, image: cv.toDataURL("image/jpeg", 0.9) });
+      if (r) { S.cycle = r; haptic("ok"); render(); }
+    } catch (e) { toast("Не получилось открыть фото — попробуйте другое."); }
+  });
+  document.body.append(input);
+  input.click();
+}
+
+const ROLE_HINTS = { corner: ["подаёт", "ближняя штанга", "дальняя штанга", "на добивании", "страхует сзади"],
+  throw_in: ["вбрасывает", "открывается в ноги", "в штрафную", "страхует сзади"],
+  free_kick: ["бьёт", "ложный замах", "в стенке", "на добивании", "страхует сзади"] };
+function openComboEdit(c) {
+  const kind = c ? c.kind : Object.keys(S.cycle.combos.kinds)[0];
+  openSheet({ type: "comboEdit", form: c
+    ? { id: c.id, kind: c.kind, name: c.name, status: c.status, description: c.description, roles: c.roles.map((r) => ({ role: r.role, user_id: r.user_id })) }
+    : { kind, name: "", status: "learning", description: "", roles: ROLE_HINTS[kind].map((role) => ({ role, user_id: null })) } });
+}
+function comboEditSheet() {
+  const f = S.sheet.form, lib = S.cycle.combos, team = lib.team || [];
+  return h("div", {},
+    h("h3", { style: "margin-top:0" }, f.id ? "✏️ Комбинация" : "＋ Новая комбинация"),
+    h("div", { class: "seg" }, Object.entries(lib.kinds).map(([k, t]) => h("button", { class: f.kind === k ? "on" : "", onclick: () => {
+      if (!f.id && f.roles.every((r) => !r.user_id)) f.roles = ROLE_HINTS[k].map((role) => ({ role, user_id: null }));
+      f.kind = k; render(); } }, t))),
+    h("div", { class: "label" }, "Название"),
+    h("input", { class: "field", value: f.name, maxlength: 60, placeholder: "Например: «Ближняя», «Стенка-2»", oninput: (e) => { f.name = e.target.value; } }),
+    h("div", { class: "label" }, "Как разыгрываем"),
+    h("textarea", { class: "field", rows: 4, maxlength: 1500, placeholder: "1. Подача на ближнюю штангу\n2. Скидка головой назад\n3. Удар с линии штрафной",
+      oninput: (e) => { f.description = e.target.value; } }, f.description),
+    h("div", { class: "label" }, "Кто где"),
+    f.roles.map((r, i) => h("div", { class: "row", style: "gap:6px;margin-bottom:6px" },
+      h("input", { class: "field", style: "flex:1.2", value: r.role, maxlength: 60, placeholder: "роль", oninput: (e) => { r.role = e.target.value; } }),
+      h("select", { class: "field", style: "flex:1", onchange: (e) => { r.user_id = Number(e.target.value) || null; } },
+        h("option", { value: "" }, "— игрок —"),
+        team.map((u) => h("option", { value: u.id, selected: u.id === r.user_id }, u.name))),
+      h("button", { class: "btn small secondary", "aria-label": "убрать", onclick: () => { f.roles.splice(i, 1); render(); } }, "✕"))),
+    f.roles.length < 10 ? h("button", { class: "toggle-link", onclick: () => { f.roles.push({ role: "", user_id: null }); render(); } }, "＋ Роль") : null,
+    h("div", { class: "label" }, "Статус"),
+    h("div", { class: "seg" }, Object.entries(lib.statuses).map(([k, t]) => h("button", { class: f.status === k ? "on" : "", onclick: () => { f.status = k; render(); } }, t))),
+    h("button", { class: "btn", style: "margin-top:16px", onclick: async (e) => {
+      e.target.disabled = true;
+      const r = await api("cycle_combo_save", f);
+      e.target.disabled = false;
+      if (!r) return;
+      S.cycle = r; haptic("ok");
+      const saved = f.id || Math.max(...r.combos.items.map((x) => x.id));
+      openSheet({ type: "combo", id: saved });
+    } }, "Сохранить"),
+    f.id ? null : h("div", { class: "small muted", style: "margin-top:8px" }, "Схему (фото доски или рисунок) можно добавить после сохранения."));
 }
 
 // ---------------------------------------------------------------- игроки (админ)
@@ -1299,7 +1445,7 @@ function renderSheet() {
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
     rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, crop: cropSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet,
-    cycleEdit: cycleEditSheet, cycleSession: cycleSessionSheet }[S.sheet.type]();
+    cycleEdit: cycleEditSheet, cycleSession: cycleSessionSheet, combo: comboSheet, comboEdit: comboEditSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;

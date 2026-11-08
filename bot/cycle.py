@@ -278,7 +278,7 @@ async def game_plan(session: AsyncSession, game: Game) -> dict | None:
     return {"number": number, "of": cycle.trainings, "text": _plan_text(cycle, number) if number <= cycle.trainings else ""}
 
 
-def whatsapp_text(v: dict) -> str:
+def whatsapp_text(v: dict, lib: dict | None = None) -> str:
     """Итог для команды — в WhatsApp/Telegram."""
     lines = [f"*📈 {v['title']}* ({v['dates_label']})",
              f"Тренировок: {v['trainings_done']} из {v['trainings']}"]
@@ -298,4 +298,7 @@ def whatsapp_text(v: dict) -> str:
             if len(t["points"]) > 1:
                 trend = f", было {t['first']}% → стало {t['last']}%"
             lines.append(f"{i}. {t['title']} — {t['success']} из {t['attempts']} ({t['rate']}%{trend})")
+    scored = [c for c in (lib or {}).get("items", []) if c["goals_matches"]]
+    if scored:
+        lines += ["", "Сработали в матчах: " + ", ".join(f"«{c['name']}» — {c['goals_matches']}" for c in scored)]
     return "\n".join(lines)

@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, audit, cycle, discipline, operations, photos, texts, whatsapp
+from bot import actions, audit, combos, cycle, discipline, operations, photos, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
@@ -392,7 +392,8 @@ async def _user(session: AsyncSession, raw_id: Any) -> User:
     return user
 
 
-CYCLE_EDIT_ACTIONS = {"cycle_save", "cycle_delete", "cycle_measure", "cycle_goals"}
+CYCLE_EDIT_ACTIONS = {"cycle_save", "cycle_delete", "cycle_measure", "cycle_goals",
+                      "cycle_combo_save", "cycle_combo_delete", "cycle_combo_image", "cycle_combo_goals"}
 
 
 async def _cycle_action(session: AsyncSession, action: str, body: dict, planner: bool) -> dict:
@@ -415,13 +416,34 @@ async def _cycle_action(session: AsyncSession, action: str, body: dict, planner:
         elif action == "cycle_goals":
             game = await _game(session, body)
             await cycle.set_goals(session, game, str(body.get("side")), str(body.get("source")), body.get("count"))
+        elif action == "cycle_combo_save":
+            c = await combos.save(session, body)
+            await audit.record(session, f"🚩 Комбинация «{c.name}»: {'изменил' if body.get('id') else 'добавил'}")
+            note = "Комбинация сохранена"
+        elif action == "cycle_combo_delete":
+            await combos.delete(session, int(body.get("id", 0)))
+            note = "Комбинация удалена"
+        elif action == "cycle_combo_image":
+            c = await session.get(combos.SetPiece, int(body.get("id", 0)))
+            if c is None:
+                raise ApiError("Комбинация не найдена.", 404)
+            await combos.set_image(session, c, photos.decode_upload(str(body["image"])) if body.get("image") else None)
+            note = "Схема сохранена" if body.get("image") else "Схема убрана"
+        elif action == "cycle_combo_goals":
+            game = await _game(session, body)
+            await combos.set_goals(session, game, int(body.get("combo_id", 0)), body.get("count"))
         elif action != "cycle":
             raise ApiError("Неизвестное действие.", 404)
-    except cycle.CycleError as e:
+    except (cycle.CycleError, combos.ComboError, photos.PhotoError) as e:
         raise ApiError(str(e)) from e
     v = await cycle.view(session, await cycle.current(session))
-    return {"note": note, "cycle": v, "planner": planner, "template": cycle.TEMPLATE,
-            "whatsapp": {"text": t, "url": whatsapp.share_url(t)} if v and (t := cycle.whatsapp_text(v)) else None}
+    lib = await combos.view(session)
+    if planner:  # кого можно поставить на роль в комбинации
+        lib["team"] = [{"id": u.id, "name": u.name} for u in await svc.all_users(session)
+                       if u.status == UserStatus.APPROVED and not u.is_staff]
+        lib["team"].sort(key=lambda x: x["name"].lower())
+    return {"note": note, "cycle": v, "combos": lib, "planner": planner, "template": cycle.TEMPLATE,
+            "whatsapp": {"text": t, "url": whatsapp.share_url(t)} if v and (t := cycle.whatsapp_text(v, lib)) else None}
 
 
 async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:

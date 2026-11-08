@@ -102,3 +102,54 @@ async def test_plan_rights_progress_and_goals(team):  # noqa: F811
     assert status == 403
     _, r = await api(ADMIN, "cycle_delete", id=r["cycle"]["id"])
     assert r["cycle"] is None
+
+
+async def test_combo_library_roles_scheme_and_goals(team):  # noqa: F811
+    import base64
+    import io
+
+    from PIL import Image
+
+    meir, arman = tg_user(2, "Мейр"), tg_user(3, "Арман")
+    meir_id = await _member(meir)
+    arman_id = await _member(arman)
+    body = {"kind": "corner", "name": "Угловой А", "description": "Подача на ближнюю\nСкидка назад",
+            "roles": [{"role": "подаёт", "user_id": meir_id}, {"role": "ближняя штанга", "user_id": arman_id},
+                      {"role": "", "user_id": arman_id}]}
+    status, _ = await api(meir, "cycle_combo_save", **body)
+    assert status == 403  # игрок не ведёт библиотеку
+    status, r = await api(ADMIN, "cycle_combo_save", **body)
+    assert status == 200, r
+    c = r["combos"]["items"][0]
+    assert c["name"] == "Угловой А" and c["status"] == "learning" and c["description"].count("\n") == 1
+    assert c["roles"] == [{"role": "подаёт", "user_id": meir_id, "name": "Мейр"},
+                          {"role": "ближняя штанга", "user_id": arman_id, "name": "Арман"}]
+    status, r = await api(ADMIN, "cycle_combo_save", kind="penalty", name="X")
+    assert status == 400
+
+    # игроки видят библиотеку
+    _, r = await api(arman, "cycle")
+    assert r["combos"]["items"][0]["roles"][1]["name"] == "Арман"
+
+    # схема: сохраняется без обрезки и отдаётся по подписанной ссылке
+    buf = io.BytesIO()
+    Image.new("RGB", (1600, 900), "green").save(buf, "PNG")
+    img = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    _, r = await api(ADMIN, "cycle_combo_image", id=c["id"], image=img)
+    url = r["combos"]["items"][0]["image"]
+    async with webhook._sessionmaker() as s:
+        from bot import combos
+        data = await combos.load_image(s, url.split("scheme=")[1])
+        assert Image.open(io.BytesIO(data)).size == (1200, 675)
+        assert await combos.load_image(s, url.split("scheme=")[1][:-1] + "0") is None
+
+    # голы комбинацией в матче
+    match = await _create("match", 1)
+    await api(ADMIN, "cycle_combo_save", id=c["id"], kind="corner", name="Угловой А", status="ready", roles=body["roles"])
+    _, r = await api(ADMIN, "cycle_combo_goals", game_id=match, combo_id=c["id"], count=2)
+    item = r["combos"]["items"][0]
+    assert (item["goals_matches"], item["status"]) == (2, "ready")
+    assert r["combos"]["per_game"][str(match)] == {str(c["id"]): 2}
+
+    _, r = await api(ADMIN, "cycle_combo_delete", id=c["id"])
+    assert r["combos"]["items"] == []
