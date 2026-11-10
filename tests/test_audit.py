@@ -261,7 +261,10 @@ async def test_explain_distribution(team):  # noqa: F811
         await api(u, "rsvp", game_id=gid, status="yes")
     await api(pasha, "rsvp", game_id=gid, status="no")
     await api(OWNER, "distribute", game_id=gid)
-    assert (await api(marat, "explain", game_id=gid))[0] == 403
+    # «Почему так» видят все в команде, не только главный админ
+    status, mine = await api(marat, "explain", game_id=gid)
+    assert status == 200 and any(r["user_id"] == marat_id for d in mine["explain"]["duties"] for r in d["ranking"])
+    assert (await api(tg_user(9, "Чужой"), "explain", game_id=gid))[0] == 403
     status, res = await api(OWNER, "explain", game_id=gid)
     assert status == 200, res
     e = res["explain"]

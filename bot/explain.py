@@ -82,7 +82,7 @@ async def explain(session: AsyncSession, game: Game) -> dict | None:
                 reason = "отмечен «не пришёл»"
             else:
                 reason = f"«{RSVP_WORDS[p.status]}»"
-            others.append({"name": u.name, "reason": reason})
+            others.append({"user_id": u.id, "name": u.name, "reason": reason})
         return candidates, others
 
     everyone = [u.id for u in users.values()]
@@ -135,12 +135,15 @@ async def explain(session: AsyncSession, game: Game) -> dict | None:
             if u.id in busy_now:
                 parts_txt.append("уже есть обязанность на этой игре — в последнюю очередь")
             ranking.append({
-                "name": u.name, "score": round(score, 1), "breakdown": " + ".join(parts_txt),
+                "user_id": u.id, "name": u.name, "score": round(score, 1), "breakdown": " + ".join(parts_txt),
                 "no_car": duty.requires_car and not u.has_car, "minus": minus, "busy": u.id in busy_now,
             })
-        ranking.sort(key=lambda r: (r["no_car"], r["busy"], r["score"]))
+        # Кто получил — первым среди равных: при равных очках бот бросает жребий.
+        got = {a.user_id for a in rows if a.duty_id == duty_id and a.status == AssignmentStatus.ACTIVE}
+        ranking.sort(key=lambda r: (r["no_car"], r["busy"], r["score"], r["user_id"] not in got))
         history = [
-            {"name": a.user.name, "time": _local(a.created_at), "status": STATUS_WORDS.get(a.status, a.status)}
+            {"user_id": a.user_id, "name": a.user.name, "time": _local(a.created_at),
+             "status": STATUS_WORDS.get(a.status, a.status), "active": a.status == AssignmentStatus.ACTIVE}
             for a in rows if a.duty_id == duty_id
         ]
         result.append({"emoji": duty.emoji, "name": duty.name, "car": duty.requires_car, "at": _local(moment),
