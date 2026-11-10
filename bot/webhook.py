@@ -370,15 +370,6 @@ async def handle_app_page(request: Request) -> tuple[int, Any]:
         if data is None:
             return 404, {"ok": False, "error": "not found"}
         return 200, Raw(data, "image/jpeg", "private, max-age=31536000, immutable")
-    if "scheme" in request.query:  # схема комбинации на стандарте — по подписанной ссылке
-        from bot import combos
-
-        sessionmaker, _ = await _ensure_ready()
-        async with sessionmaker() as session:
-            data = await combos.load_image(session, request.query.get("scheme", ""))
-        if data is None:
-            return 404, {"ok": False, "error": "not found"}
-        return 200, Raw(data, "image/jpeg", "private, max-age=31536000, immutable")
     if "report" in request.query:  # посещаемость в PDF (админ или тренер, ссылка на сутки)
         from bot import report_pdf
 

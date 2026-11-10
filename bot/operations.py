@@ -786,13 +786,6 @@ async def player_action(
     elif action == "unlock":
         user.car_locked = False
         note = "Игрок снова может сам менять машину"
-    elif action in ("captain_on", "captain_off"):
-        user.is_captain = action == "captain_on"
-        await audit.record(session, f"🅒 {user.name}: {'назначил' if user.is_captain else 'снял'} капитаном")
-        if user.is_captain:
-            await notifier.send_dm(bot, user, "🅒 Ты капитан команды: вместе с тренером ведёшь план на месяц "
-                                              "и вносишь замеры с тренировок и голы — вкладка «📈 План» в приложении.")
-        note = f"{user.name}: {'капитан' if user.is_captain else 'больше не капитан'}"
     elif action == "active":
         user.is_active = not user.is_active
         note = f"{user.name}: {'в составе' if user.is_active else 'временно не в составе'}"

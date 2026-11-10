@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, audit, combos, cycle, discipline, operations, photos, texts, whatsapp
+from bot import actions, audit, discipline, operations, photos, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
@@ -189,8 +189,6 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
             view["no_penalty_reason"] = "Минусов за молчание не будет: игру создали меньше чем за час до конца сбора."
         elif config.penalty_points <= 0:
             view["no_penalty_reason"] = "Минусы за молчание выключены (PENALTY_POINTS=0)."
-    if game.kind == "training":
-        view["plan"] = await cycle.game_plan(session, game)
     return view
 
 
@@ -216,7 +214,6 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
     data["user"] = {
         "id": user.id, "name": user.name, "car": user.has_car, "car_locked": user.car_locked,
         "status": user.status, "active": user.is_active, "staff": staff,
-        "captain": bool(user.is_captain), "planner": cycle.can_plan(user, is_admin, staff),
         "minuses": (await svc.open_penalty_points(session, [user.id])).get(user.id, 0),
     }
     data["user"]["level"] = await discipline.level(session, user, data["user"]["minuses"])
@@ -296,7 +293,7 @@ async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict
     if is_admin:
         view.update(
             username=user.username, status=user.status, active=user.is_active, car_locked=user.car_locked,
-            staff=user.staff_title, manual=user.is_manual, captain=bool(user.is_captain),
+            staff=user.staff_title, manual=user.is_manual,
             telegram_id=user.telegram_id, is_admin=bool(user.is_admin), is_owner=config.is_owner(user.telegram_id),
         )
     return view
@@ -390,65 +387,6 @@ async def _user(session: AsyncSession, raw_id: Any) -> User:
     if user is None:
         raise ApiError("Игрок не найден.", 404)
     return user
-
-
-CYCLE_EDIT_ACTIONS = {"cycle_save", "cycle_delete", "cycle_measure", "cycle_goals",
-                      "cycle_combo_save", "cycle_combo_delete", "cycle_combo_image", "cycle_combo_goals", "cycle_recap"}
-
-
-async def _cycle_action(bot: Bot, session: AsyncSession, action: str, body: dict, planner: bool) -> dict:
-    """План на месяц: смотреть — все в команде; менять — тренер, капитан, админы."""
-    if action in CYCLE_EDIT_ACTIONS and not planner:
-        raise ApiError("План ведут тренер, капитан и админы.", 403)
-    note = None
-    try:
-        if action == "cycle_save":
-            c = await cycle.save(session, body)
-            await audit.record(session, f"📈 План «{c.title}»: {'изменил' if body.get('id') else 'создал'}")
-            note = "📈 План сохранён"
-        elif action == "cycle_delete":
-            await cycle.delete(session, int(body.get("id", 0)))
-            await audit.record(session, "📈 Удалил план на месяц")
-            note = "План удалён"
-        elif action == "cycle_measure":
-            game = await _game(session, body)
-            await cycle.set_measure(session, game, int(body.get("task_id", 0)), body.get("attempts"), body.get("success"))
-        elif action == "cycle_goals":
-            game = await _game(session, body)
-            await cycle.set_goals(session, game, str(body.get("side")), str(body.get("source")), body.get("count"))
-        elif action == "cycle_combo_save":
-            c = await combos.save(session, body)
-            await audit.record(session, f"🚩 Комбинация «{c.name}»: {'изменил' if body.get('id') else 'добавил'}")
-            note = "Комбинация сохранена"
-        elif action == "cycle_combo_delete":
-            await combos.delete(session, int(body.get("id", 0)))
-            note = "Комбинация удалена"
-        elif action == "cycle_combo_image":
-            c = await session.get(combos.SetPiece, int(body.get("id", 0)))
-            if c is None:
-                raise ApiError("Комбинация не найдена.", 404)
-            await combos.set_image(session, c, photos.decode_upload(str(body["image"])) if body.get("image") else None)
-            note = "Схема сохранена" if body.get("image") else "Схема убрана"
-        elif action == "cycle_combo_goals":
-            game = await _game(session, body)
-            await combos.set_goals(session, game, int(body.get("combo_id", 0)), body.get("count"))
-        elif action == "cycle_recap":
-            game = await _game(session, body)
-            sent = await cycle.send_recap(bot, session, game)
-            await audit.record(session, f"📋 Разослал пропустившим, что было ({sent})", game)
-            note = f"📤 Отправлено: {sent}" if sent else "Никому не дошло: пропустившие не писали боту и не включили уведомления."
-        elif action != "cycle":
-            raise ApiError("Неизвестное действие.", 404)
-    except (cycle.CycleError, combos.ComboError, photos.PhotoError) as e:
-        raise ApiError(str(e)) from e
-    v = cycle.with_recaps(await cycle.view(session, await cycle.current(session)))
-    lib = await combos.view(session)
-    if planner:  # кого можно поставить на роль в комбинации
-        lib["team"] = [{"id": u.id, "name": u.name} for u in await svc.all_users(session)
-                       if u.status == UserStatus.APPROVED and not u.is_staff]
-        lib["team"].sort(key=lambda x: x["name"].lower())
-    return {"note": note, "cycle": v, "combos": lib, "planner": planner, "template": cycle.TEMPLATE,
-            "whatsapp": {"text": t, "url": whatsapp.share_url(t)} if v and (t := cycle.whatsapp_text(v, lib)) else None}
 
 
 async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
@@ -937,8 +875,6 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             )
             await session.flush()
             return {"note": note, "player": await player_view(session, target, True), **await players_view(session)}
-        elif action.startswith("cycle"):
-            return await _cycle_action(bot, session, action, body, cycle.can_plan(user, is_admin, staff_view))
         elif action == "penalty_cancel":
             penalty = await svc.cancel_penalty(session, int(body.get("penalty_id", 0)))
             if penalty is None:
