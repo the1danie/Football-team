@@ -1243,6 +1243,27 @@ async def past_games(session: AsyncSession, now: datetime, limit: int = 10, offs
     return list(rows.all())
 
 
+def attention_reasons(r: dict) -> list[str]:
+    """Почему игрок «требует внимания» — одно правило для приложения и PDF. Не в составе — никогда."""
+    if r["inactive"]:
+        return []
+    reasons = []
+    if r["games"] >= 2 and r["rate"] is not None and r["rate"] < 50:
+        reasons.append(f"ходит редко: {r['rate']}%")
+    if r["games"] >= 2 and r["silent"] + r["no_show"] >= 2:
+        parts = [f"молчал {r['silent']}" if r["silent"] else None, f"неявок {r['no_show']}" if r["no_show"] else None]
+        reasons.append(" · ".join(x for x in parts if x))
+    if r["failed"]:
+        reasons.append(f"не выполнил обязанность {r['failed']}")
+    if r["gave"] >= 2:
+        reasons.append(f"отдавал обязанность {r['gave']}")
+    if r["unannounced"] >= 2:
+        reasons.append(f"приходил без «Буду» {r['unannounced']}")
+    if reasons and r["manual"] and r["silent"]:
+        reasons.append("без Telegram — отмечайте за него")
+    return reasons
+
+
 async def attendance_report(session: AsyncSession, now: datetime, since: datetime | None = None) -> list[dict]:
     """По каждому игроку: сколько игр мог прийти, сколько пришёл, отказался, молчал, не пришёл после «Буду»."""
     from bot.deadlines import MIN_RSVP_WINDOW, rsvp_deadline, to_utc
@@ -1314,6 +1335,7 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
         r["history"] = "".join(r["history"][-10:])
         r["kinds"] = r["kinds"][-10:]
         r["rate"] = round(100 * r["came"] / r["games"]) if r["games"] else None
+        r["attention"] = attention_reasons(r)
         rows.append(r)
     rows.sort(key=lambda r: (r["inactive"], r["rate"] if r["rate"] is not None else 101, -r["silent"] - r["no_show"], r["name"]))
     return rows

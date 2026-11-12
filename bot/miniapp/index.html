@@ -1256,7 +1256,7 @@ async function openReport(period) {
 function reportSheet() {
   const rows = S.sheet.rows.filter((r) => r.games || r.inactive);
   const cls = (r) => (r.rate < 50 ? "bad" : r.rate < 75 ? "mid" : "good");
-  const problem = rows.filter((r) => !r.inactive && (r.games >= 2 && (r.rate < 50 || r.silent + r.no_show >= 2)) || r.failed || r.gave >= 2 || r.unannounced >= 2);
+  const problem = rows.filter((r) => r.attention && r.attention.length);
   return h("div", {}, h("h3", {}, "📊 Посещаемость"),
     h("div", { class: "seg", style: "margin-bottom:10px" }, [["month", "За месяц"], ["all", "За всё время"]].map(([k, l]) =>
       h("button", { class: S.reportPeriod === k ? "on" : "", onclick: () => openReport(k) }, l))),
@@ -1264,7 +1264,8 @@ function reportSheet() {
     rows.length ? h("button", { class: "btn secondary", style: "margin-bottom:10px", onclick: async () => {
       const r = await api("attendance_pdf", { period: S.reportPeriod }); if (r) openLink(r.url); } }, "📄 Скачать PDF") : null,
     problem.length ? h("div", { class: "banner", style: "margin-bottom:10px" }, h("b", {}, `⚠️ Требуют внимания: ${problem.length}`),
-      h("div", { class: "small", style: "margin-top:4px" }, problem.map((r) => r.name).join(", "))) : null,
+      problem.map((r) => h("div", { class: "small", style: "margin-top:4px" }, h("b", {}, r.name), " — " + r.attention.join(", "))),
+      h("div", { class: "small muted", style: "margin-top:6px" }, "Правило: ходит реже половины игр, или молчал / не пришёл после «Буду» 2+ раза, или не выполнил обязанность, или отдавал её 2+ раза.")) : null,
     rows.length ? h("div", { class: "list" }, rows.map((r) => h("div", { class: "item", style: r.inactive ? "opacity:.6" : "" },
       avatar(r.name, r.id),
       h("div", { class: "grow" },

@@ -237,3 +237,19 @@ def test_default_after_duties_60_minutes(monkeypatch):
 
     monkeypatch.delenv("AFTER_DUTIES_MINUTES", raising=False)
     assert Config().after_duties_minutes == 60
+
+
+def test_attention_reasons_rule():
+    from bot.services.games import attention_reasons
+
+    base = {"inactive": False, "manual": False, "games": 10, "came": 6, "rate": 60, "silent": 0, "no_show": 0,
+            "failed": 0, "gave": 0, "unannounced": 0}
+    assert attention_reasons(base) == []
+    assert attention_reasons({**base, "came": 3, "rate": 30}) == ["ходит редко: 30%"]
+    assert attention_reasons({**base, "silent": 1, "no_show": 1}) == ["молчал 1 · неявок 1"]
+    # не в составе — никогда, даже за невыполненную обязанность (раньше проскакивал)
+    assert attention_reasons({**base, "inactive": True, "failed": 1, "gave": 3}) == []
+    assert attention_reasons({**base, "unannounced": 2}) == ["приходил без «Буду» 2"]
+    manual = attention_reasons({**base, "manual": True, "silent": 7, "came": 3, "rate": 30})
+    assert manual[-1] == "без Telegram — отмечайте за него"
+    assert attention_reasons({**base, "games": 1, "came": 0, "rate": 0}) == []

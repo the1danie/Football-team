@@ -173,13 +173,13 @@ def build(rows: list[dict], team: str, period_title: str, date_label: str) -> by
     pdf.ln(7)
     pdf.set_text_color(0, 0, 0)
 
-    problem = [r["name"] for r in rows
-               if not r.get("inactive") and (r["games"] >= 2 and (r["rate"] < 50 or r["silent"] + r["no_show"] >= 2)) or r["failed"] or r["gave"] >= 2]
+    problem = [f"{r['name']} — {', '.join(r['attention'])}" for r in rows if r.get("attention")]
     if problem:
         pdf.set_fill_color(255, 243, 205)
         pdf.set_font("DejaVu", "B", 10)
-        pdf.multi_cell(0, 6, f"Требуют внимания ({len(problem)}): " + ", ".join(problem), fill=True,
-                       new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, 6, f"Требуют внимания ({len(problem)}):", fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("DejaVu", "", 9)
+        pdf.multi_cell(0, 5, "\n".join(problem), fill=True, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(3)
 
     cols = [("Игрок", 52), ("%", 12), ("Был", 14), ("Не буду", 15), ("Не знаю", 15), ("Молчал", 15),
