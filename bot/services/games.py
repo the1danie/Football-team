@@ -825,6 +825,7 @@ async def non_responders(session: AsyncSession, game: Game) -> list[User]:
     Пришедших в бота позже публикации тоже считаем (опрос им приходит при входе в команду),
     но только если до конца сбора у них был хотя бы час.
     """
+    from bot import texts
     from bot.deadlines import MIN_RSVP_WINDOW, rsvp_deadline, to_utc
 
     answered = set(
@@ -1243,29 +1244,51 @@ async def past_games(session: AsyncSession, now: datetime, limit: int = 10, offs
     return list(rows.all())
 
 
+# Как сказать по-человечески: «не принёс 💧 воду», «отдавал другим ⚽ мячи».
+DUTY_WORDS = {
+    "water": ("не принёс", "воду"), "balls": ("не привёз", "мячи"),
+    "bibs": ("не принёс", "манишки"), "laundry": ("не постирал", "манишки"),
+}
+
+
 def attention_reasons(r: dict) -> list[str]:
-    """Почему игрок «требует внимания» — одно правило для приложения и PDF. Не в составе — никогда."""
+    """Почему игрок «требует внимания» — понятными словами, одно правило для приложения и PDF.
+
+    Не в составе — никогда. Ходит на всё, но не сделал обязанность — так и пишем: «был на всех 8, но не принёс 💧 воду».
+    """
     if r["inactive"]:
         return []
-    reasons = []
-    if r["games"] >= 2 and r["rate"] is not None and r["rate"] < 50:
-        reasons.append(f"ходит редко: {r['rate']}%")
-    if r["games"] >= 2 and r["silent"] + r["no_show"] >= 2:
-        parts = [f"молчал {r['silent']}" if r["silent"] else None, f"неявок {r['no_show']}" if r["no_show"] else None]
-        reasons.append(" · ".join(x for x in parts if x))
+    duty = []
     if r["failed"]:
-        reasons.append(f"не выполнил обязанность {r['failed']}")
+        duty.append(", ".join(r.get("failed_what") or [f"не сделал обязанность {r['failed']} раз"]))
     if r["gave"] >= 2:
-        reasons.append(f"отдавал обязанность {r['gave']}")
+        duty.append("отдавал другим " + ", ".join(r.get("gave_what") or [f"обязанность {r['gave']} раз"]))
+    attend = []
+    if r["games"] >= 2 and r["rate"] is not None and r["rate"] < 50:
+        attend.append(f"был только на {r['came']} из {r['games']} ({r['rate']}%)")
+    if r["games"] >= 2 and r["silent"] >= 2:
+        attend.append(f"не ответил на опрос {r['silent']} раз")
+    if r["games"] >= 2 and r["no_show"] and r["silent"] + r["no_show"] >= 2:
+        attend.append(f"нажал «Буду» и не пришёл {r['no_show']} раз")
     if r["unannounced"] >= 2:
-        reasons.append(f"приходил без «Буду» {r['unannounced']}")
-    if reasons and r["manual"] and r["silent"]:
+        attend.append(f"нажал «Не буду», а пришёл {r['unannounced']} раз")
+    if not duty and not attend:
+        return []
+    reasons = []
+    if duty and not attend and r["games"]:
+        came = (f"ходит на все игры ({r['games']})" if r["came"] == r["games"]
+                else f"был на {r['came']} из {r['games']}")
+        reasons.append(f"{came}, но " + "; ".join(duty))
+    else:
+        reasons += attend + duty
+    if r["manual"] and r["silent"]:
         reasons.append("без Telegram — отмечайте за него")
     return reasons
 
 
 async def attendance_report(session: AsyncSession, now: datetime, since: datetime | None = None) -> list[dict]:
     """По каждому игроку: сколько игр мог прийти, сколько пришёл, отказался, молчал, не пришёл после «Буду»."""
+    from bot import texts
     from bot.deadlines import MIN_RSVP_WINDOW, rsvp_deadline, to_utc
 
     q = select(Game).where(Game.status.not_in(GameStatus.NOT_PLAYED), Game.starts_at <= now).order_by(Game.starts_at)
@@ -1289,22 +1312,34 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
     game_ids = [g.id for g in games]
     failed: dict[int, int] = {}
     gave: dict[int, int] = {}
+    failed_what: dict[int, list[str]] = {}  # «💧 вода (12 ноября)»
+    gave_what: dict[int, dict[str, int]] = {}  # «💧 вода» → сколько раз отдал
     if game_ids:
-        failed = dict((await session.execute(
-            select(Assignment.user_id, func.count()).where(
-                Assignment.game_id.in_(game_ids), Assignment.status == AssignmentStatus.FAILED
-            ).group_by(Assignment.user_id)
-        )).all())
-    tq = select(DutyTransfer.user_id, func.count()).group_by(DutyTransfer.user_id)
+        for uid, code, emoji, dname, starts in (await session.execute(
+            select(Assignment.user_id, Duty.code, Duty.emoji, Duty.name, Game.starts_at)
+            .join(Duty, Duty.id == Assignment.duty_id).join(Game, Game.id == Assignment.game_id)
+            .where(Assignment.game_id.in_(game_ids), Assignment.status == AssignmentStatus.FAILED)
+            .order_by(Game.starts_at)
+        )).all():
+            failed[uid] = failed.get(uid, 0) + 1
+            verb, what = DUTY_WORDS.get(code, ("не сделал", f"«{dname}»"))
+            failed_what.setdefault(uid, []).append(f"{verb} {emoji} {what} ({texts.fmt_date(starts)})")
+    tq = (select(DutyTransfer.user_id, Duty.code, Duty.emoji, Duty.name)
+          .join(Duty, Duty.id == DutyTransfer.duty_id, isouter=True).order_by(DutyTransfer.created_at))
     if since is not None:
         tq = tq.where(DutyTransfer.created_at >= since - timedelta(days=1))
-    gave = dict((await session.execute(tq)).all())
+    for uid, code, emoji, dname in (await session.execute(tq)).all():
+        gave[uid] = gave.get(uid, 0) + 1
+        what = f"{emoji} {DUTY_WORDS.get(code, ('', f'«{dname}»'))[1]}" if dname else "обязанность"
+        gave_what.setdefault(uid, {}).setdefault(what, 0)
+        gave_what[uid][what] += 1
 
     rows = []
     for u in users:
         r = {"id": u.id, "name": u.name, "manual": u.is_manual, "inactive": not u.is_active, "games": 0, "came": 0, "no": 0, "maybe": 0,
              "silent": 0, "no_show": 0, "history": [], "kinds": [], "failed": failed.get(u.id, 0), "gave": gave.get(u.id, 0),
-             "unannounced": 0}
+             "unannounced": 0, "failed_what": failed_what.get(u.id, []),
+             "gave_what": [f"{k} ×{n}" if n > 1 else k for k, n in gave_what.get(u.id, {}).items()]}
         for g in games:
             p = marks.get((g.id, u.id))
             if p is None and not u.is_active:

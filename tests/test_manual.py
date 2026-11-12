@@ -242,14 +242,17 @@ def test_default_after_duties_60_minutes(monkeypatch):
 def test_attention_reasons_rule():
     from bot.services.games import attention_reasons
 
-    base = {"inactive": False, "manual": False, "games": 10, "came": 6, "rate": 60, "silent": 0, "no_show": 0,
-            "failed": 0, "gave": 0, "unannounced": 0}
+    base = {"inactive": False, "manual": False, "games": 8, "came": 8, "rate": 100, "silent": 0, "no_show": 0,
+            "failed": 0, "gave": 0, "unannounced": 0, "failed_what": [], "gave_what": []}
     assert attention_reasons(base) == []
-    assert attention_reasons({**base, "came": 3, "rate": 30}) == ["ходит редко: 30%"]
-    assert attention_reasons({**base, "silent": 1, "no_show": 1}) == ["молчал 1 · неявок 1"]
-    # не в составе — никогда, даже за невыполненную обязанность (раньше проскакивал)
-    assert attention_reasons({**base, "inactive": True, "failed": 1, "gave": 3}) == []
-    assert attention_reasons({**base, "unannounced": 2}) == ["приходил без «Буду» 2"]
-    manual = attention_reasons({**base, "manual": True, "silent": 7, "came": 3, "rate": 30})
+    # ходит на всё, но не принёс воду — так и пишем
+    assert attention_reasons({**base, "failed": 1, "failed_what": ["не принёс 💧 воду (12 ноября)"]}) == [
+        "ходит на все игры (8), но не принёс 💧 воду (12 ноября)"]
+    assert attention_reasons({**base, "gave": 2, "gave_what": ["💧 воду ×2"]}) == ["ходит на все игры (8), но отдавал другим 💧 воду ×2"]
+    assert attention_reasons({**base, "came": 3, "rate": 38}) == ["был только на 3 из 8 (38%)"]
+    assert attention_reasons({**base, "came": 6, "rate": 75, "silent": 2}) == ["не ответил на опрос 2 раз"]
+    assert attention_reasons({**base, "came": 6, "rate": 75, "no_show": 2}) == ["нажал «Буду» и не пришёл 2 раз"]
+    assert attention_reasons({**base, "inactive": True, "failed": 1, "gave": 3}) == []  # не в составе — никогда
+    manual = attention_reasons({**base, "manual": True, "silent": 5, "came": 3, "rate": 38})
     assert manual[-1] == "без Telegram — отмечайте за него"
     assert attention_reasons({**base, "games": 1, "came": 0, "rate": 0}) == []
