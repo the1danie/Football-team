@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import parse_qsl
 
 from aiogram import Bot
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import actions, audit, discipline, periods, operations, photos, texts, whatsapp
@@ -129,6 +130,23 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
     from bot.actions import after_at
 
     marks = await svc.attendance(session, game.id)
+    from bot.models import GameParticipant  # noqa: PLC0415
+
+    parts = {p.user_id: p for p in (await session.scalars(
+        select(GameParticipant).where(GameParticipant.game_id == game.id))).unique().all()}
+
+    def late_info(uid: int) -> dict:
+        p = parts.get(uid)
+        if p is None:
+            return {}
+        info = {}
+        if p.late_minutes:
+            info["late"] = {"minutes": p.late_minutes, "excused": bool(p.late_excused),
+                            "points": 0 if p.late_excused else discipline.late_points(p.late_minutes)}
+        if p.late_notice_minutes:  # предупредил сам: минуты видят все, причину — админы и он сам
+            info["late_notice"] = {"minutes": p.late_notice_minutes,
+                                   "reason": p.late_notice_reason if (is_admin or uid == me.id) else None}
+        return info
     minus = await svc.open_penalty_points(session, [u.id for s in Rsvp.ALL for u in by_status[s]])
     rounds = await discipline.burpee_rounds(session, list(minus))
     before = await svc.active_duties(session, DutyPhase.BEFORE)
@@ -164,10 +182,13 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "silence_penalized": bool(game.penalties_applied) and config.penalty_points > 0,
         "penalty": config.penalty_points if penalties_enabled(game) and not game.penalties_applied else 0,
         "participants": {
-            s: [{**_user_brief(u), "attended": marks.get(u.id), "burpees": discipline.burpees(minus.get(u.id, 0), rounds.get(u.id, 0))}
+            s: [{**_user_brief(u), "attended": marks.get(u.id), "burpees": discipline.burpees(minus.get(u.id, 0), rounds.get(u.id, 0)),
+                 **late_info(u.id)}
                 for u in by_status[s]] for s in Rsvp.ALL
         },
         "attendance_open": game.status != GameStatus.CANCELLED and now >= game.starts_at - timedelta(hours=1),
+        "late_notice_open": game.status in GameStatus.ACTIVE and discipline.late_notice_open(game, now),
+        "my_late": late_info(me.id),
         "min_players": game.min_players or 0,
         "needs_decision": is_admin and operations.needs_min_decision(game, len(by_status[Rsvp.YES])),
         "waiting_until": texts.fmt_time(game.min_recheck_at) if game.min_recheck_at else None,
@@ -355,7 +376,7 @@ class ApiError(Exception):
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
     "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
-    "penalty_cancel", "penalize_silent", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo", "redo_duty",
+    "penalty_cancel", "penalize_silent", "late", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo", "redo_duty",
 }
 
 
@@ -657,6 +678,18 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         elif action == "team_invite":
             text = whatsapp.team_invite((await bot.me()).username)
             return {"text": text, "url": whatsapp.share_url(text)}
+        elif action in ("late", "late_notice"):
+            game = await _game(session, body)
+            try:
+                if action == "late":  # админ: опоздал на N минут, форс-мажор — без минуса
+                    if config.now() < game.starts_at - timedelta(hours=1):
+                        raise ValueError("Опоздание можно отметить, когда игра началась.")
+                    note = await discipline.set_late(bot, session, game, await _user(session, body.get("user_id")),
+                                                     body.get("minutes") or 0, bool(body.get("excused")))
+                else:  # игрок сам: «Опаздываю»
+                    note = await discipline.late_notice(bot, session, game, user, body.get("minutes") or 0, body.get("reason"))
+            except ValueError as e:
+                raise ApiError(str(e)) from e
         elif action == "attendance":
             note = await operations.mark_attendance(
                 bot, session, await _game(session, body), await _user(session, body.get("user_id")),

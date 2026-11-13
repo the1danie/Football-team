@@ -7,6 +7,8 @@
 - долг 3 минуса → бёрпи на тренировке: в первый раз 25, каждый следующий раз за BURPEES_WINDOW —
   на BURPEES_STEP больше (25 → 50 → 75…). За каждые следующие 3 минуса долга — ещё BURPEES_STEP
   (−3 → 25, −6 → 50, −9 → 75; плюс надбавка за повтор). Из команды за минусы не исключаем.
+- опоздал: −1 за каждые полные LATE_STEP минут от начала игры (9 мин — без минуса, 10–19 — −1, 20–29 — −2…);
+  форс-мажор — админ ставит «без минуса». Игрок может заранее нажать «Опаздываю» — админ это видит и решает.
 Минусы, как и раньше, отрабатываются выполненными обязанностями (одна — один минус).
 """
 
@@ -16,7 +18,7 @@ from aiogram import Bot
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import notifier, texts
+from bot import audit, notifier, texts
 from bot.config import config
 from bot.models import DutyTransfer, Game, Penalty, PenaltyReason, PenaltyStatus, User
 from bot.services import games as svc
@@ -27,6 +29,15 @@ BURPEES_AT = 3  # с какого долга — бёрпи
 BURPEES_BASE = 25  # в первый раз
 BURPEES_STEP = 25  # прибавка за каждый уже сделанный раз бёрпи за окно
 BURPEES_WINDOW = timedelta(days=90)
+LATE_STEP = 10  # минут опоздания за −1
+LATE_MAX = 180
+LATE_NOTICE_BEFORE = timedelta(hours=3)  # «Опаздываю» можно нажать за 3 часа до начала…
+LATE_NOTICE_AFTER = timedelta(hours=1)  # …и до часа после
+
+
+def late_points(minutes: int | None) -> int:
+    """−1 за каждые полные LATE_STEP минут опоздания."""
+    return max(0, int(minutes or 0)) // LATE_STEP
 
 
 def transfer_points(n: int) -> int:
@@ -209,3 +220,76 @@ async def burpees_done(session: AsyncSession, user: User, game: Game | None) -> 
         p.status, p.redeemed_game_id, p.burpees_at = PenaltyStatus.BURPEES, game.id if game else None, at
     await session.flush()
     return total, count
+
+
+def late_notice_open(game: Game, now: datetime | None = None) -> bool:
+    now = now or config.now()
+    return game.starts_at - LATE_NOTICE_BEFORE <= now <= game.starts_at + LATE_NOTICE_AFTER
+
+
+async def late_notice(bot: Bot, session: AsyncSession, game: Game, user: User, minutes: int, reason: str | None) -> str:
+    """Игрок сам предупредил «Опаздываю» (minutes=0 — отменил). Админам — сообщение."""
+    from bot.models import GameParticipant, Rsvp  # noqa: PLC0415
+
+    p = await session.get(GameParticipant, (game.id, user.id))
+    if p is None or p.status != Rsvp.YES:
+        raise ValueError("Сначала нажми «Буду».")
+    if not late_notice_open(game):
+        raise ValueError("Предупредить об опоздании можно за 3 часа до начала и до часа после.")
+    minutes = max(0, min(LATE_MAX, int(minutes or 0)))
+    reason = " ".join(str(reason or "").split())[:120] or None
+    if not minutes:
+        p.late_notice_minutes, p.late_notice_reason = None, None
+        await session.flush()
+        return "Предупреждение об опоздании отменено"
+    p.late_notice_minutes, p.late_notice_reason = minutes, reason
+    await session.flush()
+    await notifier.notify_admins(
+        bot, f"⏰ {texts.h(user.name)} опаздывает примерно на {minutes} мин — {texts.game_header(game)}"
+             + (f"\nПричина: {texts.h(reason)}" if reason else "")
+             + "\nКогда придёт — отметьте опоздание в «👥 Кто пришёл»: там можно поставить «форс-мажор — без минуса».")
+    return f"⏰ Админы знают: опоздаешь примерно на {minutes} мин. Минус за опоздание решает админ."
+
+
+async def set_late(bot: Bot, session: AsyncSession, game: Game, user: User, minutes: int, excused: bool) -> str:
+    """Админ отметил опоздание (minutes=0 — снять отметку). −1 за каждые 10 минут, форс-мажор — без минуса."""
+    from bot.models import GameParticipant, Rsvp  # noqa: PLC0415
+
+    p = await session.get(GameParticipant, (game.id, user.id))
+    if p is None or p.status != Rsvp.YES or p.attended is False:
+        raise ValueError(f"{user.name} не отмечен как пришедший — сначала отметьте, что пришёл.")
+    minutes = max(0, min(LATE_MAX, int(minutes or 0)))
+    points = 0 if excused else late_points(minutes)
+    old = await session.scalar(select(Penalty).where(
+        Penalty.user_id == user.id, Penalty.game_id == game.id, Penalty.reason == PenaltyReason.LATE))
+    if old is not None and old.status in (PenaltyStatus.REDEEMED, PenaltyStatus.BURPEES):
+        raise ValueError("Минус за это опоздание уже отработан или закрыт бёрпи — менять нельзя.")
+    old_points = old.points if old is not None and old.status == PenaltyStatus.OPEN else 0
+    if old is not None:
+        old.status = PenaltyStatus.CANCELLED
+    p.late_minutes, p.late_excused = (minutes or None), bool(excused and minutes)
+    await session.flush()
+    total = (await svc.open_penalty_points(session, [user.id])).get(user.id, 0)
+    if points:
+        total = await penalize(bot, session, user, game, points, PenaltyReason.LATE)
+    header = texts.game_header(game)
+    if not minutes:
+        await audit.record(session, f"⏰ {user.name}: снял отметку об опоздании", game)
+        if old_points:
+            await notifier.send_dm(bot, user, f"⏰ Отметку об опоздании на {header} сняли, минус убран.")
+        return f"{user.name}: без опоздания"
+    await audit.record(session, f"⏰ {user.name}: опоздал на {minutes} мин — "
+                       + ("форс-мажор, без минуса" if excused else f"−{points}" if points else "без минуса"), game)
+    if points != old_points or excused:
+        if excused:
+            text = f"⏰ Опоздание на {minutes} мин ({header}) засчитано без минуса — уважительная причина."
+        elif points:
+            text = (f"⏰ Ты опоздал на {minutes} мин — {header}: −{points} (−1 за каждые {LATE_STEP} минут). "
+                    f"Всего минусов: {total}.\nЕсли был форс-мажор — напиши админу, он может снять.")
+        else:
+            text = None
+        if text:
+            await notifier.send_dm(bot, user, text)
+    if excused:
+        return f"⏰ {user.name}: {minutes} мин, форс-мажор — без минуса"
+    return f"⏰ {user.name}: опоздал на {minutes} мин" + (f" — −{points}" if points else " — меньше 10 мин, без минуса")

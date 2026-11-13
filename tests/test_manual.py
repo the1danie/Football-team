@@ -250,8 +250,8 @@ def test_attention_reasons_rule():
         "ходит на все игры (8), но не принёс 💧 воду (12 ноября)"]
     assert attention_reasons({**base, "gave": 2, "gave_what": ["💧 воду ×2"]}) == ["ходит на все игры (8), но отдавал другим 💧 воду ×2"]
     assert attention_reasons({**base, "came": 3, "rate": 38}) == ["был только на 3 из 8 (38%)"]
-    assert attention_reasons({**base, "came": 6, "rate": 75, "silent": 2}) == ["не ответил на опрос 2 раз"]
-    assert attention_reasons({**base, "came": 6, "rate": 75, "no_show": 2}) == ["нажал «Буду» и не пришёл 2 раз"]
+    assert attention_reasons({**base, "came": 6, "rate": 75, "silent": 2}) == ["не ответил на опрос 2 раза"]
+    assert attention_reasons({**base, "came": 6, "rate": 75, "no_show": 2}) == ["нажал «Буду» и не пришёл 2 раза"]
     assert attention_reasons({**base, "inactive": True, "failed": 1, "gave": 3}) == []  # не в составе — никогда
     manual = attention_reasons({**base, "manual": True, "silent": 5, "came": 3, "rate": 38})
     assert manual[-1] == "без Telegram — отмечайте за него"

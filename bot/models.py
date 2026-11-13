@@ -196,6 +196,12 @@ class GameParticipant(Base):
     # Отвечал «Не буду» / «Не знаю», а админ отметил «пришёл»: первым получает обязанность «после»,
     # со 2-го раза за 30 дней — минус (как с передачей обязанности).
     came_unannounced: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Опоздание (отмечает админ): на сколько минут от начала; форс-мажор — без минуса.
+    late_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    late_excused: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # Игрок заранее нажал «Опаздываю»: примерно на сколько минут и почему (видят админы).
+    late_notice_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    late_notice_reason: Mapped[str | None] = mapped_column(String(120), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(lazy="joined")
@@ -256,11 +262,12 @@ class PenaltyReason:
     NOT_DONE = "not_done"  # не выполнил обязанность
     GAVE_AWAY = "gave_away"  # слишком часто отдаёт обязанность другим
     CAME_UNANNOUNCED = "came_unannounced"  # нажал «Не буду», а сам пришёл (не первый раз)
+    LATE = "late"  # опоздал: −1 за каждые 10 минут от начала
 
     LABELS = {
         NO_RESPONSE: "не ответил на опрос", NO_SHOW: "сказал «Буду», но не пришёл",
         NOT_DONE: "не выполнил обязанность", GAVE_AWAY: "отдал обязанность другому",
-        CAME_UNANNOUNCED: "нажал «Не буду», а сам пришёл",
+        CAME_UNANNOUNCED: "нажал «Не буду», а сам пришёл", LATE: "опоздал",
     }
 
 

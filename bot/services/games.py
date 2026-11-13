@@ -1255,6 +1255,11 @@ DUTY_WORDS = {
 }
 
 
+def _times(n: int) -> str:
+    """«1 раз», «2 раза», «5 раз»."""
+    return f"{n} " + ("раза" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "раз")
+
+
 def attention_reasons(r: dict) -> list[str]:
     """Почему игрок «требует внимания» — понятными словами, одно правило для приложения и PDF.
 
@@ -1264,18 +1269,20 @@ def attention_reasons(r: dict) -> list[str]:
         return []
     duty = []
     if r["failed"]:
-        duty.append(", ".join(r.get("failed_what") or [f"не сделал обязанность {r['failed']} раз"]))
+        duty.append(", ".join(r.get("failed_what") or [f"не сделал обязанность {_times(r['failed'])}"]))
     if r["gave"] >= 2:
-        duty.append("отдавал другим " + ", ".join(r.get("gave_what") or [f"обязанность {r['gave']} раз"]))
+        duty.append("отдавал другим " + ", ".join(r.get("gave_what") or [f"обязанность {_times(r['gave'])}"]))
     attend = []
     if r["games"] >= 2 and r["rate"] is not None and r["rate"] < 50:
         attend.append(f"был только на {r['came']} из {r['games']} ({r['rate']}%)")
     if r["games"] >= 2 and r["silent"] >= 2:
-        attend.append(f"не ответил на опрос {r['silent']} раз")
+        attend.append(f"не ответил на опрос {_times(r['silent'])}")
     if r["games"] >= 2 and r["no_show"] and r["silent"] + r["no_show"] >= 2:
-        attend.append(f"нажал «Буду» и не пришёл {r['no_show']} раз")
+        attend.append(f"нажал «Буду» и не пришёл {_times(r['no_show'])}")
     if r["unannounced"] >= 2:
-        attend.append(f"нажал «Не буду», а пришёл {r['unannounced']} раз")
+        attend.append(f"нажал «Не буду», а пришёл {_times(r['unannounced'])}")
+    if r.get("late", 0) >= 2:
+        attend.append(f"опаздывал {_times(r['late'])} (всего {r['late_minutes']} мин)")
     if not duty and not attend:
         return []
     reasons = []
@@ -1342,7 +1349,7 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
     for u in users:
         r = {"id": u.id, "name": u.name, "manual": u.is_manual, "inactive": not u.is_active, "games": 0, "came": 0, "no": 0, "maybe": 0,
              "silent": 0, "no_show": 0, "history": [], "kinds": [], "failed": failed.get(u.id, 0), "gave": gave.get(u.id, 0),
-             "unannounced": 0, "failed_what": failed_what.get(u.id, []),
+             "unannounced": 0, "late": 0, "late_minutes": 0, "failed_what": failed_what.get(u.id, []),
              "gave_what": [f"{k} ×{n}" if n > 1 else k for k, n in gave_what.get(u.id, {}).items()]}
         for g in games:
             p = marks.get((g.id, u.id))
@@ -1369,7 +1376,11 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
             r[kind] += 1
             if p is not None and p.came_unannounced:
                 r["unannounced"] += 1
-            r["history"].append(ATTENDANCE_ICONS[kind])
+            late = kind == "came" and p is not None and p.late_minutes and not p.late_excused
+            if late:
+                r["late"] += 1
+                r["late_minutes"] += p.late_minutes
+            r["history"].append("⏰" if late else ATTENDANCE_ICONS[kind])
             r["kinds"].append(kind)
         r["history"] = "".join(r["history"][-10:])
         r["kinds"] = r["kinds"][-10:]
