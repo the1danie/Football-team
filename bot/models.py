@@ -262,7 +262,7 @@ class PenaltyReason:
     NOT_DONE = "not_done"  # не выполнил обязанность
     GAVE_AWAY = "gave_away"  # слишком часто отдаёт обязанность другим
     CAME_UNANNOUNCED = "came_unannounced"  # нажал «Не буду», а сам пришёл (не первый раз)
-    LATE = "late"  # опоздал: −1 за каждые 10 минут от начала
+    LATE = "late"  # опоздал на 10+ минут от начала: −1
 
     LABELS = {
         NO_RESPONSE: "не ответил на опрос", NO_SHOW: "сказал «Буду», но не пришёл",

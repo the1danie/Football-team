@@ -514,6 +514,13 @@ async def penalties_user(cb: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.startswith("pendel:"))
 async def penalty_cancel(cb: CallbackQuery, session: AsyncSession, bot: Bot):
+    from bot.models import Penalty  # noqa: PLC0415
+
+    found = await session.get(Penalty, int(cb.data.split(":")[1]))
+    me = await svc.get_user_by_tg(session, cb.from_user.id)
+    if found is not None and me is not None and found.user_id == me.id:
+        await cb.answer("Свои минусы админ не снимает — попросите другого админа.", show_alert=True)
+        return
     penalty = await svc.cancel_penalty(session, int(cb.data.split(":")[1]))
     if penalty is not None:
         await audit.record(session, f"♻️ Снял минус: {(await session.get(User, penalty.user_id)).name}", penalty.game)
@@ -564,6 +571,10 @@ async def attendance_toggle(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     user = await session.get(User, int(user_id))
     if game is None or user is None:
         await cb.answer("Не найдено.", show_alert=True)
+        return
+    if (present == "1" and user.telegram_id == cb.from_user.id
+            and (await svc.attendance(session, game.id)).get(user.id) is False):
+        await cb.answer("Свои минусы админ не снимает — попросите другого админа.", show_alert=True)
         return
     try:
         note = await operations.mark_attendance(bot, session, game, user, present == "1")

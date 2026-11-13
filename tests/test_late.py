@@ -1,4 +1,4 @@
-"""Опоздания: −1 за каждые 10 минут от начала; игрок может предупредить «Опаздываю»; форс-мажор — без минуса."""
+"""Опоздания: на 10+ минут от начала — −1; игрок может предупредить «Опаздываю»; форс-мажор — без минуса."""
 
 from datetime import timedelta
 
@@ -13,7 +13,7 @@ from tests.test_webhook import fake  # noqa: F401
 
 
 def test_late_points():
-    assert [discipline.late_points(m) for m in (0, 5, 9, 10, 19, 20, 29, 30, 45, None)] == [0, 0, 0, 1, 1, 2, 2, 3, 4, 0]
+    assert [discipline.late_points(m) for m in (0, 5, 9, 10, 19, 20, 29, 30, 45, None)] == [0, 0, 0, 1, 1, 1, 1, 1, 1, 0]
 
 
 async def _game_starting(minutes_from_now, *players):
@@ -54,24 +54,27 @@ async def test_notice_late_excuse_and_undo(team):  # noqa: F811
     assert (await api(rustam, "late", game_id=gid, user_id=rid, minutes=0))[0] == 403
     assert (await api(ADMIN, "late", game_id=gid, user_id=cid, minutes=20))[0] == 400  # Чира не пришёл
 
-    # опоздал на 25 мин → −2 и сообщение игроку
+    # опоздал на 25 мин → −1 (один минус, сколько бы ни опоздал) и сообщение игроку
     status, res = await api(ADMIN, "late", game_id=gid, user_id=rid, minutes=25)
-    assert status == 200 and "−2" in res["note"]
-    assert await _open_points(rid) == 2
-    assert any("опоздал на 25 мин" in m.text and "−2" in m.text and "форс-мажор" in m.text for m in fake.sent(2))
+    assert status == 200 and "−1" in res["note"]
+    assert await _open_points(rid) == 1
+    assert any("опоздал на 25 мин" in m.text and "−1" in m.text and "форс-мажор" in m.text for m in fake.sent(2))
     g = next(x for x in res["state"]["games"] if x["id"] == gid)
-    assert next(u for u in g["participants"]["yes"] if u["id"] == rid)["late"] == {"minutes": 25, "excused": False, "points": 2}
+    assert next(u for u in g["participants"]["yes"] if u["id"] == rid)["late"] == {"minutes": 25, "excused": False, "points": 1}
 
-    # передумали: 12 мин → −1 (не −3: прошлый минус заменяется, а не добавляется)
+    # поправили на 12 мин — всё ещё −1, не −2: прошлый минус заменяется, а не добавляется; 7 мин — без минуса
     await api(ADMIN, "late", game_id=gid, user_id=rid, minutes=12)
     assert await _open_points(rid) == 1
+    await api(ADMIN, "late", game_id=gid, user_id=rid, minutes=7)
+    assert await _open_points(rid) == 0
+    await api(ADMIN, "late", game_id=gid, user_id=rid, minutes=12)
     # форс-мажор → без минуса
     status, res = await api(ADMIN, "late", game_id=gid, user_id=rid, minutes=12, excused=True)
     assert await _open_points(rid) == 0 and "без минуса" in res["note"]
     assert any("засчитано без минуса" in m.text for m in fake.sent(2))
     # снова без форс-мажора, потом сняли совсем
     await api(ADMIN, "late", game_id=gid, user_id=rid, minutes=30)
-    assert await _open_points(rid) == 3
+    assert await _open_points(rid) == 1
     await api(ADMIN, "late", game_id=gid, user_id=rid, minutes=0)
     assert await _open_points(rid) == 0
     async with webhook._sessionmaker() as s:
@@ -100,3 +103,34 @@ async def test_late_in_attendance_report(team):  # noqa: F811
     assert (r["late"], r["late_minutes"], r["came"]) == (2, 30, 3)
     assert r["history"].count("⏰") == 2
     assert "опаздывал 2 раза (всего 30 мин)" in r["attention"]
+
+
+async def test_admin_cannot_remove_own_minuses(team):  # noqa: F811
+    marat = tg_user(5, "Марат")
+    mid = await _member(marat)
+    await api(ADMIN, "player", user_id=mid, op="admin_on")  # второй админ
+    _, st = await api(ADMIN, "state")
+    me = st["state"]["user"]["id"]
+    gid = await _game_starting(-30, ADMIN, marat)
+
+    # себе опоздание поставить можно, снять/форс-мажор — нет
+    assert (await api(ADMIN, "late", game_id=gid, user_id=me, minutes=15))[0] == 200
+    assert await _open_points(me) == 1
+    status, res = await api(ADMIN, "late", game_id=gid, user_id=me, minutes=15, excused=True)
+    assert status == 403 and "другого админа" in res["error"]
+    assert (await api(ADMIN, "late", game_id=gid, user_id=me, minutes=0))[0] == 403
+    assert await _open_points(me) == 1
+
+    # «Снять» в списке минусов — себе нельзя, другому админу — можно
+    _, p = await api(ADMIN, "player_detail", user_id=me)
+    pid = p["minuses"][0]["id"]
+    assert (await api(ADMIN, "penalty_cancel", penalty_id=pid))[0] == 403
+    assert await _open_points(me) == 1
+    assert (await api(marat, "penalty_cancel", penalty_id=pid))[0] == 200
+    assert await _open_points(me) == 0
+
+    # «не пришёл» → «пришёл» себе (снимает минус за неявку) — нельзя
+    await api(ADMIN, "attendance", game_id=gid, user_id=me, present=False)
+    assert await _open_points(me) >= 1
+    assert (await api(ADMIN, "attendance", game_id=gid, user_id=me, present=True))[0] == 403
+    assert (await api(marat, "attendance", game_id=gid, user_id=me, present=True))[0] == 200

@@ -7,7 +7,7 @@
 - долг 3 минуса → бёрпи на тренировке: в первый раз 25, каждый следующий раз за BURPEES_WINDOW —
   на BURPEES_STEP больше (25 → 50 → 75…). За каждые следующие 3 минуса долга — ещё BURPEES_STEP
   (−3 → 25, −6 → 50, −9 → 75; плюс надбавка за повтор). Из команды за минусы не исключаем.
-- опоздал: −1 за каждые полные LATE_STEP минут от начала игры (9 мин — без минуса, 10–19 — −1, 20–29 — −2…);
+- опоздал на LATE_FROM минут и больше от начала игры — LATE_POINTS (сколько бы ни опоздал; до 9 мин — без минуса);
   форс-мажор — админ ставит «без минуса». Игрок может заранее нажать «Опаздываю» — админ это видит и решает.
 Минусы, как и раньше, отрабатываются выполненными обязанностями (одна — один минус).
 """
@@ -29,15 +29,16 @@ BURPEES_AT = 3  # с какого долга — бёрпи
 BURPEES_BASE = 25  # в первый раз
 BURPEES_STEP = 25  # прибавка за каждый уже сделанный раз бёрпи за окно
 BURPEES_WINDOW = timedelta(days=90)
-LATE_STEP = 10  # минут опоздания за −1
+LATE_FROM = 10  # с какого опоздания (минут) — минус
+LATE_POINTS = 1
 LATE_MAX = 180
 LATE_NOTICE_BEFORE = timedelta(hours=3)  # «Опаздываю» можно нажать за 3 часа до начала…
 LATE_NOTICE_AFTER = timedelta(hours=1)  # …и до часа после
 
 
 def late_points(minutes: int | None) -> int:
-    """−1 за каждые полные LATE_STEP минут опоздания."""
-    return max(0, int(minutes or 0)) // LATE_STEP
+    """Опоздал на LATE_FROM+ минут — LATE_POINTS, меньше — без минуса."""
+    return LATE_POINTS if int(minutes or 0) >= LATE_FROM else 0
 
 
 def transfer_points(n: int) -> int:
@@ -252,7 +253,7 @@ async def late_notice(bot: Bot, session: AsyncSession, game: Game, user: User, m
 
 
 async def set_late(bot: Bot, session: AsyncSession, game: Game, user: User, minutes: int, excused: bool) -> str:
-    """Админ отметил опоздание (minutes=0 — снять отметку). −1 за каждые 10 минут, форс-мажор — без минуса."""
+    """Админ отметил опоздание (minutes=0 — снять отметку). Опоздал на 10+ мин — −1, форс-мажор — без минуса."""
     from bot.models import GameParticipant, Rsvp  # noqa: PLC0415
 
     p = await session.get(GameParticipant, (game.id, user.id))
@@ -284,7 +285,7 @@ async def set_late(bot: Bot, session: AsyncSession, game: Game, user: User, minu
         if excused:
             text = f"⏰ Опоздание на {minutes} мин ({header}) засчитано без минуса — уважительная причина."
         elif points:
-            text = (f"⏰ Ты опоздал на {minutes} мин — {header}: −{points} (−1 за каждые {LATE_STEP} минут). "
+            text = (f"⏰ Ты опоздал на {minutes} мин — {header}: −{points} (опоздание от {LATE_FROM} минут — −{LATE_POINTS}). "
                     f"Всего минусов: {total}.\nЕсли был форс-мажор — напиши админу, он может снять.")
         else:
             text = None
@@ -292,4 +293,4 @@ async def set_late(bot: Bot, session: AsyncSession, game: Game, user: User, minu
             await notifier.send_dm(bot, user, text)
     if excused:
         return f"⏰ {user.name}: {minutes} мин, форс-мажор — без минуса"
-    return f"⏰ {user.name}: опоздал на {minutes} мин" + (f" — −{points}" if points else " — меньше 10 мин, без минуса")
+    return f"⏰ {user.name}: опоздал на {minutes} мин" + (f" — −{points}" if points else f" — меньше {LATE_FROM} мин, без минуса")

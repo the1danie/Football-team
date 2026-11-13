@@ -410,6 +410,15 @@ async def _user(session: AsyncSession, raw_id: Any) -> User:
     return user
 
 
+SELF_MINUS = "Свои минусы админ не снимает — попросите другого админа."
+
+
+def _not_self(me: User | None, target_id: int | None) -> None:
+    """Админ не может снимать минусы сам себе (и отмечать себе то, что их снимает) — только другой админ."""
+    if me is not None and target_id == me.id:
+        raise ApiError(SELF_MINUS, 403)
+
+
 async def handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict:
     """Выполнить действие из Mini App. Возвращает данные для ответа."""
     me = await svc.get_user_by_tg(session, int(tg["id"]))
@@ -682,6 +691,15 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             game = await _game(session, body)
             try:
                 if action == "late":  # админ: опоздал на N минут, форс-мажор — без минуса
+                    if int(body.get("user_id") or 0) == user.id:  # себе — только добавить, не уменьшить
+                        from bot.models import Penalty, PenaltyReason  # noqa: PLC0415
+
+                        old = await session.scalar(select(Penalty).where(
+                            Penalty.user_id == user.id, Penalty.game_id == game.id,
+                            Penalty.reason == PenaltyReason.LATE, Penalty.status == PenaltyStatus.OPEN))
+                        new = 0 if body.get("excused") else discipline.late_points(body.get("minutes") or 0)
+                        if body.get("excused") or new < (old.points if old else 0):
+                            raise ApiError(SELF_MINUS, 403)
                     if config.now() < game.starts_at - timedelta(hours=1):
                         raise ValueError("Опоздание можно отметить, когда игра началась.")
                     note = await discipline.set_late(bot, session, game, await _user(session, body.get("user_id")),
@@ -691,10 +709,10 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             except ValueError as e:
                 raise ApiError(str(e)) from e
         elif action == "attendance":
-            note = await operations.mark_attendance(
-                bot, session, await _game(session, body), await _user(session, body.get("user_id")),
-                bool(body.get("present")),
-            )
+            game, target = await _game(session, body), await _user(session, body.get("user_id"))
+            if bool(body.get("present")) and (await svc.attendance(session, game.id)).get(target.id) is False:
+                _not_self(user, target.id)  # «не пришёл» → «пришёл» снимает минус за неявку
+            note = await operations.mark_attendance(bot, session, game, target, bool(body.get("present")))
         elif action == "duties":
             return {"duties": [duty_view(d) for d in await svc.all_duties(session)]}
         elif action == "duty_update":
@@ -797,6 +815,8 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             if not (is_admin or staff_view):
                 raise ApiError("Отмечает админ или тренер.", 403)
             target = await _user(session, body.get("user_id"))
+            if is_admin:
+                _not_self(user, target.id)  # бёрпи обнуляют минусы — себе отмечает другой
             game = await svc.get_game(session, int(body["game_id"])) if body.get("game_id") else None
             try:
                 total, count = await discipline.burpees_done(session, target, game)
@@ -817,6 +837,8 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                 done_by = await _user(session, body["done_by"]) if body.get("done_by") else None
                 note = await operations.mark_duty_failed(bot, session, game, duty, done_by)
             else:
+                failed = {a.duty_id: a.user_id for a in await svc.failed_assignments(session, game.id)}
+                _not_self(user, failed.get(duty.id))
                 note = await operations.undo_duty_failed(bot, session, game, duty)
         elif action == "whatsapp":
             text = await actions.whatsapp_snapshot(bot, session, await _game(session, body))
@@ -907,6 +929,10 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             await session.flush()
             return {"note": note, "player": await player_view(session, target, True), **await players_view(session)}
         elif action == "penalty_cancel":
+            from bot.models import Penalty  # noqa: PLC0415
+
+            found = await session.get(Penalty, int(body.get("penalty_id", 0)))
+            _not_self(user, found.user_id if found else None)
             penalty = await svc.cancel_penalty(session, int(body.get("penalty_id", 0)))
             if penalty is None:
                 raise ApiError("Минус уже снят или отработан.")

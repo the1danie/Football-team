@@ -983,7 +983,7 @@ function profileTab() {
       S.data.penalty_points ? h("li", {}, `Не ответил до закрытия сбора — минус (−${S.data.penalty_points}). Сказал «Буду» и не пришёл — тоже минус.`) : null,
       h("li", {}, "Не выполнил обязанность (не принёс воду, не забрал манишки) — −2."),
       h("li", {}, "Отдал свою обязанность другому: первый раз за 30 дней — без минуса, второй — −1, третий — −2, четвёртый — −3 и так далее. Обмен обязанностями (ты — его, он — твою) не считается."),
-      h("li", {}, "Опоздал — −1 за каждые 10 минут от начала (до 9 минут — без минуса). Опаздываешь — нажми «⏰ Опаздываю» в карточке игры: админ увидит и при уважительной причине минус не поставит."),
+      h("li", {}, "Опоздал на 10 минут и больше от начала — −1 (до 9 минут — без минуса). Опаздываешь — нажми «⏰ Опаздываю» в карточке игры: админ увидит и при уважительной причине минус не поставит."),
       h("li", {}, "−3 минуса — на тренировке бёрпи: в первый раз 25, каждый следующий раз на 25 больше (25 → 50 → 75…). За каждые следующие −3 ещё +25 (−6 → 50, −9 → 75). Сделал бёрпи — минусы обнуляются. Кто 3 месяца без бёрпи — снова с 25. Ещё минус снимает каждая выполненная обязанность."))));
 }
 
@@ -1030,7 +1030,7 @@ function lateNoticeSheet() {
     if (r) { haptic("ok"); closeSheet(); }
   };
   return h("div", {}, h("h3", {}, "⏰ Опаздываю"),
-    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Админам придёт сообщение. Минус за опоздание — −1 за каждые 10 минут от начала, но если причина уважительная, админ может его не ставить."),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Админам придёт сообщение. Опоздание на 10+ минут от начала — −1, но если причина уважительная, админ может его не ставить."),
     h("div", { class: "label" }, "Примерно на сколько"),
     h("div", { class: "people" }, [5, 10, 15, 20, 30, 45, 60].map((m) => h("button", { class: "chip" + (f.minutes === m ? " accent" : ""), style: "padding:8px 14px",
       onclick: () => { f.minutes = m; render(); } }, `${m} мин`))),
@@ -1043,7 +1043,7 @@ function lateSheet() {
   const g = findGame(S.sheet.game.id) || S.sheet.game;
   const u = g.participants.yes.find((x) => x.id === S.sheet.user.id) || S.sheet.user;
   const f = S.sheet.form || (S.sheet.form = { minutes: u.late ? u.late.minutes : (u.late_notice ? u.late_notice.minutes : 10), excused: !!(u.late && u.late.excused) });
-  const pts = f.excused ? 0 : Math.floor(f.minutes / 10);
+  const pts = f.excused ? 0 : f.minutes >= 10 ? 1 : 0;
   const save = async (minutes) => {
     const r = await api("late", { game_id: g.id, user_id: u.id, minutes, excused: f.excused });
     if (r) { haptic("ok"); if (g.past) await loadArchive(); closeSheet(); }
@@ -1052,10 +1052,11 @@ function lateSheet() {
     u.late_notice ? h("div", { class: "banner info", style: "margin-top:0" }, `Предупредил заранее: ~${u.late_notice.minutes} мин`
       + (u.late_notice.reason ? ` — «${u.late_notice.reason}»` : "")) : h("div", { class: "small muted" }, "Заранее не предупреждал."),
     h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "На сколько минут от начала"),
-      h("div", { class: "small muted" }, "−1 за каждые полные 10 минут")),
+      h("div", { class: "small muted" }, "10 минут и больше — −1")),
       stepper(f.minutes, 0, 180, (v) => { f.minutes = v; render(); }, (v) => `${v} мин`)),
     h("div", { class: "people", style: "margin:4px 0 8px" }, [5, 10, 15, 20, 30, 45, 60].map((m) => h("button", { class: "chip" + (f.minutes === m ? " accent" : ""),
       onclick: () => { f.minutes = m; render(); } }, `${m}`))),
+    u.id === (S.data.user && S.data.user.id) ? h("div", { class: "small muted", style: "margin:6px 2px" }, "Себе админ ставит опоздание, но снять или поставить «форс-мажор» может только другой админ.") :
     h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Форс-мажор — без минуса"),
       h("div", { class: "small muted" }, "Уважительная причина: не было возможности предупредить и т. п.")),
       h("button", { class: "switch" + (f.excused ? " on" : ""), role: "switch", "aria-checked": f.excused ? "true" : "false", onclick: () => { f.excused = !f.excused; render(); } })),
@@ -1090,7 +1091,7 @@ function attendanceSheet() {
       onclick: () => openSheet({ type: "late", game: g, user: u }) }, "⏰") : null,
     h("button", { class: "switch" + (came ? " on" : ""), role: "switch", "aria-checked": came ? "true" : "false", onclick: () => mark(u, !came) }));
   return h("div", {}, h("h3", {}, "👥 Кто пришёл"),
-    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Выключите тех, кто отметил «Буду», но не пришёл: им минус, а обязанности «после тренировки» достанутся тем, кто был. Опоздал — нажмите ⏰: −1 за каждые 10 минут, форс-мажор — без минуса."),
+    h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Выключите тех, кто отметил «Буду», но не пришёл: им минус, а обязанности «после тренировки» достанутся тем, кто был. Опоздал — нажмите ⏰: на 10+ минут — −1, форс-мажор — без минуса."),
     h("div", { class: "card" }, yes.map((u) => row(u, u.attended !== false)), absent.map((u) => row(u, false)),
       !yes.length && !absent.length ? h("div", { class: "muted" }, "Никто не отметил «Буду».") : null),
     others.length ? h("div", {}, h("div", { class: "label" }, "Пришёл без «Буду»? Нажмите на имя:"),
@@ -1621,12 +1622,13 @@ function playerSheet() {
     p.duties && p.duties.some((x) => x.count) ? h("div", {}, h("div", { class: "label" }, "Выполнял обязанности"),
       h("div", { class: "people" }, p.duties.map((x) => h("span", { class: "chip" }, `${x.emoji} ${x.name}: ${x.count}`)))) : null,
     p.burpee_info ? h("div", { style: "margin-top:12px" }, burpeeCard(p.burpee_info, "Делал")) : null,
-    p.burpees ? h("button", { class: "btn", style: "margin-top:12px", onclick: async () => {
+    p.burpees && p.id !== (S.data.user && S.data.user.id) ? h("button", { class: "btn", style: "margin-top:12px", onclick: async () => {
       if (await markBurpees(p, null)) { const r = await api("player_detail", { user_id: p.id }); if (r) { S.sheet.player = r; render(); } } } },
       `💪 Сделал ${p.burpees} бёрпи — обнулить минусы`) : null,
     p.minuses && p.minuses.length ? h("div", {}, h("div", { class: "label" }, `Минусы: ${p.minuses.length}`),
+      p.id === (S.data.user && S.data.user.id) ? h("div", { class: "small muted", style: "margin:-4px 2px 8px" }, "Свои минусы админ не снимает — их может снять другой админ.") : null,
       h("div", { class: "list" }, p.minuses.map((m) => h("div", { class: "item" }, h("div", { class: "grow small" }, `−${m.points} · ${m.reason}: ${m.game}`),
-        h("button", { class: "btn small secondary", onclick: async () => { const r = await api("penalty_cancel", { penalty_id: m.id }); if (r) { S.sheet.player = r.player; render(); } } }, "Снять"))))) : null,
+        p.id === (S.data.user && S.data.user.id) ? null : h("button", { class: "btn small secondary", onclick: async () => { const r = await api("penalty_cancel", { penalty_id: m.id }); if (r) { S.sheet.player = r.player; render(); } } }, "Снять"))))) : null,
     h("div", { style: "margin-top:16px" },
       p.status === "approved" && !p.is_owner ? h("button", { class: "btn danger", onclick: () => playerOp(p, "block") }, "Удалить из команды") : null,
       p.status === "blocked" ? h("button", { class: "btn secondary", onclick: () => playerOp(p, "approve") }, "♻️ Вернуть в команду") : null),
