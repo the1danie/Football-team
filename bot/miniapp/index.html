@@ -823,11 +823,11 @@ const BOARDS = {
   minuses: { title: "⚠️ Минусы", unit: (n) => plural(n, "минус", "минуса", "минусов"),
     hint: "Антирейтинг: минусы за неответ на опрос и за неявку после «Буду»." },
 };
-// Периоды: только этот месяц (с 1-го числа заново) и прошлый.
+// Периоды: этот месяц (с 1-го числа заново), прошлый и всё время.
 const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 function periodTabs() {
   const m = new Date().getMonth();
-  return [["month", MONTHS[m]], ["prev", MONTHS[(m + 11) % 12]]];
+  return [["month", MONTHS[m]], ["prev", MONTHS[(m + 11) % 12]], ["all", "Всё время"]];
 }
 async function loadStats() {
   const r = await api("stats", { period: S.statsPeriod || "month" });
@@ -868,7 +868,7 @@ function statsTab() {
       + (period === "month" ? ` Считается с 1 ${["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][new Date().getMonth()]} — каждый месяц заново.` : "")),
     podium || (anyValue ? null : h("div", { class: "card empty muted" }, board === "minuses" ? "Минусов ни у кого нет 👍"
       : period === "month" ? `${periodTabs()[0][1]} только начался — рейтинг с 1-го числа считается заново.`
-      : `За ${periodTabs()[1][1].toLowerCase()} пусто.`)),
+      : period === "prev" ? `За ${periodTabs()[1][1].toLowerCase()} пусто.` : "Пока пусто — сыграйте первую игру.")),
     !anyValue ? null : h("div", { class: "list" }, rows.map((p) => h("button", { class: "item" + (p.id === me ? " me-row" : ""), onclick: () => openPlayerStats(p.id) },
       h("div", { class: "rank" }, p[board] > 0 && p.rank <= 3 ? medal(p.rank) : p.rank),
       avatar(p.name, p.id),
