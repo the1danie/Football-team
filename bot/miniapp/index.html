@@ -823,16 +823,22 @@ const BOARDS = {
   minuses: { title: "⚠️ Минусы", unit: (n) => plural(n, "минус", "минуса", "минусов"),
     hint: "Антирейтинг: минусы за неответ на опрос и за неявку после «Буду»." },
 };
+// Периоды: текущий месяц (с 1-го числа заново), прошлый месяц, всё время.
+const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+function periodTabs() {
+  const m = new Date().getMonth();
+  return [["month", MONTHS[m]], ["prev", MONTHS[(m + 11) % 12]], ["all", "Всё время"]];
+}
 async function loadStats() {
-  const r = await api("stats", { period: S.statsPeriod || "all" });
+  const r = await api("stats", { period: S.statsPeriod || "month" });
   if (r) { S.stats = r.board; render(); }
 }
 function statsTab() {
-  const board = S.statsBoard || "balance", period = S.statsPeriod || "all";
+  const board = S.statsBoard || "balance", period = S.statsPeriod || "month";
   const head = [h("h1", {}, "Рейтинг"),
     h("div", { class: "seg", style: "margin-bottom:8px" }, Object.entries(BOARDS).map(([k, b]) =>
       h("button", { class: board === k ? "on" : "", onclick: () => { S.statsBoard = k; haptic(); render(); } }, b.title))),
-    h("div", { class: "seg", style: "margin-bottom:12px" }, [["month", "За месяц"], ["all", "За всё время"]].map(([k, l]) =>
+    h("div", { class: "seg", style: "margin-bottom:12px" }, periodTabs().map(([k, l]) =>
       h("button", { class: period === k ? "on" : "", onclick: () => { S.statsPeriod = k; S.stats = null; render(); loadStats(); } }, l)))];
   if (!S.stats) return h("div", {}, head, h("div", { class: "spinner", style: "margin:60px auto" }));
 
@@ -858,9 +864,11 @@ function statsTab() {
     canReport ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: () => openReport() }, "📊 Посещаемость: кто пропускает") : null,
     canReport && board === "balance" ? h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
       const r = await api("balance_pdf", { period }); if (r) openLink(r.url); } }, "📄 Итог в PDF — скинуть команде") : null,
-    h("p", { class: "muted small", style: "margin:0 4px 12px" }, BOARDS[board].hint),
+    h("p", { class: "muted small", style: "margin:0 4px 12px" }, BOARDS[board].hint
+      + (period === "month" ? ` Считается с 1 ${["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][new Date().getMonth()]} — каждый месяц заново.` : "")),
     podium || (anyValue ? null : h("div", { class: "card empty muted" }, board === "minuses" ? "Минусов ни у кого нет 👍"
-      : period === "month" ? "За последний месяц пока пусто." : "Пока пусто — сыграйте первую игру.")),
+      : period === "month" ? `${periodTabs()[0][1]} только начался — рейтинг с 1-го числа считается заново.`
+      : period === "prev" ? `За ${periodTabs()[1][1].toLowerCase()} пусто.` : "Пока пусто — сыграйте первую игру.")),
     !anyValue ? null : h("div", { class: "list" }, rows.map((p) => h("button", { class: "item" + (p.id === me ? " me-row" : ""), onclick: () => openPlayerStats(p.id) },
       h("div", { class: "rank" }, p[board] > 0 && p.rank <= 3 ? medal(p.rank) : p.rank),
       avatar(p.name, p.id),
@@ -1258,7 +1266,7 @@ function reportSheet() {
   const cls = (r) => (r.rate < 50 ? "bad" : r.rate < 75 ? "mid" : "good");
   const problem = rows.filter((r) => r.attention && r.attention.length);
   return h("div", {}, h("h3", {}, "📊 Посещаемость"),
-    h("div", { class: "seg", style: "margin-bottom:10px" }, [["month", "За месяц"], ["all", "За всё время"]].map(([k, l]) =>
+    h("div", { class: "seg", style: "margin-bottom:10px" }, periodTabs().map(([k, l]) =>
       h("button", { class: S.reportPeriod === k ? "on" : "", onclick: () => openReport(k) }, l))),
     h("p", { class: "muted small", style: "margin:0 2px 10px" }, "Сверху — кто пропускает чаще. ✅ был · ❌ не буду · 🤔 не знаю · 🔇 молчал · 🚫 сказал «Буду» и не пришёл · 🙈 нажал «Не буду», а пришёл. Последние 10 игр — слева направо."),
     rows.length ? h("button", { class: "btn secondary", style: "margin-bottom:10px", onclick: async () => {
@@ -1276,7 +1284,7 @@ function reportSheet() {
           r.unannounced ? `🙈 пришёл без «Буду» ${r.unannounced}` : null].filter(Boolean).join(" · ")),
         h("div", { class: "history" }, r.history)),
       h("div", { class: "rate " + (r.games ? cls(r) : "") }, r.games ? `${r.rate}%` : "—"))))
-      : h("div", { class: "card empty muted" }, "Прошедших игр за этот период нет."));
+      : h("div", { class: "card empty muted" }, S.reportPeriod === "month" ? "В этом месяце игр ещё не было — с 1-го числа всё заново." : "Прошедших игр за этот период нет."));
 }
 
 async function openExplain(g) {

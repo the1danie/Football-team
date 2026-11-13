@@ -20,8 +20,7 @@ log = logging.getLogger(__name__)
 
 MONTHLY_HOUR = 10
 SENT_KEY = "monthly_reports_sent"  # значение — «2026-10»: за какой месяц уже отправили
-MONTHS_NOM = ["январь", "февраль", "март", "апрель", "май", "июнь",
-              "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+from bot.periods import MONTHS_NOM  # noqa: E402
 
 
 def previous_month(now: datetime) -> tuple[datetime, datetime]:

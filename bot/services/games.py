@@ -1176,7 +1176,11 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
     if since is not None:
         from bot.deadlines import to_utc  # noqa: PLC0415
 
-        pen_q = pen_q.where(Penalty.created_at >= since - timedelta(days=1), Penalty.created_at <= to_utc(now))
+        # Минус за игру считается в месяце игры (за молчание его ставят ещё до неё), остальные — по дате.
+        pen_q = pen_q.outerjoin(Game, Game.id == Penalty.game_id).where(or_(
+            and_(Penalty.game_id.is_not(None), Game.starts_at >= since, Game.starts_at <= now),
+            and_(Penalty.game_id.is_(None), Penalty.created_at >= to_utc(since), Penalty.created_at <= to_utc(now)),
+        ))
     minuses: dict[int, int] = {}
     no_shows: dict[int, int] = {}
     for uid, reason, pts in (await session.execute(pen_q.group_by(Penalty.user_id, Penalty.reason))).all():
@@ -1327,7 +1331,7 @@ async def attendance_report(session: AsyncSession, now: datetime, since: datetim
     tq = (select(DutyTransfer.user_id, Duty.code, Duty.emoji, Duty.name)
           .join(Duty, Duty.id == DutyTransfer.duty_id, isouter=True).order_by(DutyTransfer.created_at))
     if since is not None:
-        tq = tq.where(DutyTransfer.created_at >= since - timedelta(days=1))
+        tq = tq.where(DutyTransfer.created_at >= to_utc(since), DutyTransfer.created_at <= to_utc(now))
     for uid, code, emoji, dname in (await session.execute(tq)).all():
         gave[uid] = gave.get(uid, 0) + 1
         what = f"{emoji} {DUTY_WORDS.get(code, ('', f'«{dname}»'))[1]}" if dname else "обязанность"

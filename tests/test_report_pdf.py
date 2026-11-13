@@ -130,11 +130,11 @@ async def test_inactive_players_shown_with_mark(team, monkeypatch):  # noqa: F81
         game.starts_at = config.now() - timedelta(days=1)
         game.status = GameStatus.FINISHED
         await s.commit()
-    _, rep = await api(ADMIN, "attendance_report", period="month")
+    _, rep = await api(ADMIN, "attendance_report", period="all")
     rows = rep["rows"]
     t = next(r for r in rows if r["id"] == tid)
     assert t["inactive"] is True and t["games"] == 1 and t["no"] == 1
     assert rows[-1]["id"] == tid  # внизу
-    _, link = await api(ADMIN, "attendance_pdf", period="month")
+    _, link = await api(ADMIN, "attendance_pdf", period="all")
     code, _, body = await fetch("report=" + link["url"].split("report=")[1])
     assert code == 200 and body.startswith(b"%PDF")

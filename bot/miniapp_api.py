@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, audit, discipline, operations, photos, texts, whatsapp
+from bot import actions, audit, discipline, periods, operations, photos, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
@@ -265,10 +265,10 @@ def _tg_ns(tg: dict) -> SimpleNamespace:
 async def stats_view(session: AsyncSession, period: str = "all") -> dict:
     minuses = await svc.open_penalty_points(session)
     now = config.now()
-    since = now - timedelta(days=30) if period == "month" else None
+    end, since = periods.bounds(period, now)
     return {
-        "period": "month" if since else "all",
-        "board": await svc.leaderboard(session, now, since),
+        "period": periods.normalize(period), "labels": periods.labels(now),
+        "board": await svc.leaderboard(session, end, since),
         "team": [
             {"id": u.id, "name": u.name, "total": n, "minuses": minuses.get(u.id, 0), "car": u.has_car}
             for u, n in await svc.team_stats(session)
@@ -550,9 +550,9 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         elif action == "attendance_report":
             if not (is_admin or staff_view):
                 raise ApiError("Только для админа и тренера.", 403)
-            since = config.now() - timedelta(days=30) if body.get("period") == "month" else None
-            return {"rows": await svc.attendance_report(session, config.now(), since),
-                    "period": "month" if since else "all"}
+            end, since = periods.bounds(body.get("period"), config.now())
+            return {"rows": await svc.attendance_report(session, end, since),
+                    "period": periods.normalize(body.get("period")), "labels": periods.labels(config.now())}
         elif action == "explain":  # «Почему так распределилось» — видят все в команде
             from bot import explain
 
@@ -567,14 +567,14 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                 raise ApiError("PDF доступен, когда бот работает на Vercel.")
             from bot import report_pdf
 
-            period = "month" if body.get("period") == "month" else "all"
+            period = periods.normalize(body.get("period"))
             return {"url": f"{config.public_url}/api/app?report={report_pdf.make_token(tg_id, period)}"}
         elif action == "balance_pdf":
             if not config.public_url:
                 raise ApiError("PDF доступен, когда бот работает на Vercel.")
             from bot import report_pdf
 
-            period = "month" if body.get("period") == "month" else "all"
+            period = periods.normalize(body.get("period"))
             return {"url": f"{config.public_url}/api/app?report={report_pdf.make_token(tg_id, period, kind='bal')}"}
         elif action == "stats":
             return await stats_view(session, body.get("period", "all"))

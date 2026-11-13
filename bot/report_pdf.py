@@ -46,7 +46,7 @@ def parse_token(token: str, now: float | None = None) -> tuple[int, str, str] | 
     payload = f"{kind}.{raw_id}.{period}.{exp}"
     if not config.bot_token or not hmac.compare_digest(_sig(payload), sig):
         return None
-    if expires < (now or time.time()) or period not in ("month", "all") or kind not in KINDS:
+    if expires < (now or time.time()) or period not in ("month", "prev", "all") or kind not in KINDS:
         return None
     return telegram_id, period, kind
 
@@ -63,12 +63,14 @@ async def from_token(session: AsyncSession, token: str, team: str) -> tuple[byte
         allowed = allowed or (user is not None and user.is_approved)
     if not allowed:
         return None
+    from bot import periods  # noqa: PLC0415
+
     now = config.now()
-    since = now - timedelta(days=30) if period == "month" else None
-    title = "за последний месяц" if since else "за всё время"
+    end, since = periods.bounds(period, now)
+    title = periods.title(period, now)
     if kind == "bal":
-        return await balance_pdf(session, team, now, since, title)
-    return await attendance_pdf(session, team, now, since, title)
+        return await balance_pdf(session, team, end, since, title)
+    return await attendance_pdf(session, team, end, since, title)
 
 
 async def attendance_pdf(session: AsyncSession, team: str, now, since, title: str) -> tuple[bytes, str]:

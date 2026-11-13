@@ -194,3 +194,45 @@ async def test_leaderboard_api(team):  # noqa: F811
     _, res = await api(ADMIN, "stats", period="month")
     assert res["period"] == "month" and res["board"][0]["name"] == "Даниял"
     assert {"duties", "games", "minuses", "no_shows"} <= set(res["board"][0])
+
+
+def test_calendar_month_periods():
+    from datetime import datetime
+
+    from bot import periods
+
+    now = datetime(2026, 11, 13, 15, 0)
+    assert periods.bounds("month", now) == (now, datetime(2026, 11, 1))
+    end, start = periods.bounds("prev", now)
+    assert start == datetime(2026, 10, 1) and end < datetime(2026, 11, 1) and end > datetime(2026, 10, 31, 23, 59)
+    assert periods.bounds("all", now) == (now, None) and periods.bounds("что-то", now) == (now, None)
+    assert periods.labels(now) == {"month": "Ноябрь", "prev": "Октябрь", "all": "Всё время"}
+    jan = datetime(2027, 1, 2)
+    assert periods.bounds("prev", jan)[1] == datetime(2026, 12, 1) and periods.label("prev", jan) == "Декабрь"
+    assert periods.title("prev", now) == "за октябрь 2026"
+
+
+async def test_month_resets_on_first_and_minus_counts_in_game_month(session):
+    """С 1-го числа рейтинг заново; минус за молчание (поставлен до игры) — в месяце игры."""
+    from bot import periods
+    from bot.models import Penalty
+
+    now = config.now()
+    a = await make_user(session, "А", has_car=True)
+    start = periods.month_start(now)
+    last_month = await svc.create_game(session, "training", start - timedelta(days=2), None, None)
+    this_month = await svc.create_game(session, "training", start + timedelta(hours=20), None, None)
+    for g in (last_month, this_month):
+        await svc.set_rsvp(session, g, a, "yes")
+        g.status = "finished"
+    # минус за игру 1-го числа, а поставлен накануне (в прошлом месяце) — считается в этом
+    session.add(Penalty(user_id=a.id, game_id=this_month.id, points=1, created_at=start - timedelta(hours=6)))
+    await session.flush()
+    if this_month.starts_at > now:  # 1-е число, игра ещё впереди — проверять «этот месяц» рано
+        return
+    end, since = periods.bounds("month", now)
+    month = {r["name"]: r for r in await svc.leaderboard(session, end, since)}
+    assert month["А"]["games"] == 1 and month["А"]["minuses"] == 1
+    end, since = periods.bounds("prev", now)
+    prev = {r["name"]: r for r in await svc.leaderboard(session, end, since)}
+    assert prev["А"]["games"] == 1 and prev["А"]["minuses"] == 0

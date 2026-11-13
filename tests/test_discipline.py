@@ -284,7 +284,7 @@ async def test_came_without_yes(team):  # noqa: F811
         assert cands[aid].penalty_bonus == config.penalty_priority  # первым на «после»
     assert await _open_points(aid) == 0
     assert any("Здорово, что пришёл" in m.text and "без минуса" in m.text for m in fake.sent(5))
-    _, rep = await api(ADMIN, "attendance_report", period="month")
+    _, rep = await api(ADMIN, "attendance_report", period="all")
     assert next(r for r in rep["rows"] if r["id"] == aid)["unannounced"] == 1
 
     gid2 = await game_with_no(0)
