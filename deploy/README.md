@@ -83,6 +83,10 @@ bash /opt/football/deploy/migrate_from_neon.sh 'postgresql://…neon.tech/neondb
 заходит на сервер и запускает `update.sh` (`.github/workflows/deploy.yml`). Тесты упали — на сервер
 ничего не уходит. Бот после обновления не запустился — выкладка в GitHub помечается красной.
 
+Claude (в GitHub или на claude.ai) пушит в свою ветку вида `claude/…` — её workflow сам вливает в
+`claude/telegram-duty-bot` (после тестов; если был merge — тесты ещё раз) и выкладывает. Руками
+ничего переносить не нужно. Если ветки конфликтуют — шаг «promote» красный, решить конфликт вручную.
+
 Настройка один раз (≈ 3 минуты):
 
 1. На сервере:
