@@ -850,7 +850,7 @@ function statsTab() {
   const me = S.data.user && S.data.user.id;
   const rows = [...S.stats].sort((x, y) => y[board] - x[board] || x.name.localeCompare(y.name, "ru"));
   let rank = 0, prev = null;
-  rows.forEach((p, i) => { if (p[board] !== prev) { rank = i + 1; prev = p[board]; } p.rank = rank; });
+  rows.forEach((p) => { if (p[board] !== prev) { rank += 1; prev = p[board]; } p.rank = rank; });  // одинаковые очки — одно место, следующее — по порядку (8, 8, 9)
   const max = Math.max(1, ...rows.map((p) => p[board]));
   const top = rows.filter((p) => p[board] > 0).slice(0, 3);
   const anyValue = rows.some((p) => p[board] !== 0);

@@ -126,7 +126,7 @@ def build_balance(rows: list[dict], team: str, period_title: str, date_label: st
     medals = {1: (212, 175, 55), 2: (170, 170, 170), 3: (176, 112, 60)}
     for i, r in enumerate(rows):
         if r["balance"] != prev:  # одинаковый итог — одно место, как в приложении
-            rank, prev = i + 1, r["balance"]
+            rank, prev = rank + 1, r["balance"]  # следующее место — по порядку (8, 8, 9)
         if pdf.get_y() > 280:
             pdf.add_page()
             header()
