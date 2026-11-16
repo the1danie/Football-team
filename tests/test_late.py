@@ -150,3 +150,6 @@ def test_late_notice_window_is_whole_game_day():
     assert discipline.late_notice_open(g, datetime(2026, 11, 16, 22, 30))  # до часа после начала
     assert not discipline.late_notice_open(g, datetime(2026, 11, 15, 23, 59))  # накануне — рано
     assert not discipline.late_notice_open(g, datetime(2026, 11, 16, 22, 31))
+    night = SimpleNamespace(starts_at=datetime(2026, 11, 17, 0, 30))  # игра в 00:30 — вечером накануне уже можно
+    assert discipline.late_notice_open(night, datetime(2026, 11, 16, 23, 0))
+    assert not discipline.late_notice_open(night, datetime(2026, 11, 16, 18, 0))

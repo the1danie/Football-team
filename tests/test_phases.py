@@ -268,3 +268,44 @@ def test_recalc_keeps_minus_holder_first():
     assert mapping == {1: 1}
     mapping, _ = distribute([balls], [Candidate(user_id=1, has_car=True), rus], random.Random(1), avoid={1: 1})
     assert mapping == {1: 2}  # без минусов — пересчёт отдаёт другому
+
+
+async def test_recalc_goes_down_the_list_not_back(session):  # noqa: F811
+    """🔁 одной обязанности и «Пересчитать»: не возвращать к тому, у кого уже была, пока есть кому ещё."""
+    import random as _r
+
+    from bot.models import Duty
+    from tests.conftest import make_user
+
+    users = [await make_user(session, n, has_car=True) for n in ("А", "Б", "В", "Г")]
+    game = await svc.create_game(session, "training", config.now() + timedelta(days=1), None, None)
+    for u in users:
+        await svc.set_rsvp(session, game, u, "yes")
+    await svc.distribute_game(session, game, rng=_r.Random(1))
+    water = (await session.scalars(select(Duty).where(Duty.code == "water"))).one()
+
+    def holder():
+        return next(a.user_id for a in assignments if a.duty_id == water.id)
+
+    assignments = await svc.active_assignments(session, game.id)
+    seen = [holder()]
+    for i in range(3):  # 🔁 вода три раза — каждый раз новый человек
+        _, new = await svc.redo_duty(session, game, water, rng=_r.Random(i))
+        seen.append(new.id)
+    assert len(set(seen)) == 4, seen
+    _, new = await svc.redo_duty(session, game, water, rng=_r.Random(9))  # все были — по кругу, но не тот же
+    assert new.id != seen[-1]
+
+    # «Пересчитать» всё: вода уходит тому, у кого её ещё не было (если есть кому)
+    game2 = await svc.create_game(session, "training", config.now() + timedelta(days=2), None, None)
+    for u in users:
+        await svc.set_rsvp(session, game2, u, "yes")
+    await svc.distribute_game(session, game2, rng=_r.Random(2))
+    got = []
+    for i in range(2):
+        assignments = await svc.active_assignments(session, game2.id)
+        got.append(holder())
+        await svc.distribute_game(session, game2, rng=_r.Random(10 + i), reshuffle=True)
+    assignments = await svc.active_assignments(session, game2.id)
+    got.append(holder())
+    assert len(set(got)) == 3, got  # А → Б → В, а не А → Б → А

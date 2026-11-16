@@ -82,16 +82,18 @@ def distribute(
     candidates: list[Candidate],
     rng: random.Random | None = None,
     base_load: dict[int, int] | None = None,
-    avoid: dict[int, int] | None = None,
+    avoid: dict[int, int | set[int]] | None = None,
 ) -> tuple[dict[int, int], list[int]]:
     """Распределить обязанности.
 
     base_load — сколько обязанностей у игрока уже есть на этой игре (например, вода «до»).
-    avoid — {duty_id: user_id} прежние исполнители: при пересчёте обязанность уходит другому, если есть кому.
+    avoid — {duty_id: user_id или {user_id, …}} у кого обязанность уже была на этой игре: при пересчёте
+    она уходит тому, у кого её ещё не было (если есть кому), а не возвращается к прежним.
 
     Возвращает ({duty_id: user_id}, [duty_id без исполнителя]).
     """
     rng = rng or random.Random()
+    avoid = {k: (v if isinstance(v, set) else {v}) for k, v in (avoid or {}).items()}
     ordered = sorted(duties, key=lambda d: (d.sort_order, d.id))
     fillable = [d for d in ordered if eligible(d, candidates)]
     unassigned = [d.id for d in ordered if d not in fillable]
@@ -109,7 +111,7 @@ def distribute(
             if d.requires_car and not c.has_car
             else (k + (base_load or {}).get(c.user_id, 0)) * EXTRA_DUTY_COST + score(c, d.id) + noise[c.user_id]
             # у кого минусы — остаётся первым и при пересчёте (обязанность отрабатывает минус)
-            + (REPEAT_COST if (avoid or {}).get(d.id) == c.user_id and c.penalty_bonus <= 0 else 0)
+            + (REPEAT_COST if c.user_id in avoid.get(d.id, ()) and c.penalty_bonus <= 0 else 0)
             for c, k in slots
         ]
         for d in fillable

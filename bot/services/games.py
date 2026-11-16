@@ -464,6 +464,16 @@ class DistributionResult:
     unassigned: list[Duty] = field(default_factory=list)
 
 
+async def duty_history(session: AsyncSession, game_id: int) -> dict[int, set[int]]:
+    """У кого какая обязанность уже была на этой игре (сейчас, до пересчёта, отдал, не выполнил)."""
+    out: dict[int, set[int]] = {}
+    for duty_id, user_id in (await session.execute(
+        select(Assignment.duty_id, Assignment.user_id).where(Assignment.game_id == game_id)
+    )).all():
+        out.setdefault(duty_id, set()).add(user_id)
+    return out
+
+
 async def distribute_game(
     session: AsyncSession, game: Game, rng: random.Random | None = None, phase: str = DutyPhase.BEFORE,
     reshuffle: bool = False,
@@ -474,10 +484,10 @@ async def distribute_game(
     """
     duties = await active_duties(session, phase)
     duty_ids = {d.id for d in duties}
-    previous: dict[int, int] = {}
+    # При пересчёте — не возвращать обязанность тем, у кого она уже была (пока есть кому ещё).
+    previous = await duty_history(session, game.id) if reshuffle else {}
     for a in await active_assignments(session, game.id):
         if a.duty_id in duty_ids:
-            previous[a.duty_id] = a.user_id
             a.status = AssignmentStatus.CANCELLED
     await _expire_swaps(session, game.id)
     await session.flush()
@@ -646,7 +656,8 @@ async def set_assignment(
 async def redo_duty(
     session: AsyncSession, game: Game, duty: Duty, rng: random.Random | None = None
 ) -> tuple[User | None, User | None]:
-    """«Пересчитать» одну обязанность: отдать её другому по очереди (тому же — только если больше некому).
+    """«Пересчитать» одну обязанность: отдать следующему по очереди — тому, у кого её на этой игре ещё не было.
+    Все, кто может, уже были — снова по кругу (но не тому, у кого сейчас; тому же — только если больше некому).
 
     Возвращает (прежний исполнитель, новый)."""
     old_user = None
@@ -657,8 +668,9 @@ async def redo_duty(
             await _expire_swaps(session, game.id, assignment_id=a.id)
     await session.flush()
     load = await _current_load(session, game.id)
-    chosen = None
-    if old_user is not None:
+    tried = (await duty_history(session, game.id)).get(duty.id, set())
+    chosen = pick(_spec(duty), await build_candidates(session, game, exclude_user_ids=tried), load, rng)
+    if chosen is None and old_user is not None:
         chosen = pick(_spec(duty), await build_candidates(session, game, exclude_user_ids={old_user.id}), load, rng)
     if chosen is None:
         chosen = pick(_spec(duty), await build_candidates(session, game), load, rng)

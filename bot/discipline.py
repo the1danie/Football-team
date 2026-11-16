@@ -32,7 +32,8 @@ BURPEES_WINDOW = timedelta(days=90)
 LATE_FROM = 10  # с какого опоздания (минут) — минус
 LATE_POINTS = 1
 LATE_MAX = 180
-# «Опаздываю» можно нажать весь день игры (с 00:00) и до часа после начала.
+# «Опаздываю» можно нажать весь день игры (с 00:00, а для ночной игры — минимум за 6 часов) и до часа после начала.
+LATE_NOTICE_BEFORE_MIN = timedelta(hours=6)
 LATE_NOTICE_AFTER = timedelta(hours=1)
 
 
@@ -225,8 +226,9 @@ async def burpees_done(session: AsyncSession, user: User, game: Game | None) -> 
 
 def late_notice_open(game: Game, now: datetime | None = None) -> bool:
     now = now or config.now()
-    day_start = game.starts_at.replace(hour=0, minute=0, second=0, microsecond=0)
-    return day_start <= now <= game.starts_at + LATE_NOTICE_AFTER
+    opens = min(game.starts_at.replace(hour=0, minute=0, second=0, microsecond=0),
+                game.starts_at - LATE_NOTICE_BEFORE_MIN)
+    return opens <= now <= game.starts_at + LATE_NOTICE_AFTER
 
 
 async def late_notice(bot: Bot, session: AsyncSession, game: Game, user: User, minutes: int, reason: str | None) -> str:
