@@ -16,7 +16,7 @@ router.message.filter(F.chat.type == "private")
 MENU_BUTTONS = {
     texts.BTN_CREATE, texts.BTN_CURRENT, texts.BTN_PARTICIPANTS, texts.BTN_DISTRIBUTE,
     texts.BTN_EDIT, texts.BTN_CANCEL, texts.BTN_STATS, texts.BTN_PROFILE, texts.BTN_SWAP, texts.BTN_PLAYERS,
-    texts.BTN_WEB,
+    texts.BTN_WEB, texts.BTN_LATE,
 }
 
 HELP = (

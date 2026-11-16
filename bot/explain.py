@@ -151,3 +151,54 @@ async def explain(session: AsyncSession, game: Game) -> dict | None:
                        "others": others if moment != at else []})
     return {"at": _local(at), "duties": result, "others": first_others or [], "candidates": first_count,
             "weight": weight, "game": texts.game_header(game)}
+
+
+def _pts(n) -> str:
+    n = round(n, 1)
+    a = abs(n)
+    word = "очко" if a % 10 == 1 and a % 100 != 11 else "очка" if 2 <= a % 10 <= 4 and not 12 <= a % 100 <= 14 else "очков"
+    return f"{n:g} {word}"
+
+
+def personal_text(data: dict, user_id: int) -> str:
+    """«Почему так» для бота: почему тебе / почему не тебе — коротко, как в приложении."""
+    lines = [f"🧮 <b>Почему так распределилось</b>", texts.h(data["game"]), ""]
+    got = next((d for d in data["duties"] if any(x["active"] and x["user_id"] == user_id for x in d["history"])), None)
+    mine = []
+    for d in data["duties"]:
+        pos = next((i for i, r in enumerate(d["ranking"]) if r["user_id"] == user_id), None)
+        if pos is None:
+            continue
+        r = d["ranking"][pos]
+        if d is got:
+            tie = next((x for x in d["ranking"] if x["user_id"] != user_id and not x["no_car"] and not x["busy"]
+                        and x["score"] == r["score"]), None)
+            mine.append(f"{d['emoji']} {d['name']} — тебе: ты был {pos + 1}-м из {len(d['ranking'])}, "
+                        f"у тебя {_pts(r['score'])} ({texts.h(r['breakdown'])})."
+                        + (f" Поровну с {texts.h(tie['name'])} — выпал жребий." if tie else ""))
+        elif r["no_car"]:
+            mine.append(f"{d['emoji']} {d['name']} — не тебе: нужна машина.")
+        elif got is None:
+            w = next((x for x in d["ranking"] if any(y["active"] and y["user_id"] == x["user_id"] for y in d["history"])), None)
+            why = ("её ещё никому не назначили" if w is None
+                   else f"у вас с {texts.h(w['name'])} поровну ({_pts(r['score'])}) — решил жребий" if w["score"] == r["score"]
+                   else f"у {texts.h(w['name'])} меньше очков: {w['score']:g} против твоих {r['score']:g}" if w["score"] < r["score"]
+                   else f"{texts.h(w['name'])} назначили вручную или вы поменялись")
+            mine.append(f"{d['emoji']} {d['name']} — не тебе: {why}.")
+    out = next((o for o in data["others"] if o["user_id"] == user_id), None)
+    if out:
+        lines.append(f"🙋 Ты не участвовал: {texts.h(out['reason'])}.")
+    elif mine:
+        lines += ["🙋 " + ("Почему тебе" if got else "А ты?")] + mine
+    else:
+        lines.append("🙋 Тебя не было среди «Буду» на момент распределения.")
+    lines += ["", "<b>Как бот выбирает</b> — у кого меньше очков, тот получает раньше:",
+              "➕3 за каждый раз, когда уже делал эту обязанность", "➕1 за каждую обязанность вообще",
+              "➕2 если был занят на прошлой игре", f"➖{data['weight']:g} за каждый минус в долге",
+              "Поровну — жребий. Мячи — только с машиной. Одному — одна обязанность."]
+    for d in data["duties"]:
+        queue = ", ".join(("<b>ты</b>" if r["user_id"] == user_id else texts.h(r["name"])) + f" {r['score']:g}"
+                          for r in d["ranking"] if not r["no_car"])
+        if queue:
+            lines.append(f"\n{d['emoji']} {d['name']}: {queue}")
+    return "\n".join(lines)

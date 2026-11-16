@@ -28,6 +28,8 @@ BTN_PROFILE = "👤 Мой профиль"
 BTN_PLAYERS = "🗂 Игроки"
 BTN_WEB = "🌐 Сайт"
 BTN_SWAP = "🔄 Поменяться"
+BTN_LATE = "⏰ Опаздываю"
+BTN_WHY = "🧮 Почему так"
 
 CAR_YES = "🚗 Есть машина"
 CAR_NO = "🚶 Нет машины"

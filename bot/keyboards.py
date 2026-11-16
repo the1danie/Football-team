@@ -14,10 +14,11 @@ def main_menu(is_admin: bool) -> ReplyKeyboardMarkup:
             [texts.BTN_PARTICIPANTS, texts.BTN_DISTRIBUTE],
             [texts.BTN_EDIT, texts.BTN_CANCEL],
             [texts.BTN_PLAYERS, texts.BTN_STATS],
-            [texts.BTN_PROFILE, texts.BTN_WEB],
+            [texts.BTN_PROFILE, texts.BTN_LATE],
+            [texts.BTN_WEB],
         ]
     else:
-        rows = [[texts.BTN_CURRENT, texts.BTN_SWAP], [texts.BTN_STATS, texts.BTN_PROFILE], [texts.BTN_WEB]]
+        rows = [[texts.BTN_CURRENT, texts.BTN_LATE], [texts.BTN_SWAP, texts.BTN_STATS], [texts.BTN_PROFILE, texts.BTN_WEB]]
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=t) for t in row] for row in rows], resize_keyboard=True
     )
@@ -103,6 +104,47 @@ def game_admin(game: Game) -> InlineKeyboardMarkup:
     b.button(text=texts.BTN_EDIT, callback_data=f"adm:edit:{game.id}")
     b.button(text=texts.BTN_CANCEL, callback_data=f"adm:cancel:{game.id}")
     b.adjust(2)
+    return b.as_markup()
+
+
+LATE_MINUTES = (5, 10, 15, 20, 30, 45, 60)
+
+
+def late_notice_choice(game_id: int, has_notice: bool) -> InlineKeyboardMarkup:
+    """Игрок: «Опаздываю» — примерно на сколько."""
+    b = InlineKeyboardBuilder()
+    for m in LATE_MINUTES:
+        b.button(text=f"{m} мин", callback_data=f"lt:{game_id}:{m}")
+    b.adjust(4)
+    if has_notice:
+        b.row(InlineKeyboardButton(text="✅ Успеваю — отменить", callback_data=f"lt:{game_id}:0"))
+    return b.as_markup()
+
+
+def late_reason_skip(game_id: int, minutes: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Без причины", callback_data=f"ltr:{game_id}:{minutes}")]])
+
+
+def late_admin_players(game_id: int, players: list[tuple]) -> InlineKeyboardMarkup:
+    """Админ: кто опоздал — (id, имя, метка)."""
+    b = InlineKeyboardBuilder()
+    for uid, name, tag in players:
+        b.button(text=f"{name}{tag}", callback_data=f"lta:{game_id}:{uid}")
+    b.adjust(2)
+    return b.as_markup()
+
+
+def late_admin_minutes(game_id: int, user_id: int, has_late: bool, notice: int | None) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    for m in LATE_MINUTES:
+        b.button(text=f"{m} мин" + (" −1" if m >= 10 else ""), callback_data=f"lta:{game_id}:{user_id}:{m}:0")
+    b.adjust(4)
+    b.row(InlineKeyboardButton(text="🙏 Форс-мажор — без минуса",
+                               callback_data=f"lta:{game_id}:{user_id}:{notice or 10}:1"))
+    if has_late:
+        b.row(InlineKeyboardButton(text="↩️ Не опоздал — снять", callback_data=f"lta:{game_id}:{user_id}:0:0"))
+    b.row(InlineKeyboardButton(text="‹ К списку", callback_data=f"lta:{game_id}"))
     return b.as_markup()
 
 

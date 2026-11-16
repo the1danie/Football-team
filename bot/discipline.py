@@ -254,6 +254,21 @@ async def late_notice(bot: Bot, session: AsyncSession, game: Game, user: User, m
     return f"⏰ Админы знают: опоздаешь примерно на {minutes} мин. Минус за опоздание решает админ."
 
 
+SELF_MINUS = "Свои минусы админ не снимает — попросите другого админа."
+
+
+async def check_self_late(session: AsyncSession, actor: User | None, target: User, game: Game, minutes, excused) -> None:
+    """Себе админ опоздание ставит, но уменьшить/снять/форс-мажор — только другой админ."""
+    if actor is None or actor.id != target.id:
+        return
+    old = await session.scalar(select(Penalty).where(
+        Penalty.user_id == target.id, Penalty.game_id == game.id,
+        Penalty.reason == PenaltyReason.LATE, Penalty.status == PenaltyStatus.OPEN))
+    new = 0 if excused else late_points(minutes)
+    if excused or new < (old.points if old else 0):
+        raise ValueError(SELF_MINUS)
+
+
 async def set_late(bot: Bot, session: AsyncSession, game: Game, user: User, minutes: int, excused: bool) -> str:
     """Админ отметил опоздание (minutes=0 — снять отметку). Опоздал на 10+ мин — −1, форс-мажор — без минуса."""
     from bot.models import GameParticipant, Rsvp  # noqa: PLC0415

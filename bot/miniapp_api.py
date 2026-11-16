@@ -691,15 +691,12 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             game = await _game(session, body)
             try:
                 if action == "late":  # админ: опоздал на N минут, форс-мажор — без минуса
-                    if int(body.get("user_id") or 0) == user.id:  # себе — только добавить, не уменьшить
-                        from bot.models import Penalty, PenaltyReason  # noqa: PLC0415
-
-                        old = await session.scalar(select(Penalty).where(
-                            Penalty.user_id == user.id, Penalty.game_id == game.id,
-                            Penalty.reason == PenaltyReason.LATE, Penalty.status == PenaltyStatus.OPEN))
-                        new = 0 if body.get("excused") else discipline.late_points(body.get("minutes") or 0)
-                        if body.get("excused") or new < (old.points if old else 0):
-                            raise ApiError(SELF_MINUS, 403)
+                    target = await _user(session, body.get("user_id"))
+                    try:  # себе — только добавить, не уменьшить
+                        await discipline.check_self_late(session, user, target, game, body.get("minutes") or 0,
+                                                         bool(body.get("excused")))
+                    except ValueError as e:
+                        raise ApiError(str(e), 403) from e
                     if config.now() < game.starts_at - timedelta(hours=1):
                         raise ValueError("Опоздание можно отметить, когда игра началась.")
                     note = await discipline.set_late(bot, session, game, await _user(session, body.get("user_id")),

@@ -1,5 +1,7 @@
 """Сценарии, общие для хендлеров и планировщика."""
 
+from datetime import timedelta
+
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -265,11 +267,22 @@ async def game_card(
     rsvp = keyboards.rsvp(game)
     if rsvp:
         b.row(*rsvp.inline_keyboard[0])
+    extra = []
     if my_duties:
-        b.button(text=texts.BTN_SWAP, callback_data=f"swap:{game.id}")
-        b.adjust(3, 1)
+        extra.append(InlineKeyboardButton(text=texts.BTN_SWAP, callback_data=f"swap:{game.id}"))
+    if user is not None and status == Rsvp.YES and game.status in GameStatus.ACTIVE:
+        from bot import discipline  # noqa: PLC0415
+
+        if discipline.late_notice_open(game):
+            extra.append(InlineKeyboardButton(text=texts.BTN_LATE, callback_data=f"lt:{game.id}"))
+    if game.status in (GameStatus.DISTRIBUTED, GameStatus.FINISHED):
+        extra.append(InlineKeyboardButton(text=texts.BTN_WHY, callback_data=f"why:{game.id}"))
+    if extra:
+        b.row(*extra)
     if is_admin:
         b.attach(InlineKeyboardBuilder.from_markup(keyboards.game_admin(game)))
+        if game.status != GameStatus.CANCELLED and config.now() >= game.starts_at - timedelta(hours=1):
+            b.row(InlineKeyboardButton(text="⏰ Отметить опоздание", callback_data=f"lta:{game.id}"))
         b.row(InlineKeyboardButton(text="📤 Текст для WhatsApp", callback_data=f"wa:{game.id}"))
     app = keyboards.app_button(game.id)
     if app is not None:
