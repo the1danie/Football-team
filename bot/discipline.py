@@ -32,8 +32,8 @@ BURPEES_WINDOW = timedelta(days=90)
 LATE_FROM = 10  # с какого опоздания (минут) — минус
 LATE_POINTS = 1
 LATE_MAX = 180
-LATE_NOTICE_BEFORE = timedelta(hours=3)  # «Опаздываю» можно нажать за 3 часа до начала…
-LATE_NOTICE_AFTER = timedelta(hours=1)  # …и до часа после
+# «Опаздываю» можно нажать весь день игры (с 00:00) и до часа после начала.
+LATE_NOTICE_AFTER = timedelta(hours=1)
 
 
 def late_points(minutes: int | None) -> int:
@@ -225,7 +225,8 @@ async def burpees_done(session: AsyncSession, user: User, game: Game | None) -> 
 
 def late_notice_open(game: Game, now: datetime | None = None) -> bool:
     now = now or config.now()
-    return game.starts_at - LATE_NOTICE_BEFORE <= now <= game.starts_at + LATE_NOTICE_AFTER
+    day_start = game.starts_at.replace(hour=0, minute=0, second=0, microsecond=0)
+    return day_start <= now <= game.starts_at + LATE_NOTICE_AFTER
 
 
 async def late_notice(bot: Bot, session: AsyncSession, game: Game, user: User, minutes: int, reason: str | None) -> str:
@@ -236,7 +237,7 @@ async def late_notice(bot: Bot, session: AsyncSession, game: Game, user: User, m
     if p is None or p.status != Rsvp.YES:
         raise ValueError("Сначала нажми «Буду».")
     if not late_notice_open(game):
-        raise ValueError("Предупредить об опоздании можно за 3 часа до начала и до часа после.")
+        raise ValueError("Предупредить об опоздании можно в день игры и до часа после начала.")
     minutes = max(0, min(LATE_MAX, int(minutes or 0)))
     reason = " ".join(str(reason or "").split())[:120] or None
     if not minutes:

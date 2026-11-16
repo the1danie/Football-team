@@ -134,3 +134,15 @@ async def test_admin_cannot_remove_own_minuses(team):  # noqa: F811
     assert await _open_points(me) >= 1
     assert (await api(ADMIN, "attendance", game_id=gid, user_id=me, present=True))[0] == 403
     assert (await api(marat, "attendance", game_id=gid, user_id=me, present=True))[0] == 200
+
+
+def test_late_notice_window_is_whole_game_day():
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    g = SimpleNamespace(starts_at=datetime(2026, 11, 16, 21, 30))
+    assert discipline.late_notice_open(g, datetime(2026, 11, 16, 13, 39))  # утром в день игры — уже можно
+    assert discipline.late_notice_open(g, datetime(2026, 11, 16, 0, 0))
+    assert discipline.late_notice_open(g, datetime(2026, 11, 16, 22, 30))  # до часа после начала
+    assert not discipline.late_notice_open(g, datetime(2026, 11, 15, 23, 59))  # накануне — рано
+    assert not discipline.late_notice_open(g, datetime(2026, 11, 16, 22, 31))
