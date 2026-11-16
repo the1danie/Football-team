@@ -60,7 +60,9 @@ async def test_close_converts_maybe_and_silent(team):  # noqa: F811
         assert (await svc.open_penalty_points(s, [ids["Руслан"]]))[ids["Руслан"]] == 1  # минус за молчание
         assert not (await svc.open_penalty_points(s, [ids["Тимур"]])).get(ids["Тимур"])  # «Не знаю» — без минуса
     assert any("не определился — записан «Не буду»" in m.text for m in fake.sent(3))
-    assert any("не ответил — записан «Не буду»" in m.text for m in fake.sent(4))
+    # молчавшему — одно сообщение: минус и «записан «Не буду»» (а не два отдельных)
+    silent_dms = [m.text for m in fake.sent(4) if "записан «Не буду»" in m.text]
+    assert len(silent_dms) == 1 and "Ты не ответил на опрос" in silent_dms[0] and "−1" in silent_dms[0]
     _, st = await api(ruslan, "state")
     g = st["state"]["games"][0]
     assert g["my_rsvp"] == "no" and g["auto_declined"] is True

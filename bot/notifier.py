@@ -160,7 +160,7 @@ async def duties_changed(bot: Bot, session: AsyncSession, game: Game, changes, d
 
     text = whatsapp.duty_change(game, changes, assignments, unassigned)
     if draft_to_admins:
-        await whatsapp.send_draft(bot, text, note="🔁 Замена в обязанностях — отправьте в группу WhatsApp, чтобы не путались 👇")
+        await whatsapp.send_draft(bot, text)
     return text
 
 

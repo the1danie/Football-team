@@ -81,18 +81,26 @@ async def _process_game(bot: Bot, session: AsyncSession, game: Game, now) -> Non
         await notifier.refresh_game(bot, session, game)
         return
 
+    # Закрытие сбора: минусы, «Не буду», распределение — админам одной сводкой и одним текстом для WhatsApp.
+    digest = {"admin": [], "wa_duties": None, "wa_penalties": None, "penalized": False}
+    await _close_and_distribute(bot, session, game, now, digest)
+    await send_digest(bot, game, digest)  # при сбое тик откатится — и сводка не уйдёт
+
+
+async def _close_and_distribute(bot: Bot, session: AsyncSession, game: Game, now, digest: dict) -> None:
     # Сбор закрыт: минусы тем, кто так и не ответил (до распределения в том же тике).
     if not game.penalties_applied and now >= rsvp_deadline(game):
-        report = await actions.apply_penalties_and_announce(bot, session, game)
+        report = await actions.apply_penalties_and_announce(bot, session, game, digest)
         if report:
-            await notifier.notify_admins(bot, report)
+            digest["admin"].append(report)
+            digest["penalized"] = True
     # Сразу после минусов: «Не знаю» и молчащие → «Не буду», чтобы вода распределилась только среди «Буду».
     # Пока решается недобор (админ может «подождать час» и позвать сомневающихся) — не трогаем.
     if not game.auto_declined and now >= rsvp_deadline(game) and not (
         game.status == GameStatus.OPEN and game.min_players and game.min_decision != "keep"
         and await svc.yes_count(session, game.id) < game.min_players
     ):
-        await actions.auto_decline_and_notify(bot, session, game)
+        await actions.auto_decline_and_notify(bot, session, game, digest)
     if now >= game.starts_at:
         return
 
@@ -105,7 +113,7 @@ async def _process_game(bot: Bot, session: AsyncSession, game: Game, now) -> Non
     if game.status == GameStatus.OPEN and now >= rsvp_deadline(game):
         verdict = await operations.check_min_players(bot, session, game)
         if verdict == "cancelled":
-            await notifier.notify_admins(bot, f"❌ {texts.game_header(game)} отменена: {texts.h(game.cancel_reason)}.")
+            digest["admin"].append(f"❌ Отменена: {texts.h(game.cancel_reason)}.")
             return
         if verdict == "waiting":
             await session.flush()
@@ -113,8 +121,8 @@ async def _process_game(bot: Bot, session: AsyncSession, game: Game, now) -> Non
 
     auto_at = distribute_at(game)
     if game.status == GameStatus.OPEN and auto_at is not None and now >= auto_at:
-        report = await actions.distribute_and_announce(bot, session, game)
-        await notifier.notify_admins(bot, "🤖 Автоматическое распределение\n\n" + report)
+        report = await actions.distribute_and_announce(bot, session, game, digest=digest)
+        digest["admin"].append("🎯 " + report)
 
     if game.status != GameStatus.DISTRIBUTED:
         return
@@ -132,13 +140,23 @@ async def _process_game(bot: Bot, session: AsyncSession, game: Game, now) -> Non
         if game.chat_id and assignments:
             await bot.send_message(game.chat_id, texts.group_reminder(game, now, assignments))
         elif assignments:
-            await whatsapp.send_draft(
-                bot, whatsapp.reminder(game, now, assignments),
-                note="⚽ Напоминание перед игрой — для группы WhatsApp 👇",
-            )
+            await whatsapp.send_draft(bot, whatsapp.reminder(game, now, assignments))
         game.group_reminder_sent = True
 
     await session.flush()
+
+
+async def send_digest(bot: Bot, game: Game, digest: dict) -> None:
+    """Сводка закрытия сбора: одно сообщение админам и (если чата нет) один текст для WhatsApp с кнопкой."""
+    if digest["admin"]:
+        await notifier.notify_admins(
+            bot, f"🔒 <b>Сбор закрыт — {texts.game_header(game)}</b>\n\n" + "\n\n".join(digest["admin"]))
+    pen = digest.get("wa_penalties")
+    pen_line = f"Не ответили на опрос: {', '.join(u.name for u in pen[0])} — по −{pen[1]}." if pen else None
+    if digest.get("wa_duties"):
+        await whatsapp.send_draft(bot, digest["wa_duties"] + (f"\n\n{pen_line}" if pen_line else ""))
+    elif pen:
+        await whatsapp.send_draft(bot, whatsapp.penalties(game, *pen))
 
 
 async def run_scheduler(bot: Bot, sessionmaker: async_sessionmaker[AsyncSession]) -> None:

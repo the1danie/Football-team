@@ -351,7 +351,7 @@ async def test_auto_distribution_and_finish(h: Harness):
         await tick(h.bot, s)
         await s.commit()
         assert (await s.get(Game, game_id)).status == GameStatus.DISTRIBUTED
-    assert any("Автоматическое распределение" in m.text for m in h.fake.sent(ADMIN))
+    assert any("Сбор закрыт" in m.text and "Обязанности · идут" in m.text for m in h.fake.sent(ADMIN))  # одна сводка
     # один игрок — все четыре обязанности на нём
     async with h.sm() as s:
         assert len(await svc.user_assignments(s, game_id, (await svc.get_user_by_tg(s, ADMIN)).id)) == 4
@@ -448,7 +448,9 @@ async def test_poll_nudge_and_penalties(h: Harness, monkeypatch):
     assert any("Не ответили на опрос" in m.text and "Руслан" in m.text for m in fake.sent(GROUP))
     admin_texts = [m.text for m in fake.sent(ADMIN)]
     # пороги минусов (3/6/9) проверяются в tests/test_discipline.py
-    assert any("Автоматическое распределение" in t for t in admin_texts)
+    # админу — одна сводка (минусы + распределение), а не отдельными сообщениями
+    digest = [t for t in admin_texts if t.startswith("🔒")]
+    assert len(digest) == 1 and "Не ответили" in digest[0] and "Руслан" in digest[0] and "Обязанности · идут" in digest[0]
     async with h.sm() as s:
         assert (await svc.open_penalty_points(s)) == {ruslan.id: 1, (await svc.get_user_by_tg(s, ADMIN)).id: 1}
     # повторный тик не начисляет ещё раз

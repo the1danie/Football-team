@@ -40,7 +40,11 @@ async def test_notice_late_excuse_and_undo(team):  # noqa: F811
     assert status == 400
     status, res = await api(rustam, "late_notice", game_id=gid, minutes=15, reason="пробки")
     assert status == 200 and "15 мин" in res["note"]
-    assert any("Рустам опаздывает примерно на 15 мин" in m.text and "пробки" in m.text for m in fake.sent(1))
+    assert any("Рустам опоздает на ~15 мин" in m.text and "пробки" in m.text for m in fake.sent(1))
+    # нажал «Сохранить» ещё раз то же самое — админам второй раз не пишем
+    status, res = await api(rustam, "late_notice", game_id=gid, minutes=15, reason="пробки")
+    assert status == 200 and "уже знают" in res["note"]
+    assert sum("Рустам опоздает" in m.text for m in fake.sent(1)) == 1
     g = next(x for x in res["state"]["games"] if x["id"] == gid)
     assert g["my_late"]["late_notice"] == {"minutes": 15, "reason": "пробки"}
     _, st = await api(chira, "state")  # другие видят, что опаздывает, но не причину

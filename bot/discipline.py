@@ -244,12 +244,13 @@ async def late_notice(bot: Bot, session: AsyncSession, game: Game, user: User, m
         p.late_notice_minutes, p.late_notice_reason = None, None
         await session.flush()
         return "Предупреждение об опоздании отменено"
+    if (p.late_notice_minutes, p.late_notice_reason) == (minutes, reason):  # нажал ещё раз то же самое — не дублируем
+        return f"⏰ Админы уже знают: опоздаешь примерно на {minutes} мин."
     p.late_notice_minutes, p.late_notice_reason = minutes, reason
     await session.flush()
     await notifier.notify_admins(
-        bot, f"⏰ {texts.h(user.name)} опаздывает примерно на {minutes} мин — {texts.game_header(game)}"
-             + (f"\nПричина: {texts.h(reason)}" if reason else "")
-             + "\nКогда придёт — отметьте опоздание в «👥 Кто пришёл»: там можно поставить «форс-мажор — без минуса».")
+        bot, f"⏰ {texts.h(user.name)} опоздает на ~{minutes} мин ({texts.game_header(game)})"
+             + (f": {texts.h(reason)}" if reason else ""))
     return f"⏰ Админы знают: опоздаешь примерно на {minutes} мин. Минус за опоздание решает админ."
 
 

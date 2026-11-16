@@ -12,10 +12,13 @@ from bot.models import DutyPhase, Game, GameStatus, Rsvp, User
 from bot.services import games as svc
 
 
-async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game, reshuffle: bool = False) -> str:
+async def distribute_and_announce(
+    bot: Bot, session: AsyncSession, game: Game, reshuffle: bool = False, digest: dict | None = None
+) -> str:
     """Распределить обязанности, обновить сообщения в чате и написать назначенным.
 
-    Возвращает отчёт для администратора.
+    Возвращает отчёт для администратора. digest — закрытие сбора по расписанию: текст для WhatsApp
+    не шлём отдельно, а кладём в общую сводку (см. scheduler.send_digest).
     """
     result = await svc.distribute_game(session, game, reshuffle=reshuffle)
     await notifier.refresh_game(bot, session, game)
@@ -36,10 +39,13 @@ async def distribute_and_announce(bot: Bot, session: AsyncSession, game: Game, r
             await bot.send_message(game.chat_id, texts.no_car_warning())
     if not game.chat_id:
         link = await whatsapp.game_link(bot, game)
-        await whatsapp.send_draft(
-            bot, whatsapp.duties(game, yes, result.assignments, result.unassigned, link, pending, after_at(game)),
-            note="🎯 Обязанности для группы WhatsApp 👇",
-        )
+        wa = whatsapp.duties(game, yes, result.assignments, result.unassigned, link, pending, after_at(game))
+        if digest is not None:
+            digest["wa_duties"] = wa
+        else:
+            await whatsapp.send_draft(bot, wa, note="🎯 Обязанности для группы WhatsApp 👇")
+    if digest is not None:
+        return "\n".join([f"Обязанности · идут {yes}"] + lines[2:])  # заголовок игры — в шапке сводки
     return "\n".join(lines)
 
 
@@ -80,10 +86,7 @@ async def distribute_after_and_announce(
     if game.chat_id:
         await bot.send_message(game.chat_id, "\n".join(lines))
     else:
-        await whatsapp.send_draft(
-            bot, whatsapp.after_duties(game, result.assignments, result.unassigned),
-            note="🏁 Кто что забирает после тренировки — для группы WhatsApp 👇",
-        )
+        await whatsapp.send_draft(bot, whatsapp.after_duties(game, result.assignments, result.unassigned))
     return "\n".join(lines)
 
 
@@ -144,18 +147,15 @@ async def send_rsvp_nudge(bot: Bot, session: AsyncSession, game: Game) -> None:
         )
     else:
         link = await whatsapp.game_link(bot, game)
-        await whatsapp.send_draft(
-            bot, whatsapp.nudge(game, users, deadline, now, link, yes),
-            note="⏰ Не все отметились — напомните в группе WhatsApp 👇",
-        )
+        await whatsapp.send_draft(bot, whatsapp.nudge(game, users, deadline, now, link, yes))
 
 
-async def apply_penalties_and_announce(bot: Bot, session: AsyncSession, game: Game) -> str:
+async def apply_penalties_and_announce(bot: Bot, session: AsyncSession, game: Game, digest: dict | None = None) -> str:
     """Закрытие сбора: минусы молчавшим. Возвращает строку для отчёта админам."""
     if not penalties_enabled(game):  # игру создали впритык — ответить было некогда
         game.penalties_applied = True
         return ""
-    return await announce_penalties(bot, session, game, await svc.apply_no_response_penalties(session, game))
+    return await announce_penalties(bot, session, game, await svc.apply_no_response_penalties(session, game), digest)
 
 
 async def penalize_late_silent(bot: Bot, session: AsyncSession, game: Game) -> str:
@@ -163,7 +163,7 @@ async def penalize_late_silent(bot: Bot, session: AsyncSession, game: Game) -> s
     return await announce_penalties(bot, session, game, await svc.penalize_silent(session, game))
 
 
-async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, results) -> str:
+async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, results, digest: dict | None = None) -> str:
     if not results:
         return ""
     points = results[0].points
@@ -175,6 +175,8 @@ async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, result
                                                              rounds.get(r.user.id, 0)))
     if config.penalty_announce and game.chat_id:
         await bot.send_message(game.chat_id, texts.penalty_group(game, [r.user for r in results], points))
+    elif config.penalty_announce and digest is not None:
+        digest["wa_penalties"] = ([r.user for r in results], points)
     elif config.penalty_announce:
         await whatsapp.send_draft(
             bot, whatsapp.penalties(game, [r.user for r in results], points),
@@ -184,10 +186,13 @@ async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, result
 
     for r in results:
         await discipline.check_level(bot, session, r.user, r.total - r.points, r.total)
-    return f"🙈 Не ответили на опрос — по −{points}: " + ", ".join(texts.h(r.user.name) for r in results)
+    names = ", ".join(texts.h(r.user.name) for r in results)
+    if digest is not None:
+        return f"🙈 Не ответили — по −{points}, записаны «Не буду»: {names}"
+    return f"🙈 Не ответили на опрос — по −{points}: {names}"
 
 
-async def auto_decline_and_notify(bot: Bot, session: AsyncSession, game: Game) -> None:
+async def auto_decline_and_notify(bot: Bot, session: AsyncSession, game: Game, digest: dict | None = None) -> None:
     """Сбор закрыт: «Не знаю» и молчащие становятся «Не буду»."""
     silent, maybe = await svc.auto_decline(session, game)
     if not silent and not maybe:
@@ -199,6 +204,8 @@ async def auto_decline_and_notify(bot: Bot, session: AsyncSession, game: Game) -
                        "Если всё-таки придёшь, напиши админу."
         )
     for user in silent:
+        if digest is not None and digest.get("penalized"):
+            break  # молчавшие уже получили одно сообщение: минус + «записан «Не буду»»
         await notifier.send_dm(
             bot, user, f"🔒 Сбор закрыт ({texts.game_header(game)}). Ты не ответил — записан «Не буду». "
                        "Если всё-таки придёшь, напиши админу."
@@ -206,8 +213,11 @@ async def auto_decline_and_notify(bot: Bot, session: AsyncSession, game: Game) -
     parts = []
     if maybe:
         parts.append(f"«Не знаю» → «Не буду»: {', '.join(texts.h(u.name) for u in maybe)}")
-    if silent:
+    if silent and not (digest is not None and digest.get("penalized")):  # в сводке молчавшие уже в строке про минус
         parts.append(f"молчали → «Не буду»: {', '.join(texts.h(u.name) for u in silent)}")
+    if digest is not None:
+        digest["admin"] += [("🤔 " if p.startswith("«") else "🔇 ") + p for p in parts]
+        return
     await notifier.notify_admins(bot, f"🔒 Сбор закрыт: {texts.game_header(game)}\n" + "\n".join(parts))
 
 

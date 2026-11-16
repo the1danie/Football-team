@@ -1026,8 +1026,11 @@ function lateNoticeSheet() {
   const cur = g.my_late && g.my_late.late_notice;
   const f = S.sheet.form || (S.sheet.form = { minutes: cur ? cur.minutes : 15, reason: cur && cur.reason || "" });
   const send = async (minutes) => {
+    if (f.busy) return;  // двойное нажатие — одно сообщение админам
+    f.busy = true; render();
     const r = await api("late_notice", { game_id: g.id, minutes, reason: f.reason });
-    if (r) { haptic("ok"); closeSheet(); }
+    f.busy = false;
+    if (r) { haptic("ok"); closeSheet(); } else render();
   };
   return h("div", {}, h("h3", {}, "⏰ Опаздываю"),
     h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Админам придёт сообщение. Опоздание на 10+ минут от начала — −1, но если причина уважительная, админ может его не ставить."),
@@ -1036,7 +1039,7 @@ function lateNoticeSheet() {
       onclick: () => { f.minutes = m; render(); } }, `${m} мин`))),
     h("div", { class: "label" }, "Причина (необязательно)"),
     h("input", { class: "field", value: f.reason, maxlength: 120, placeholder: "пробки, задержали на работе…", oninput: (e) => { f.reason = e.target.value; } }),
-    h("button", { class: "btn", style: "margin-top:16px", onclick: () => send(f.minutes) }, cur ? "Сохранить" : "Предупредить админов"),
+    h("button", { class: "btn", style: "margin-top:16px", disabled: !!f.busy, onclick: () => send(f.minutes) }, f.busy ? "Отправляю…" : cur ? "Сохранить" : "Предупредить админов"),
     cur ? h("button", { class: "btn secondary", style: "margin-top:8px", onclick: () => send(0) }, "Успеваю — отменить") : null);
 }
 function lateSheet() {

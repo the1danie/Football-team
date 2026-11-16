@@ -469,7 +469,6 @@ async def _call_for_players(bot: Bot, session: AsyncSession, game: Game, yes: in
         bot,
         f"*{texts.game_header(game)}*\n\nПока {yes} из минимум {game.min_players} — {word} под вопросом.\n"
         f"Кто придёт — отметьтесь:\n{link}",
-        note="⏳ Позовите ещё людей в WhatsApp 👇",
     )
 
 
@@ -488,8 +487,9 @@ async def create_from_schedule(bot: Bot, session: AsyncSession, schedule, starts
     )
     await notifier.notify_admins(
         bot, f"🔁 По расписанию создана: {texts.game_header(game)}\n\n{poll_report}\n\n<i>{hint}</i>"
+        + ("\n\n📤 Анонс для WhatsApp — следующим сообщением 👇" if announce else "")
     )
-    await whatsapp.send_draft(bot, announce, note="📤 Анонс для группы WhatsApp 👇")
+    await whatsapp.send_draft(bot, announce)
     return game
 
 
