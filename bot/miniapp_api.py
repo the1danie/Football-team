@@ -386,7 +386,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "team_invite", "publish_now", "player_tg_remove", "player_tg_link", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "team_invite", "publish_now", "player_tg_remove", "player_tg_link", "player_web_logout", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel", "penalize_silent", "late", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo", "redo_duty",
 }
 
@@ -1000,6 +1000,14 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             note = ("Telegram удалён. Игрок в команде как «без Telegram» — отправьте ему ссылку для нового Telegram."
                     if target.is_manual else "Telegram отвязан")
             return {"note": note, "player": await player_view(session, target, True), **await players_view(session)}
+        elif action == "player_web_logout":  # админ: закрыть все входы игрока на сайт (ссылки и PIN)
+            target = await _user(session, body.get("user_id"))
+            target.web_version = (target.web_version or 0) + 1
+            target.pin_hash, target.pin_fails, target.pin_locked_until = None, 0, None
+            await audit.record(session, f"🚪 {target.name}: закрыл все входы на сайт")
+            await session.flush()
+            return {"note": "Все входы на сайт закрыты: старые ссылки и PIN не работают. Новые — «🌐 Ссылка» / «🔢 PIN».",
+                    "player": await player_view(session, target, True), **await players_view(session)}
         elif action == "player_tg_link":  # админ выдаёт ссылку: открыть с нового Telegram — привяжется
             target = await _user(session, body.get("user_id"))
             if target.status != UserStatus.APPROVED:

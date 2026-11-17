@@ -112,3 +112,23 @@ async def test_admin_second_account_is_admin(team):  # noqa: F811
     _, st = await api(tg_user(555, "Даниял2"), "state")
     assert st["state"]["user"]["id"] == me and st["state"]["is_admin"] is True
     assert 555 in config.all_admin_ids
+
+
+
+async def test_admin_closes_player_site_sessions(team):  # noqa: F811
+    rustam = tg_user(2, "Рустам")
+    await api(rustam, "register", car=False)
+    _, pl = await api(APP_ADMIN, "players")
+    rid = next(p["id"] for p in pl["players"] if p["name"] == "Рустам")
+    await api(APP_ADMIN, "player", user_id=rid, op="approve")
+    await api(APP_ADMIN, "player_pin", user_id=rid)
+    from bot import webhook
+
+    async with webhook._sessionmaker() as s:
+        before = (await s.get(svc.User, rid)).web_version or 0
+    assert (await api(rustam, "player_web_logout", user_id=rid))[0] == 403  # только админ
+    _, res = await api(APP_ADMIN, "player_web_logout", user_id=rid)
+    assert "закрыты" in res["note"]
+    async with webhook._sessionmaker() as s:
+        u = await s.get(svc.User, rid)
+        assert u.web_version == before + 1 and u.pin_hash is None
