@@ -52,6 +52,30 @@ def link_payload(user: User) -> str:
     return f"link_{user.id}_{_link_sig(user.id, config.bot_token)}"
 
 
+TG2_TTL = 24 * 3600  # ссылка «привязать второй Telegram» живёт сутки
+
+
+def _tg2_sig(user_id: int, exp: int) -> str:
+    return hmac.new(_web_key(config.bot_token), f"tg2:{user_id}:{exp}".encode(), hashlib.sha256).hexdigest()[:12]
+
+
+def tg2_payload(user: User, now: float | None = None) -> str:
+    """Параметр для t.me/<бот>?start=… — привязать к игроку ещё один Telegram (открыть с другого аккаунта)."""
+    exp = int((now or time.time()) + TG2_TTL)
+    return f"tg2_{user.id}_{exp}_{_tg2_sig(user.id, exp)}"
+
+
+def parse_tg2_payload(payload: str, now: float | None = None) -> int | None:
+    try:
+        kind, raw_id, raw_exp, sig = (payload or "").split("_")
+        user_id, exp = int(raw_id), int(raw_exp)
+    except ValueError:
+        return None
+    if kind != "tg2" or not config.bot_token or not hmac.compare_digest(_tg2_sig(user_id, exp), sig):
+        return None
+    return user_id if exp >= (now or time.time()) else None
+
+
 def parse_link_payload(payload: str) -> int | None:
     try:
         kind, raw_id, sig = (payload or "").split("_")

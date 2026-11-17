@@ -389,3 +389,17 @@ class GameStat(Base):
     goals: Mapped[int] = mapped_column(Integer, default=0)
     assists: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class UserTelegram(Base):
+    """Дополнительный Telegram игрока (второй телефон, новый аккаунт после потери старого).
+
+    Основной — User.telegram_id; бот узнаёт игрока с любого привязанного и пишет на все.
+    """
+
+    __tablename__ = "user_telegrams"
+
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

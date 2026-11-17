@@ -325,7 +325,7 @@ async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict
     if is_admin:
         view.update(
             username=user.username, status=user.status, active=user.is_active, car_locked=user.car_locked,
-            staff=user.staff_title, manual=user.is_manual,
+            staff=user.staff_title, manual=user.is_manual, accounts=await svc.telegram_accounts(session, user),
             telegram_id=user.telegram_id, is_admin=bool(user.is_admin), is_owner=config.is_owner(user.telegram_id),
         )
     return view
@@ -386,7 +386,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "team_invite", "publish_now", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "team_invite", "publish_now", "player_tg_remove", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel", "penalize_silent", "late", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo", "redo_duty",
 }
 
@@ -451,7 +451,8 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         if action == "register":
             raise ApiError("Регистрация — через бота в Telegram (/start).", 403)
     if user is not None:
-        user.username = tg.get("username") or user.username
+        if user.telegram_id == tg_id:  # со второго Telegram — его ник не затирает основной
+            user.username = tg.get("username") or user.username
         if config.is_admin(tg_id) and user.status != UserStatus.APPROVED:
             user.status = UserStatus.APPROVED
 
@@ -971,10 +972,39 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             manual = await _user(session, body.get("target_id"))
             if pending.is_manual:
                 raise ApiError("Выберите заявку из Telegram.")
-            await operations.link_account(bot, session, manual, pending.telegram_id, pending.username)
+            if manual.is_manual:
+                await operations.link_account(bot, session, manual, pending.telegram_id, pending.username)
+                note = f"🔗 {manual.name} связан с Telegram"
+            else:  # второй / новый Telegram игрока, который уже в команде
+                tg_new, uname = pending.telegram_id, pending.username
+                try:
+                    await svc.add_telegram(session, manual, tg_new, uname)
+                except svc.TelegramLinkError as e:
+                    raise ApiError(str(e)) from e
+                await audit.record(session, f"🔗 {manual.name}: привязал ещё один Telegram" + (f" @{uname}" if uname else ""))
+                from bot import notifier  # noqa: PLC0415
+
+                await notifier.send_raw(bot, tg_new, f"✅ Админ привязал этот Telegram к игроку <b>{texts.h(manual.name)}</b> "
+                                                     "— здесь те же игры и минусы. Нажми /start.")
+                note = f"🔗 {manual.name}: привязан ещё один Telegram"
             await session.flush()
-            return {"note": f"🔗 {manual.name} связан с Telegram", "player": await player_view(session, manual, True),
-                    **await players_view(session)}
+            return {"note": note, "player": await player_view(session, manual, True), **await players_view(session)}
+        elif action == "player_tg_remove":
+            target = await _user(session, body.get("user_id"))
+            try:
+                await svc.remove_telegram(session, target, int(body.get("telegram_id") or 0))
+            except svc.TelegramLinkError as e:
+                raise ApiError(str(e)) from e
+            await audit.record(session, f"🔗 {target.name}: отвязал Telegram")
+            await session.flush()
+            return {"note": "Telegram отвязан", "player": await player_view(session, target, True), **await players_view(session)}
+        elif action == "tg2_link":
+            from bot.handlers.common import tg2_text  # noqa: PLC0415
+            from bot.weblink import tg2_payload  # noqa: PLC0415
+
+            me_bot = await bot.me()
+            return {"url": f"https://t.me/{me_bot.username}?start={tg2_payload(user)}",
+                    "accounts": await svc.telegram_accounts(session, user)}
         elif action == "player":
             target = await _user(session, body.get("user_id"))
             note = await operations.player_action(

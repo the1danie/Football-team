@@ -90,6 +90,9 @@ async def start(message: Message, command: CommandObject, session: AsyncSession,
     if payload.startswith("link_"):
         await link_from_invite(message, session, bot, payload)
         return
+    if payload.startswith("tg2_"):
+        await link_second_telegram(message, session, bot, payload)
+        return
     if payload:
         await state.update_data(after_profile=payload)
     user = await require_profile(message, session, state)
@@ -108,6 +111,32 @@ async def start(message: Message, command: CommandObject, session: AsyncSession,
         )
 
 
+async def link_second_telegram(message: Message, session: AsyncSession, bot: Bot, payload: str) -> None:
+    """Игрок открыл свою ссылку «➕ Второй Telegram» с другого аккаунта — привязать этот аккаунт к нему."""
+    from bot.weblink import parse_tg2_payload
+
+    user_id = parse_tg2_payload(payload)
+    user = await session.get(User, user_id) if user_id else None
+    if user is None or user.status != UserStatus.APPROVED:
+        await message.answer("Ссылка устарела или недействительна. Возьми новую: «👤 Мой профиль» → «➕ Второй Telegram».")
+        return
+    username = message.from_user.username if message.from_user else None
+    try:
+        added = await svc.add_telegram(session, user, message.chat.id, username)
+    except svc.TelegramLinkError as e:
+        await message.answer(f"⚠️ {e} Напиши админу.")
+        return
+    await show_menu(message, f"✅ Этот Telegram привязан к игроку <b>{texts.h(user.name)}</b> — "
+                             "здесь будут те же игры, минусы и уведомления ⚽" if added
+                    else f"Этот Telegram уже привязан к тебе, {texts.h(user.name)} ⚽")
+    if added:
+        who = f"@{username}" if username else "ещё один аккаунт"
+        for chat_id in await svc.telegram_ids(session, user):
+            if chat_id != message.chat.id:
+                await notifier.send_raw(bot, chat_id, f"🔗 К твоему профилю привязан {texts.h(who)}. "
+                                                      "Не ты? Срочно напиши админу.")
+
+
 async def link_from_invite(message: Message, session: AsyncSession, bot: Bot, payload: str) -> None:
     """Ссылка-приглашение для игрока, которого админ добавил вручную: привязать этот Telegram к нему."""
     from bot.weblink import parse_link_payload
@@ -118,7 +147,7 @@ async def link_from_invite(message: Message, session: AsyncSession, bot: Bot, pa
         await message.answer("Ссылка-приглашение недействительна. Попроси у админа новую.")
         return
     if not manual.is_manual:
-        if manual.telegram_id == message.chat.id:
+        if (await svc.get_user_by_tg(session, message.chat.id)) is manual:
             await show_menu(message, f"Ты уже в команде, {texts.h(manual.name)} ⚽")
         else:
             await message.answer("По этой ссылке уже зашёл другой человек. Если это ошибка — напиши админу.")
@@ -326,3 +355,27 @@ async def web_from_profile(cb: CallbackQuery, session: AsyncSession):
     user = await svc.get_user_by_tg(session, cb.from_user.id)
     if user is not None:
         await send_web_link(cb.message, session, user)
+
+
+def tg2_text(user: User, bot_username: str, accounts: list[dict]) -> str:
+    from bot.weblink import tg2_payload
+
+    link = f"https://t.me/{bot_username}?start={tg2_payload(user)}"
+    have = "\n".join(("• " + (f"@{a['username']}" if a["username"] else f"id {a['telegram_id']}"))
+                     + (" — основной" if a["primary"] else "") for a in accounts)
+    return ("📱 <b>Второй Telegram</b>\n"
+            "Есть второй телефон или новый аккаунт? Открой эту ссылку <b>с другого аккаунта</b> — "
+            "он привяжется к тебе (игры, минусы, рейтинг — общие). Ссылка действует сутки, никому её не пересылай.\n\n"
+            f"{link}\n\nСейчас привязаны:\n{texts.h(have)}\n\n"
+            "Потерял доступ к старому? Зайди в бота с нового аккаунта (/start) и напиши админу — он привяжет и отвяжет старый.")
+
+
+@router.callback_query(F.data == "prof:tg2")
+async def tg2_from_profile(cb: CallbackQuery, session: AsyncSession, bot: Bot):
+    await cb.answer()
+    user = await svc.get_user_by_tg(session, cb.from_user.id)
+    if user is None or user.status != UserStatus.APPROVED:
+        return
+    me = await bot.me()
+    await cb.message.answer(tg2_text(user, me.username, await svc.telegram_accounts(session, user)),
+                            disable_web_page_preview=True)

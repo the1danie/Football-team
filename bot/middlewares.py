@@ -67,7 +67,7 @@ class AccessMiddleware(BaseMiddleware):
             return await handler(event, data)
         session = data["session"]
         user = await svc.get_user_by_tg(session, tg_user.id)
-        if user is not None and user.username != tg_user.username:
+        if user is not None and user.telegram_id == tg_user.id and user.username != tg_user.username:
             user.username = tg_user.username
         if config.is_admin(tg_user.id):
             if user is not None and user.status != UserStatus.APPROVED:

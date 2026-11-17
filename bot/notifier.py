@@ -30,13 +30,18 @@ async def send_dm(bot: Bot, user: User, text: str, reply_markup: InlineKeyboardM
     False — не дошло никуда: не писал боту / заблокировал, и уведомления на сайте не включены.
     """
     delivered = False
-    if user.telegram_id > 0:  # < 0 — добавлен вручную, Telegram ещё не привязан
+    session = async_object_session(user)
+    ids = [user.telegram_id] if user.telegram_id > 0 else []  # < 0 — добавлен вручную, Telegram ещё не привязан
+    if session is not None:  # второй Telegram игрока — тоже получает
+        from bot.services import games as svc  # noqa: PLC0415
+
+        ids = await svc.telegram_ids(session, user)
+    for chat_id in ids:
         try:
-            await bot.send_message(user.telegram_id, text, reply_markup=reply_markup)
+            await bot.send_message(chat_id, text, reply_markup=reply_markup)
             delivered = True
         except (TelegramForbiddenError, TelegramBadRequest) as e:
-            log.info("DM to %s failed: %s", user.telegram_id, e)
-    session = async_object_session(user)
+            log.info("DM to %s failed: %s", chat_id, e)
     if session is not None:
         from bot import webpush  # noqa: PLC0415
 

@@ -1035,6 +1035,8 @@ function profileTab() {
       "📤 Инструкция для команды (WhatsApp)") : null,
     pushCard(),
     h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
+      const r = await api("tg2_link"); if (r) openSheet({ type: "tg2", ...r }); } }, "📱 Второй Telegram"),
+    h("button", { class: "btn secondary", style: "margin-bottom:12px", onclick: async () => {
       if (!(await confirmBox("Создать новый PIN для входа на сайт? Старый перестанет работать."))) return;
       const r = await api("my_pin");
       if (r) openSheet({ type: "myPin", ...r }); } }, "🔢 Мой PIN для входа на сайт"),
@@ -1260,7 +1262,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, crop: cropSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet, resultPlayers: resultPlayersSheet, late: lateSheet, lateNotice: lateNoticeSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, crop: cropSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet, resultPlayers: resultPlayersSheet, tg2: tg2Sheet, late: lateSheet, lateNotice: lateNoticeSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;
@@ -1541,6 +1543,18 @@ function calendarSheet() {
     h("p", { class: "small muted", style: "margin:8px 2px" }, "Google обновляет подписки сам, обычно в течение нескольких часов. Ссылка личная — не пересылайте её."));
 }
 
+function tg2Sheet() {
+  const s = S.sheet;
+  const copy = async () => { try { await navigator.clipboard.writeText(s.url); toast("Ссылка скопирована"); } catch (e) { toast("Скопируйте ссылку вручную"); } };
+  return h("div", {}, h("h3", {}, "📱 Второй Telegram"),
+    h("p", { class: "small", style: "margin:-4px 2px 10px" }, "Есть второй телефон или новый аккаунт? Откройте эту ссылку с другого аккаунта Telegram — он привяжется к вам: игры, минусы и рейтинг общие, уведомления придут на оба. Ссылка действует сутки — никому не пересылайте."),
+    h("div", { class: "card small", style: "word-break:break-all" }, s.url),
+    h("button", { class: "btn", onclick: copy }, "📋 Скопировать ссылку"),
+    h("div", { class: "label" }, "Сейчас привязаны"),
+    h("div", { class: "card small" }, (s.accounts || []).map((a) => h("div", {}, (a.username ? "@" + a.username : "id " + a.telegram_id) + (a.primary ? " — основной" : "")))),
+    h("p", { class: "small muted", style: "margin:8px 2px" }, "Потеряли доступ к старому аккаунту? Зайдите в бота с нового (/start) и напишите админу — он привяжет новый и отвяжет старый, ничего не потеряется."),
+    h("button", { class: "btn secondary", onclick: closeSheet }, "Готово"));
+}
 function myPinSheet() {
   const s = S.sheet;
   return h("div", {}, h("h3", {}, "🔢 Ваш PIN"),
@@ -1672,7 +1686,20 @@ function playerSheet() {
       h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Нажмите на имя — заявка станет этим игроком: его минусы и отметки сохранятся, отмечаться он будет сам."),
       h("div", { class: "people" }, S.players.filter((x) => x.manual && x.status === "approved").map((x) => h("button", { class: "chip",
         onclick: async () => { if (await confirmBox(`${p.name} — это «${x.name}»? Профили объединятся.`)) playerOp(p, "link_to", { target_id: x.id }); } }, "✍️ " + x.name)))) : null,
+    p.status === "pending" ? h("div", { class: "card" },
+      h("div", { style: "font-weight:600" }, "📱 Это второй / новый Telegram игрока из команды?"),
+      h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Например, потерял доступ к старому аккаунту. Нажмите на имя — этот Telegram привяжется к игроку, заявка исчезнет, его минусы и рейтинг останутся."),
+      h("div", { class: "people" }, (S.players || []).filter((x) => !x.manual && x.status === "approved").map((x) => h("button", { class: "chip",
+        onclick: async () => { if (await confirmBox(`Привязать этот Telegram (${p.name}${p.username ? ", @" + p.username : ""}) к игроку «${x.name}»?`)) playerOp(p, "link_to", { target_id: x.id }); } }, x.name)))) : null,
     p.status === "approved" ? photoRow(p, p.id) : null,
+    p.status === "approved" && p.accounts && p.accounts.length ? h("div", { class: "card" },
+      h("div", { style: "font-weight:600;margin-bottom:6px" }, "📱 Telegram-аккаунты"),
+      p.accounts.map((a) => h("div", { class: "switch-row", style: "padding:6px 0" },
+        h("div", { class: "grow" }, (a.username ? "@" + a.username : "id " + a.telegram_id) + (a.primary ? " — основной" : "")),
+        p.accounts.length > 1 ? h("button", { class: "btn small secondary", onclick: async () => {
+          if (!(await confirmBox(`Отвязать ${a.username ? "@" + a.username : "этот Telegram"} от ${p.name}? С него бот больше не будет узнавать игрока.`))) return;
+          const r = await api("player_tg_remove", { user_id: p.id, telegram_id: a.telegram_id }); if (r) { S.sheet.player = r.player; render(); } } }, "Отвязать") : null)),
+      h("div", { class: "small muted", style: "margin-top:4px" }, "Потерял доступ — пусть зайдёт в бота с нового аккаунта, а вы в его заявке нажмите «Это второй Telegram игрока…».")) : null,
     p.manual ? h("div", { class: "card" },
       h("div", { style: "font-weight:600" }, "✍️ Добавлен вручную — ещё не в Telegram"),
       h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Получает минусы за молчание. Отмечайте за него в карточке игры (нажмите на имя) или отправьте приглашение: по ссылке он зайдёт в бота, и Telegram привяжется к этому профилю. В приглашении есть и ссылка на сайт — можно без Telegram."),

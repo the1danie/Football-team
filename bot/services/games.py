@@ -33,7 +33,75 @@ from bot.services.distribution import Candidate, DutySpec, distribute, pick
 
 
 async def get_user_by_tg(session: AsyncSession, telegram_id: int) -> User | None:
-    return await session.scalar(select(User).where(User.telegram_id == telegram_id))
+    """Игрок по Telegram — основному или дополнительному (второй аккаунт)."""
+    from bot.models import UserTelegram  # noqa: PLC0415
+
+    user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
+    if user is None:
+        user = await session.scalar(
+            select(User).join(UserTelegram, UserTelegram.user_id == User.id).where(UserTelegram.telegram_id == telegram_id))
+    return user
+
+
+async def telegram_accounts(session: AsyncSession, user: User) -> list[dict]:
+    """Все Telegram игрока: основной первым."""
+    from bot.models import UserTelegram  # noqa: PLC0415
+
+    out = [{"telegram_id": user.telegram_id, "username": user.username, "primary": True}] if user.telegram_id > 0 else []
+    for t in (await session.scalars(
+            select(UserTelegram).where(UserTelegram.user_id == user.id).order_by(UserTelegram.created_at))).all():
+        out.append({"telegram_id": t.telegram_id, "username": t.username, "primary": False})
+    return out
+
+
+async def telegram_ids(session: AsyncSession, user: User) -> list[int]:
+    return [a["telegram_id"] for a in await telegram_accounts(session, user)]
+
+
+class TelegramLinkError(ValueError):
+    pass
+
+
+async def add_telegram(session: AsyncSession, user: User, telegram_id: int, username: str | None) -> bool:
+    """Привязать ещё один Telegram. Пустая заявка с этого аккаунта удаляется. False — уже был привязан."""
+    from bot.models import UserTelegram  # noqa: PLC0415
+
+    other = await get_user_by_tg(session, telegram_id)
+    if other is not None and other.id == user.id:
+        return False
+    if other is not None:
+        if await has_history(session, other) or other.is_admin:
+            raise TelegramLinkError("Этот Telegram уже в команде как другой игрок — его отметки и минусы "
+                                    "не потеряются только если их объединит админ.")
+        await session.delete(other)
+        await session.flush()
+    if user.is_manual:  # у игрока ещё не было Telegram — этот становится основным
+        user.telegram_id, user.username = telegram_id, username or user.username
+    else:
+        session.add(UserTelegram(telegram_id=telegram_id, user_id=user.id, username=username))
+    await session.flush()
+    return True
+
+
+async def remove_telegram(session: AsyncSession, user: User, telegram_id: int) -> None:
+    """Отвязать Telegram (например, потерянный). Основной — только если есть другой: тот станет основным."""
+    from bot.models import UserTelegram  # noqa: PLC0415
+
+    extras = (await session.scalars(
+        select(UserTelegram).where(UserTelegram.user_id == user.id).order_by(UserTelegram.created_at))).all()
+    if telegram_id == user.telegram_id:
+        if not extras:
+            raise TelegramLinkError("Это единственный Telegram игрока — сначала привяжите другой.")
+        new = extras[0]
+        user.telegram_id, user.username = new.telegram_id, new.username
+        await session.delete(new)
+    else:
+        row = next((t for t in extras if t.telegram_id == telegram_id), None)
+        if row is None:
+            raise TelegramLinkError("Этот Telegram не привязан к игроку.")
+        await session.delete(row)
+    user.web_version = (user.web_version or 0) + 1  # личные ссылки на сайт — заново
+    await session.flush()
 
 
 async def get_or_create_user(
@@ -1067,10 +1135,18 @@ async def yes_count(session: AsyncSession, game_id: int) -> int:
 
 async def refresh_admins(session: AsyncSession) -> None:
     """Подтянуть из БД админов, назначенных в боте (вызывается на каждый запрос)."""
+    from bot.models import UserTelegram  # noqa: PLC0415
+
     rows = await session.scalars(
         select(User.telegram_id).where(User.is_admin.is_(True), User.status == UserStatus.APPROVED)
     )
-    config.extra_admin_ids = set(rows.all())
+    ids = set(rows.all())
+    # Второй Telegram админа (и главного админа) — тоже с правами админа.
+    owners = select(User.id).where(User.telegram_id.in_(list(config.admin_ids) or [0]))
+    admins = select(User.id).where(User.is_admin.is_(True), User.status == UserStatus.APPROVED)
+    ids |= set((await session.scalars(select(UserTelegram.telegram_id).where(
+        UserTelegram.user_id.in_(admins) | UserTelegram.user_id.in_(owners)))).all())
+    config.extra_admin_ids = ids
 
 
 # ---------------------------------------------------------------- кто пришёл

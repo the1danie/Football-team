@@ -70,6 +70,7 @@ def profile_actions() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="✏️ Изменить имя", callback_data="prof:name")],
             [InlineKeyboardButton(text="🚗 Изменить наличие машины", callback_data="prof:car")],
             [InlineKeyboardButton(text="🌐 Открыть в браузере", callback_data="prof:web")],
+            [InlineKeyboardButton(text="➕ Второй Telegram", callback_data="prof:tg2")],
         ]
     )
 

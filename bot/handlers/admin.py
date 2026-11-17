@@ -596,7 +596,7 @@ async def attendance_toggle(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     if game is None or user is None:
         await cb.answer("Не найдено.", show_alert=True)
         return
-    if (present == "1" and user.telegram_id == cb.from_user.id
+    if (present == "1" and (await svc.get_user_by_tg(session, cb.from_user.id)) is user
             and (await svc.attendance(session, game.id)).get(user.id) is False):
         await cb.answer("Свои минусы админ не снимает — попросите другого админа.", show_alert=True)
         return
