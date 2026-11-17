@@ -111,7 +111,15 @@ def gather_suffix(game: Game) -> str:
 
 
 def kind_title(game: Game) -> str:
-    return KIND_TITLES.get(game.kind, KIND_TITLES["game"])
+    """«⚽ Игра против «Барыс»» — если указан соперник, иначе «⚽ Игра» / «🏃 Тренировка»."""
+    title = KIND_TITLES.get(game.kind, KIND_TITLES["game"])
+    opponent = getattr(game, "opponent", None)
+    return f"{title} против «{opponent}»" if opponent and game.kind == "game" else title
+
+
+def clean_opponent(value: object) -> str | None:
+    text = " ".join(str(value or "").split()).strip("«»\"' ")[:80]
+    return text or None
 
 
 def game_header(game: Game) -> str:

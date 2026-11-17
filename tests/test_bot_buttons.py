@@ -9,6 +9,8 @@ from bot.config import config
 from bot.models import Game, GameParticipant
 from bot.services import games as svc
 from tests.test_bot_flow import ADMIN, Harness, _move_game, buttons, h  # noqa: F401 — фикстура h
+from tests.test_miniapp import team  # noqa: F401
+from tests.test_webhook import fake  # noqa: F401
 
 
 async def _game_with(h: Harness, *yes):
@@ -105,3 +107,39 @@ async def test_why_button_in_bot(h: Harness):
     text = fake.sent(2)[-1].text
     assert "Почему так распределилось" in text and "Как бот выбирает" in text
     assert "Почему тебе" in text or "А ты?" in text
+
+
+async def test_opponent_in_bot_and_app(h: Harness):
+    fake = h.fake
+    await h.register(ADMIN, "Даниял", car=True)
+    await h.text(ADMIN, texts.BTN_CREATE)
+    tomorrow = config.now() + timedelta(days=1)
+    await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
+    await h.text(ADMIN, "20:00")
+    await h.click(ADMIN, "newkind:game")
+    assert "Против кого" in fake.sent(ADMIN)[-1].text
+    await h.text(ADMIN, "  «Барыс» ")
+    await h.text(ADMIN, "Стадион")
+    assert "против «Барыс»" in fake.sent(ADMIN)[-1].text  # в предпросмотре
+    await h.click(ADMIN, "newgame:publish")
+    async with h.sm() as s:
+        game = (await s.scalars(select(Game))).all()[-1]
+        assert game.opponent == "Барыс"
+        assert texts.game_header(game).startswith("⚽ Игра против «Барыс» — ")
+        assert await svc.opponents(s) == ["Барыс"]
+
+
+async def test_opponent_change_and_training_has_none(team):  # noqa: F811
+    from tests.test_miniapp import ADMIN as APP_ADMIN, api
+
+    day = (config.now() + timedelta(days=2)).date().isoformat()
+    _, res = await api(APP_ADMIN, "create_game", date=day, minutes=19 * 60, kind="game", opponent="Кайрат")
+    g = res["state"]["games"][0]
+    assert g["opponent"] == "Кайрат" and g["kind_title"] == "⚽ Игра против «Кайрат»"
+    assert res["state"]["opponents"] == ["Кайрат"]
+    status, res = await api(APP_ADMIN, "update_game", game_id=g["id"], date=day, minutes=19 * 60, kind="game", opponent="Астана")
+    assert status == 200 and next(x for x in res["state"]["games"] if x["id"] == g["id"])["opponent"] == "Астана"
+    # тренировка — без соперника, даже если прислали
+    _, res = await api(APP_ADMIN, "update_game", game_id=g["id"], date=day, minutes=19 * 60, kind="training", opponent="Астана")
+    t = next(x for x in res["state"]["games"] if x["id"] == g["id"])
+    assert t["opponent"] is None and t["kind_title"] == "🏃 Тренировка"

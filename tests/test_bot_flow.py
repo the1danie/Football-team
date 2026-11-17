@@ -177,6 +177,7 @@ async def test_full_flow(h: Harness):
     await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
     await h.text(ADMIN, "20:00")
     await h.click(ADMIN, "newkind:game")
+    await h.click(ADMIN, "newopp:skip")
     await h.text(ADMIN, "Стадион Динамо")
     assert "Проверьте" in fake.sent(ADMIN)[-1].text
     await h.click(ADMIN, "newgame:publish")
@@ -411,6 +412,7 @@ async def test_poll_nudge_and_penalties(h: Harness, monkeypatch):
     await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
     await h.click(ADMIN, "newtime:1200")
     await h.click(ADMIN, "newkind:game")
+    await h.click(ADMIN, "newopp:skip")
     await h.click(ADMIN, "newloc:skip")
     await h.click(ADMIN, "newgame:publish")
     invites = [m for m in fake.sent() if "Открыт сбор" in m.text]
@@ -536,6 +538,7 @@ async def test_whatsapp_team_without_telegram_group(h: Harness):
     await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
     await h.click(ADMIN, "newtime:1200")
     await h.click(ADMIN, "newkind:game")
+    await h.click(ADMIN, "newopp:skip")
     await h.text(ADMIN, "Стадион Динамо")
     await h.click(ADMIN, "newgame:publish")
     assert not [m for m in fake.sent() if m.chat_id < 0]  # в Telegram-группы ничего

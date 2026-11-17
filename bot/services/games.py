@@ -1233,6 +1233,17 @@ async def places(session: AsyncSession, limit: int = 12) -> list[dict]:
     return [{"name": n, "url": u} for n, u in list(seen.items())[:limit]]
 
 
+async def opponents(session: AsyncSession, limit: int = 12) -> list[str]:
+    """Соперники из прошлых игр — подсказки при создании (свежие сверху)."""
+    seen: list[str] = []
+    for (name,) in (await session.execute(
+        select(Game.opponent).where(Game.opponent.is_not(None)).order_by(Game.starts_at.desc())
+    )).all():
+        if name not in seen:
+            seen.append(name)
+    return seen[:limit]
+
+
 async def known_place_url(session: AsyncSession, location: str | None) -> str | None:
     if not location:
         return None

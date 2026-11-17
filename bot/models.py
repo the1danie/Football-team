@@ -112,6 +112,8 @@ class Game(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), default="game")  # game / training
+    # Против кого игра (только для «Игры»; у тренировки — нет).
+    opponent: Mapped[str | None] = mapped_column(String(80), nullable=True)
     # Локальное время команды (см. config.timezone).
     starts_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)

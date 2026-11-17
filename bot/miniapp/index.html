@@ -1202,9 +1202,9 @@ function renderSheet() {
 function createSheet() {
   const ed = S.sheet.edit;
   const st = S.sheet.form || (S.sheet.form = ed
-    ? { date: ed.date_iso, minutes: ed.minutes, kind: ed.kind, location: ed.location || "", url: ed.location_url || "", custom: ed.minutes < 13 * 60 || ed.minutes % 30 !== 0,
+    ? { date: ed.date_iso, minutes: ed.minutes, kind: ed.kind, location: ed.location || "", url: ed.location_url || "", opponent: ed.opponent || "", custom: ed.minutes < 13 * 60 || ed.minutes % 30 !== 0,
         min: ed.min_players || 0, repeat: false, openDays: 2 }
-    : { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", url: "", custom: false,
+    : { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", url: "", opponent: "", custom: false,
         min: 0, repeat: !!S.sheet.repeat, openDays: 2 });
   const days = [];
   const now = new Date();
@@ -1240,6 +1240,12 @@ function createSheet() {
     h("div", { class: "label" }, "Что"),
     h("div", { class: "seg" }, [["game", "⚽ Игра"], ["training", "🏃 Тренировка"]].map(([k, l]) =>
       h("button", { class: st.kind === k ? "on" : "", onclick: () => { st.kind = k; render(); } }, l))),
+    st.kind === "game" ? h("div", {},
+      h("div", { class: "label" }, "🆚 Против кого (необязательно)"),
+      h("input", { class: "field", placeholder: "Название команды соперника", value: st.opponent, maxlength: 80,
+        oninput: (e) => { st.opponent = e.target.value; } }),
+      (S.data.opponents || []).length ? h("div", { class: "people", style: "margin-top:6px" }, S.data.opponents.map((o) =>
+        h("button", { class: "chip" + (st.opponent === o ? " accent" : ""), onclick: () => { st.opponent = st.opponent === o ? "" : o; render(); } }, o))) : null) : null,
     h("div", { class: "label" }, "День"),
     h("div", { class: "pick" }, days.map(([iso, top, bottom]) =>
       h("button", { class: st.date === iso ? "on" : "", onclick: () => { st.date = iso; haptic(); render(); } }, top, h("small", {}, bottom)))),
@@ -1276,8 +1282,8 @@ function createSheet() {
       onclick: async (e) => {
         e.target.disabled = true;
         const r = ed
-          ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, min_players: st.min })
-          : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url,
+          ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, min_players: st.min, opponent: st.opponent })
+          : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, opponent: st.opponent,
               min_players: st.min, repeat: st.repeat, open_days_before: st.openDays });
         if (r) { haptic("ok"); S.sheet = { type: "created", edited: !!ed, scheduled: !!r.scheduled, note: r.note || r.message, wa: r.whatsapp }; render(); } else e.target.disabled = false;
       } }, ready ? (pollLater ? "Сохранить расписание" : `${ed ? "Сохранить" : "Создать"}: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}`) : "Выберите день и время"),

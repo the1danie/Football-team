@@ -158,6 +158,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "id": game.id,
         "kind": game.kind,
         "kind_title": texts.kind_title(game),
+        "opponent": game.opponent,
         "date_label": texts.fmt_date(game.starts_at, weekday=True),
         "day_word": texts.day_word(game.starts_at, now),
         "time": texts.fmt_time(game.starts_at),
@@ -258,6 +259,7 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
             data["pending_count"] = sum(p.status == UserStatus.PENDING for p in players)
             data["schedules"] = [schedule_view(x) for x in await svc.schedules(session)]
             data["places"] = await svc.places(session)
+            data["opponents"] = await svc.opponents(session)
     return data
 
 
@@ -649,7 +651,7 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                     }
             game, poll_report, hint, announce = await operations.create_game(
                 bot, session, user, body.get("kind", "game"), starts_at, body.get("location"),
-                min_players, schedule.id if schedule else None, body.get("location_url"),
+                min_players, schedule.id if schedule else None, body.get("location_url"), body.get("opponent"),
             )
             if schedule and not schedule.location_url:
                 schedule.location_url = game.location_url
@@ -739,6 +741,7 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             changes, wa = await operations.update_game(
                 bot, session, game, body.get("kind", game.kind), starts_at, body.get("location"),
                 int(body.get("min_players") or 0), body.get("location_url"),
+                body["opponent"] if "opponent" in body else ...,
             )
             await session.flush()
             return {

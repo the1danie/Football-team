@@ -183,6 +183,7 @@ async def create_game(
     min_players: int | None = None,
     schedule_id: int | None = None,
     location_url: str | None = None,
+    opponent: str | None = None,
 ) -> tuple[Game, str, str, str]:
     """Создать игру, опубликовать в Telegram-группу (если есть), разослать опрос.
 
@@ -197,6 +198,7 @@ async def create_game(
     game = await svc.create_game(
         session, kind, starts_at, (location or "").strip()[:255] or None, creator, min_players, schedule_id
     )
+    game.opponent = texts.clean_opponent(opponent) if kind == "game" else None
     # Ссылка на карту: вставленная или запомненная для этого места.
     game.location_url = texts.normalize_map_url(location_url) or await svc.known_place_url(session, game.location)
     # Сначала сохранить игру, потом рассылать: если запрос дальше оборвётся (сбой, таймаут),
@@ -235,6 +237,7 @@ async def update_game(
     location: str | None,
     min_players: int | None,
     location_url: str | None = None,
+    opponent: object = ...,  # ... — не менять
 ) -> tuple[list[str], str]:
     """Изменить игру. Возвращает (что поменялось, текст для WhatsApp).
 
@@ -281,6 +284,11 @@ async def update_game(
     if kind != game.kind:
         changes.append(f"{texts.KIND_TITLES[kind]} (было: {texts.KIND_TITLES.get(game.kind, '')})")
         game.kind = kind
+    new_opponent = (texts.clean_opponent(opponent) if opponent is not ... else game.opponent) if kind == "game" else None
+    if new_opponent != game.opponent:
+        if kind == "game":
+            changes.append(f"🆚 Соперник: {new_opponent or 'не указан'}" + (f" (было: {game.opponent})" if game.opponent else ""))
+        game.opponent = new_opponent
     if (min_players or None) != game.min_players:
         changes.append(f"Минимум игроков: {min_players or 'без минимума'}")
         game.min_players = min_players or None

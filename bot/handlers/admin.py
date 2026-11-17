@@ -27,6 +27,7 @@ class NewGame(StatesGroup):
     date = State()
     time = State()
     kind = State()
+    opponent = State()
     location = State()
     confirm = State()
 
@@ -125,9 +126,31 @@ async def new_game_time_text(message: Message, state: FSMContext):
 @router.callback_query(NewGame.kind, F.data.startswith("newkind:"))
 async def new_game_kind(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.update_data(kind=cb.data.split(":", 1)[1])
+    kind = cb.data.split(":", 1)[1]
+    await state.update_data(kind=kind, opponent=None)
+    if kind == "game":  # игра — против кого
+        await state.set_state(NewGame.opponent)
+        await cb.message.answer("🆚 Против кого играем? Напишите название команды или пропустите:",
+                                reply_markup=keyboards.skip("newopp:skip"))
+        return
+    await _ask_location(cb.message, state)
+
+
+async def _ask_location(message: Message, state: FSMContext) -> None:
     await state.set_state(NewGame.location)
-    await cb.message.answer("📍 Место (необязательно) — напишите или пропустите:", reply_markup=keyboards.skip())
+    await message.answer("📍 Место (необязательно) — напишите или пропустите:", reply_markup=keyboards.skip())
+
+
+@router.callback_query(NewGame.opponent, F.data == "newopp:skip")
+async def new_game_opponent_skip(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await _ask_location(cb.message, state)
+
+
+@router.message(NewGame.opponent, F.text)
+async def new_game_opponent(message: Message, state: FSMContext):
+    await state.update_data(opponent=texts.clean_opponent(message.text))
+    await _ask_location(message, state)
 
 
 async def _ask_confirm(message: Message, state: FSMContext, location: str | None) -> None:
@@ -135,7 +158,7 @@ async def _ask_confirm(message: Message, state: FSMContext, location: str | None
     await state.set_state(NewGame.confirm)
     data = await state.get_data()
     preview = Game(kind=data["kind"], starts_at=datetime.fromisoformat(data["starts_at"]), location=location,
-                   status=GameStatus.OPEN)
+                   status=GameStatus.OPEN, opponent=data.get("opponent"))
     text = texts.announce_text(preview, {s: [] for s in Rsvp.ALL})
     await message.answer(f"Проверьте:\n\n{text}", reply_markup=keyboards.publish_confirm())
 
@@ -165,7 +188,8 @@ async def new_game_publish(cb: CallbackQuery, session: AsyncSession, state: FSMC
     creator = await svc.get_user_by_tg(session, cb.from_user.id)
     try:
         game, poll_report, hint, announce = await operations.create_game(
-            bot, session, creator, data["kind"], datetime.fromisoformat(data["starts_at"]), data.get("location")
+            bot, session, creator, data["kind"], datetime.fromisoformat(data["starts_at"]), data.get("location"),
+            opponent=data.get("opponent"),
         )
     except operations.OpError as e:
         await cb.answer(str(e), show_alert=True)
