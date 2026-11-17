@@ -83,18 +83,25 @@ async def add_telegram(session: AsyncSession, user: User, telegram_id: int, user
     return True
 
 
-async def remove_telegram(session: AsyncSession, user: User, telegram_id: int) -> None:
-    """Отвязать Telegram (например, потерянный). Основной — только если есть другой: тот станет основным."""
+async def remove_telegram(session: AsyncSession, user: User, telegram_id: int, allow_last: bool = False) -> None:
+    """Отвязать Telegram (например, потерянный). Основной — если есть другой, тот станет основным.
+
+    allow_last — телефон потерян, а другого Telegram нет: игрок становится «без Telegram» (как добавленный
+    вручную) — история, минусы и рейтинг остаются, новый Telegram привяжется по приглашению или ссылке."""
     from bot.models import UserTelegram  # noqa: PLC0415
 
     extras = (await session.scalars(
         select(UserTelegram).where(UserTelegram.user_id == user.id).order_by(UserTelegram.created_at))).all()
     if telegram_id == user.telegram_id:
         if not extras:
-            raise TelegramLinkError("Это единственный Telegram игрока — сначала привяжите другой.")
-        new = extras[0]
-        user.telegram_id, user.username = new.telegram_id, new.username
-        await session.delete(new)
+            if not allow_last:
+                raise TelegramLinkError("Это единственный Telegram игрока — сначала привяжите другой.")
+            lowest = await session.scalar(select(func.min(User.telegram_id)))
+            user.telegram_id, user.username = min(-1, (lowest or 0) - 1), None
+        else:
+            new = extras[0]
+            user.telegram_id, user.username = new.telegram_id, new.username
+            await session.delete(new)
     else:
         row = next((t for t in extras if t.telegram_id == telegram_id), None)
         if row is None:

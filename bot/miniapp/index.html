@@ -1404,6 +1404,10 @@ function addPlayerSheet() {
       if (r) { haptic("ok"); S.players = r.players; S.playerFilter = "approved"; await api("state", {}, { quiet: true }); openSheet({ type: "player", player: r.player }); } } }, "Добавить"));
 }
 
+async function giveTgLink(p) {
+  const r = await api("player_tg_link", { user_id: p.id });
+  if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: `Ссылка для нового Telegram — ${p.name} (отправьте лично)` });
+}
 async function invitePlayer(p) {
   const r = await api("player_invite", { user_id: p.id });
   if (r) openSheet({ type: "whatsapp", text: r.text, url: r.url, title: `Приглашение для ${p.name} (лично, не в группу)` });
@@ -1696,10 +1700,16 @@ function playerSheet() {
       h("div", { style: "font-weight:600;margin-bottom:6px" }, "📱 Telegram-аккаунты"),
       p.accounts.map((a) => h("div", { class: "switch-row", style: "padding:6px 0" },
         h("div", { class: "grow" }, (a.username ? "@" + a.username : "id " + a.telegram_id) + (a.primary ? " — основной" : "")),
-        p.accounts.length > 1 ? h("button", { class: "btn small secondary", onclick: async () => {
-          if (!(await confirmBox(`Отвязать ${a.username ? "@" + a.username : "этот Telegram"} от ${p.name}? С него бот больше не будет узнавать игрока.`))) return;
-          const r = await api("player_tg_remove", { user_id: p.id, telegram_id: a.telegram_id }); if (r) { S.sheet.player = r.player; render(); } } }, "Отвязать") : null)),
-      h("div", { class: "small muted", style: "margin-top:4px" }, "Потерял доступ — пусть зайдёт в бота с нового аккаунта, а вы в его заявке нажмите «Это второй Telegram игрока…».")) : null,
+        h("button", { class: "btn small " + (p.accounts.length > 1 ? "secondary" : "danger"), onclick: async () => {
+          const who = a.username ? "@" + a.username : "этот Telegram";
+          const q = p.accounts.length > 1
+            ? `Отвязать ${who} от ${p.name}? С него бот больше не будет узнавать игрока.`
+            : `Удалить ${who} у ${p.name}? Например, телефон потерян. Игрок останется в команде (минусы, рейтинг — всё сохранится), а новый Telegram привяжется по ссылке.`;
+          if (!(await confirmBox(q))) return;
+          const r = await api("player_tg_remove", { user_id: p.id, telegram_id: a.telegram_id }); if (r) { S.sheet.player = r.player; render(); } } },
+          p.accounts.length > 1 ? "Отвязать" : "Удалить"))),
+      h("button", { class: "btn small secondary", style: "margin-top:8px", onclick: () => giveTgLink(p) }, "📲 Ссылка для нового Telegram"),
+      h("div", { class: "small muted", style: "margin-top:6px" }, "Потерял телефон: «Удалить» старый Telegram → «📲 Ссылка для нового Telegram» → отправьте игроку (WhatsApp, SMS). Открыв её с нового аккаунта, он снова в команде — всё сохранится.")) : null,
     p.manual ? h("div", { class: "card" },
       h("div", { style: "font-weight:600" }, "✍️ Добавлен вручную — ещё не в Telegram"),
       h("div", { class: "small muted", style: "margin:4px 0 10px" }, "Получает минусы за молчание. Отмечайте за него в карточке игры (нажмите на имя) или отправьте приглашение: по ссылке он зайдёт в бота, и Telegram привяжется к этому профилю. В приглашении есть и ссылка на сайт — можно без Telegram."),

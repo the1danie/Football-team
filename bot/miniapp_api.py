@@ -386,7 +386,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "team_invite", "publish_now", "player_tg_remove", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "team_invite", "publish_now", "player_tg_remove", "player_tg_link", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel", "penalize_silent", "late", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo", "redo_duty",
 }
 
@@ -992,12 +992,30 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         elif action == "player_tg_remove":
             target = await _user(session, body.get("user_id"))
             try:
-                await svc.remove_telegram(session, target, int(body.get("telegram_id") or 0))
+                await svc.remove_telegram(session, target, int(body.get("telegram_id") or 0), allow_last=True)
             except svc.TelegramLinkError as e:
                 raise ApiError(str(e)) from e
             await audit.record(session, f"🔗 {target.name}: отвязал Telegram")
             await session.flush()
-            return {"note": "Telegram отвязан", "player": await player_view(session, target, True), **await players_view(session)}
+            note = ("Telegram удалён. Игрок в команде как «без Telegram» — отправьте ему ссылку для нового Telegram."
+                    if target.is_manual else "Telegram отвязан")
+            return {"note": note, "player": await player_view(session, target, True), **await players_view(session)}
+        elif action == "player_tg_link":  # админ выдаёт ссылку: открыть с нового Telegram — привяжется
+            target = await _user(session, body.get("user_id"))
+            if target.status != UserStatus.APPROVED:
+                raise ApiError("Сначала примите игрока в команду.")
+            from bot.weblink import link_payload, tg2_payload  # noqa: PLC0415
+
+            bot_name = (await bot.me()).username
+            if target.is_manual:  # Telegram нет совсем — обычное приглашение
+                tg_link = f"https://t.me/{bot_name}?start={link_payload(target)}"
+                text = whatsapp.manual_invite(target.name, tg_link, web_link(target))
+            else:
+                tg_link = f"https://t.me/{bot_name}?start={tg2_payload(target, ttl=7 * 24 * 3600)}"
+                text = (f"{target.name}, привет! Чтобы привязать новый Telegram к команде, открой эту ссылку "
+                        f"с нового аккаунта (действует 7 дней, никому не пересылай):\n{tg_link}")
+            await audit.record(session, f"📲 {target.name}: выдал ссылку для нового Telegram")
+            return {"tg_link": tg_link, "text": text, "url": whatsapp.share_url(text)}
         elif action == "tg2_link":
             from bot.handlers.common import tg2_text  # noqa: PLC0415
             from bot.weblink import tg2_payload  # noqa: PLC0415

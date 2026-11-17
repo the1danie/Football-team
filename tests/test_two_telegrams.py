@@ -57,9 +57,46 @@ async def test_admin_links_new_account_and_unlinks_old(team):  # noqa: F811
     # старый отвязали — основным стал новый; последний отвязать нельзя
     _, res = await api(APP_ADMIN, "player_tg_remove", user_id=rid, telegram_id=2)
     assert [(a["telegram_id"], a["primary"]) for a in res["player"]["accounts"]] == [(9, True)]
-    assert (await api(APP_ADMIN, "player_tg_remove", user_id=rid, telegram_id=9))[0] == 400
     assert (await api(rustam, "state"))[1]["state"]["access"] == "new"  # со старого — больше не он
     assert (await api(new, "player_tg_remove", user_id=rid, telegram_id=9))[0] == 403  # только админ
+
+
+async def test_lost_phone_remove_only_telegram_and_give_new(team, monkeypatch):  # noqa: F811
+    """Потерял телефон: админ удаляет единственный Telegram — игрок остаётся (история цела); ссылка для нового."""
+    from bot import webhook
+    from bot.models import Penalty
+    from tests.test_webhook import start_update  # noqa: F401
+
+    monkeypatch.setattr(config, "bot_token", "42:TEST")
+    rustam = tg_user(2, "Рустам")
+    await api(rustam, "register", car=False)
+    _, pl = await api(APP_ADMIN, "players")
+    rid = next(p["id"] for p in pl["players"] if p["name"] == "Рустам")
+    await api(APP_ADMIN, "player", user_id=rid, op="approve")
+    async with webhook._sessionmaker() as s:
+        s.add(Penalty(user_id=rid, points=1))
+        await s.commit()
+    # ссылка для нового Telegram, пока старый ещё привязан — tg2 на 7 дней
+    _, r = await api(APP_ADMIN, "player_tg_link", user_id=rid)
+    assert "start=tg2_" in r["tg_link"] and "7 дней" in r["text"]
+    # удалить единственный — игрок «без Telegram», минус на месте
+    _, res = await api(APP_ADMIN, "player_tg_remove", user_id=rid, telegram_id=2)
+    assert res["player"]["manual"] is True and res["player"]["accounts"] == [] and "без Telegram" in res["note"]
+    assert (await api(rustam, "state"))[1]["state"]["access"] == "new"
+    async with webhook._sessionmaker() as s:
+        assert (await svc.open_penalty_points(s, [rid]))[rid] == 1
+    # теперь ссылка — обычное приглашение; открыли с нового Telegram — снова в команде
+    _, r = await api(APP_ADMIN, "player_tg_link", user_id=rid)
+    assert "start=link_" in r["tg_link"]
+    async with webhook._sessionmaker() as s:
+        user = await s.get(svc.User, rid)
+        from bot import operations
+
+        await operations.link_account(webhook.make_bot(), s, user, 44, "rustam_new")
+        await s.commit()
+    _, st = await api(tg_user(44, "Рустам"), "state")
+    assert st["state"]["user"]["id"] == rid and st["state"]["access"] == "ok"
+    assert st["state"]["user"]["minuses"] == 1
 
 
 async def test_admin_second_account_is_admin(team):  # noqa: F811

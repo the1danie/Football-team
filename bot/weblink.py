@@ -59,9 +59,9 @@ def _tg2_sig(user_id: int, exp: int) -> str:
     return hmac.new(_web_key(config.bot_token), f"tg2:{user_id}:{exp}".encode(), hashlib.sha256).hexdigest()[:12]
 
 
-def tg2_payload(user: User, now: float | None = None) -> str:
+def tg2_payload(user: User, now: float | None = None, ttl: int = TG2_TTL) -> str:
     """Параметр для t.me/<бот>?start=… — привязать к игроку ещё один Telegram (открыть с другого аккаунта)."""
-    exp = int((now or time.time()) + TG2_TTL)
+    exp = int((now or time.time()) + ttl)
     return f"tg2_{user.id}_{exp}_{_tg2_sig(user.id, exp)}"
 
 
