@@ -14,7 +14,7 @@ from aiogram import Bot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, audit, discipline, periods, operations, photos, texts, whatsapp
+from bot import actions, audit, discipline, periods, results, operations, photos, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
@@ -159,6 +159,7 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "kind": game.kind,
         "kind_title": texts.kind_title(game),
         "opponent": game.opponent,
+        "result": await results.view(session, game, me, is_admin),
         "date_label": texts.fmt_date(game.starts_at, weekday=True),
         "day_word": texts.day_word(game.starts_at, now),
         "time": texts.fmt_time(game.starts_at),
@@ -823,6 +824,33 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             else:
                 await operations.cancel_game(bot, session, game, tg_id)
                 note = "Игра отменена"
+        elif action in ("result_score", "result_stat", "result_whatsapp"):
+            game = await _game(session, body)
+            try:
+                if action == "result_score":
+                    if not is_admin:
+                        raise ApiError("Счёт вносит админ.", 403)
+                    await results.set_score(session, game, body.get("us"), body.get("them"))
+                    await audit.record(session, f"🏁 Счёт {game.score_us}:{game.score_them}", game)
+                    note = f"Счёт {game.score_us}:{game.score_them} сохранён"
+                elif action == "result_stat":
+                    target = await _user(session, body["user_id"]) if body.get("user_id") else user
+                    if target.id != user.id and not is_admin:
+                        raise ApiError("Чужие голы отмечает админ.", 403)
+                    await results.set_stat(session, game, target, body.get("goals") or 0, body.get("assists") or 0,
+                                           by_admin=is_admin and target.id != user.id)
+                    note = "Сохранено"
+                else:
+                    if not is_admin:
+                        raise ApiError("Только для админа.", 403)
+                    t = await results.whatsapp_text(session, game)
+                    return {"whatsapp": {"text": t, "url": whatsapp.share_url(t)}}
+            except results.ResultError as e:
+                raise ApiError(str(e)) from e
+            await session.flush()
+            if game.status not in GameStatus.ACTIVE:  # прошедшая — вернуть её карточку для архива
+                return {"note": note, "game": await game_view(session, game, user, is_admin, bool(staff_view)),
+                        "state": await state_view(bot, session, tg, user)}
         elif action == "publish_now":
             game = await _game(session, body)
             poll_report, hint, announce = await operations.publish_planned(bot, session, game)

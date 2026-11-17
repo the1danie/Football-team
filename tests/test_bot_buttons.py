@@ -13,12 +13,14 @@ from tests.test_miniapp import team  # noqa: F401
 from tests.test_webhook import fake  # noqa: F401
 
 
-async def _game_with(h: Harness, *yes):
+async def _game_with(h: Harness, *yes, kind="training"):
     await h.text(ADMIN, texts.BTN_CREATE)
     tomorrow = config.now() + timedelta(days=1)
     await h.click(ADMIN, f"newdate:{tomorrow:%Y-%m-%d}")
     await h.text(ADMIN, "20:00")
-    await h.click(ADMIN, "newkind:training")
+    await h.click(ADMIN, f"newkind:{kind}")
+    if kind == "game":
+        await h.click(ADMIN, "newopp:skip")
     await h.text(ADMIN, "Стадион")
     await h.click(ADMIN, "newgame:publish")
     async with h.sm() as s:
@@ -143,3 +145,33 @@ async def test_opponent_change_and_training_has_none(team):  # noqa: F811
     _, res = await api(APP_ADMIN, "update_game", game_id=g["id"], date=day, minutes=19 * 60, kind="training", opponent="Астана")
     t = next(x for x in res["state"]["games"] if x["id"] == g["id"])
     assert t["opponent"] is None and t["kind_title"] == "🏃 Тренировка"
+
+
+async def test_result_buttons_in_bot(h: Harness):
+    from bot.models import GameStat
+
+    fake = h.fake
+    await h.register(ADMIN, "Даниял", car=True)
+    await h.register(2, "Рустам", car=False)
+    gid = await _game_with(h, ADMIN, 2, kind="game")
+    await _move_game(h, gid, timedelta(hours=-2))
+    await h.click(2, f"rs:{gid}:g")
+    await h.click(2, f"rs:{gid}:g")
+    await h.click(2, f"rs:{gid}:a")
+    async with h.sm() as s:
+        rus = await svc.get_user_by_tg(s, 2)
+        row = (await s.scalars(select(GameStat).where(GameStat.user_id == rus.id))).one()
+        assert (row.goals, row.assists) == (2, 1)
+    fake.reset()
+    await h.click(ADMIN, f"res:{gid}")
+    await h.text(ADMIN, "что-то")
+    assert "Не понял" in fake.sent(ADMIN)[-1].text
+    await h.text(ADMIN, "4 - 1")
+    async with h.sm() as s:
+        g = await s.get(Game, gid)
+        assert (g.score_us, g.score_them) == (4, 1)
+    assert any("Счёт: 4:1 — победа" in m.text and "Рустам 2" in m.text for m in fake.sent(ADMIN))
+    await h.click(2, f"rs:{gid}:0")  # сбросил свои
+    async with h.sm() as s:
+        row = (await s.scalars(select(GameStat).where(GameStat.user_id == rus.id))).one()
+        assert (row.goals, row.assists) == (0, 0)

@@ -291,6 +291,25 @@ async def game_card(
     return "\n".join(lines), (markup if markup.inline_keyboard else None)
 
 
+async def ask_result(bot: Bot, session: AsyncSession, game: Game) -> None:
+    """Игра прошла: админам — «какой счёт?», пришедшим — кнопки «+1 гол / +1 пас» (по одному сообщению)."""
+    from bot import results  # noqa: PLC0415
+
+    game.result_asked = True
+    if not results.has_result(game):
+        return
+    header = texts.game_header(game)
+    ask = InlineKeyboardBuilder()
+    ask.button(text="✍️ Ввести счёт", callback_data=f"res:{game.id}")
+    for admin_id in config.all_admin_ids:
+        await notifier.send_raw(bot, admin_id, f"🏁 <b>{header}</b> — как сыграли? Нажмите и пришлите счёт, например 5:3.",
+                                keyboards.with_app_button(ask.as_markup(), game.id))
+    for user in (await svc.participants_by_status(session, game.id))[Rsvp.YES]:
+        if await results.was_there(session, game, user):
+            await notifier.send_dm(bot, user, f"⚽ <b>{header}</b>\nЗабил или отдал голевой пас? Отметь себе:",
+                                   keyboards.with_app_button(keyboards.my_stat(game.id), game.id))
+
+
 async def whatsapp_snapshot(bot: Bot, session: AsyncSession, game: Game) -> str:
     """Текущее состояние игры для WhatsApp: кто идёт или, после распределения, обязанности."""
     link = await whatsapp.game_link(bot, game)

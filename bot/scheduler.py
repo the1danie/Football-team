@@ -97,6 +97,8 @@ async def _process_game(bot: Bot, session: AsyncSession, game: Game, now) -> Non
             await actions.redeem_and_announce(bot, session, game)
         game.status = GameStatus.FINISHED
         await notifier.refresh_game(bot, session, game)
+        if not game.result_asked:
+            await actions.ask_result(bot, session, game)
         return
 
     # Закрытие сбора: минусы, «Не буду», распределение — админам одной сводкой и одним текстом для WhatsApp.

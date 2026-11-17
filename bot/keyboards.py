@@ -107,6 +107,15 @@ def game_admin(game: Game) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
+def my_stat(game_id: int) -> InlineKeyboardMarkup:
+    """После игры: игрок сам отмечает гол / голевой пас."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚽ +1 гол", callback_data=f"rs:{game_id}:g"),
+         InlineKeyboardButton(text="🅰️ +1 пас", callback_data=f"rs:{game_id}:a")],
+        [InlineKeyboardButton(text="↩️ Сбросить мои", callback_data=f"rs:{game_id}:0")],
+    ])
+
+
 LATE_MINUTES = (5, 10, 15, 20, 30, 45, 60)
 
 

@@ -115,6 +115,10 @@ class Game(Base):
     kind: Mapped[str] = mapped_column(String(16), default="game")  # game / training
     # Отложенная публикация: когда бот разошлёт опрос (игра до этого в статусе PLANNED).
     publish_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Счёт после игры (вносит админ): наши голы : голы соперника. None — ещё не внесли.
+    score_us: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score_them: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result_asked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Против кого игра (только для «Игры»; у тренировки — нет).
     opponent: Mapped[str | None] = mapped_column(String(80), nullable=True)
     # Локальное время команды (см. config.timezone).
@@ -371,3 +375,17 @@ class DutyTransfer(Base):
     to_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     kind: Mapped[str] = mapped_column(String(16), default="swap")  # swap | dropped
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class GameStat(Base):
+    """Голы и голевые пасы игрока в игре (отмечает сам или админ)."""
+
+    __tablename__ = "game_stats"
+    __table_args__ = (UniqueConstraint("game_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    game_id: Mapped[int] = mapped_column(ForeignKey("games.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    goals: Mapped[int] = mapped_column(Integer, default=0)
+    assists: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

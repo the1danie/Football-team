@@ -1188,6 +1188,12 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
             .group_by(GameParticipant.user_id)
         )).all()
     )
+    from bot.models import GameStat  # noqa: PLC0415
+
+    ga = {uid: (g or 0, a or 0) for uid, g, a in (await session.execute(
+        select(GameStat.user_id, func.sum(GameStat.goals), func.sum(GameStat.assists))
+        .join(Game, GameStat.game_id == Game.id).where(*played).group_by(GameStat.user_id)
+    )).all()}
     pen_q = select(Penalty.user_id, Penalty.reason, func.sum(Penalty.points)).where(
         Penalty.status.not_in((PenaltyStatus.CANCELLED, PenaltyStatus.BURPEES))
     )
@@ -1217,6 +1223,8 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
             "duties": duties.get(u.id, 0), "games": games.get(u.id, 0),
             "minuses": minuses.get(u.id, 0), "no_shows": no_shows.get(u.id, 0),
             "balance": duties.get(u.id, 0) - minuses.get(u.id, 0),  # итог: помощь минус минусы
+            "goals": ga.get(u.id, (0, 0))[0], "assists": ga.get(u.id, (0, 0))[1],
+            "ga": sum(ga.get(u.id, (0, 0))),  # гол + пас
         }
         for u in users
     ]
