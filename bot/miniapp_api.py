@@ -260,6 +260,14 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
             data["schedules"] = [schedule_view(x) for x in await svc.schedules(session)]
             data["places"] = await svc.places(session)
             data["opponents"] = await svc.opponents(session)
+            data["planned"] = [{
+                "id": g.id, "kind": g.kind, "kind_title": texts.kind_title(g), "opponent": g.opponent,
+                "date_label": texts.fmt_date(g.starts_at, weekday=True), "time": texts.fmt_time(g.starts_at),
+                "date_iso": g.starts_at.date().isoformat(), "minutes": g.starts_at.hour * 60 + g.starts_at.minute,
+                "location": g.location, "location_url": g.location_url, "min_players": g.min_players or 0,
+                "publish_label": f"{texts.fmt_date(g.publish_at, weekday=True)} в {texts.fmt_time(g.publish_at)}"
+                if g.publish_at else "—",
+            } for g in await svc.planned_games(session)]
     return data
 
 
@@ -377,7 +385,7 @@ class ApiError(Exception):
 
 PUBLIC_ACTIONS = {"state", "register"}
 ADMIN_ACTIONS = {
-    "team_invite", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
+    "team_invite", "publish_now", "attendance", "duties", "duty_update", "min_decide", "update_game", "create_game", "schedule_update", "schedule_delete", "distribute", "cancel", "assign", "players", "player", "player_detail", "whatsapp",
     "penalty_cancel", "penalize_silent", "late", "player_add", "player_invite", "rsvp_for", "delete_game", "player_web_link", "player_pin", "undistribute", "duty_failed", "duty_failed_undo", "redo_duty",
 }
 
@@ -649,10 +657,16 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                         ),
                         "state": await state_view(bot, session, tg, user),
                     }
+            publish_days = 0 if schedule else max(0, min(14, int(body.get("publish_days") or 0)))
+            publish_at = starts_at - timedelta(days=publish_days) if publish_days else None
             game, poll_report, hint, announce = await operations.create_game(
                 bot, session, user, body.get("kind", "game"), starts_at, body.get("location"),
                 min_players, schedule.id if schedule else None, body.get("location_url"), body.get("opponent"),
+                publish_at,
             )
+            if game.status == GameStatus.PLANNED:
+                return {"scheduled": True, "planned": True, "message": poll_report,
+                        "state": await state_view(bot, session, tg, user)}
             if schedule and not schedule.location_url:
                 schedule.location_url = game.location_url
             if schedule:
@@ -801,8 +815,20 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                 raise ApiError("Отменить распределение может только главный админ.", 403)
             note = await operations.undistribute(bot, session, await _game(session, body))
         elif action == "cancel":
-            await operations.cancel_game(bot, session, await _game(session, body), tg_id)
-            note = "Игра отменена"
+            game = await _game(session, body)
+            if game.status == GameStatus.PLANNED:  # ещё не выложена — никому не сообщаем, просто убираем
+                game.status = GameStatus.DELETED
+                await audit.record(session, "🗑 Удалил (не была выложена)", game)
+                note = "Игра удалена — опрос не уходил"
+            else:
+                await operations.cancel_game(bot, session, game, tg_id)
+                note = "Игра отменена"
+        elif action == "publish_now":
+            game = await _game(session, body)
+            poll_report, hint, announce = await operations.publish_planned(bot, session, game)
+            return {"game_id": game.id, "note": f"{poll_report}\n{hint}",
+                    "whatsapp": {"text": announce, "url": whatsapp.share_url(announce)},
+                    "state": await state_view(bot, session, tg, user)}
         elif action == "assign":
             game = await _game(session, body)
             duty = await session.get(Duty, int(body.get("duty_id", 0)))

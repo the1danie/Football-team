@@ -184,9 +184,11 @@ async def create_game(
     schedule_id: int | None = None,
     location_url: str | None = None,
     opponent: str | None = None,
+    publish_at: datetime | None = None,
 ) -> tuple[Game, str, str, str]:
     """Создать игру, опубликовать в Telegram-группу (если есть), разослать опрос.
 
+    publish_at в будущем — игра сохраняется, но опрос уйдёт только тогда (до этого игроки её не видят).
     Возвращает (игра, отчёт о рассылке, подсказка о сроках, анонс для WhatsApp).
     """
     if kind not in texts.KIND_TITLES:
@@ -201,9 +203,41 @@ async def create_game(
     game.opponent = texts.clean_opponent(opponent) if kind == "game" else None
     # Ссылка на карту: вставленная или запомненная для этого места.
     game.location_url = texts.normalize_map_url(location_url) or await svc.known_place_url(session, game.location)
+    if publish_at is not None and publish_at > config.now():
+        if publish_at > rsvp_deadline(game) - timedelta(hours=1):
+            raise OpError("Слишком поздно: опрос должен уйти хотя бы за час до закрытия сбора.")
+        game.status, game.publish_at = GameStatus.PLANNED, publish_at
+        await session.flush()
+        await audit.record(session, f"📅 Создал, опрос уйдёт {texts.fmt_date(publish_at, weekday=True)} в {texts.fmt_time(publish_at)}", game)
+        return game, planned_note(game), "", ""
     # Сначала сохранить игру, потом рассылать: если запрос дальше оборвётся (сбой, таймаут),
     # у игроков не останется опроса на игру, которой нет в базе.
     await session.commit()
+    poll_report, hint, announce = await _publish(bot, session, game, creator)
+    await audit.record(session, "➕ Создал", game)
+    return game, poll_report, hint, announce
+
+
+def planned_note(game: Game) -> str:
+    return (f"📅 Сохранено. Опрос игрокам уйдёт {texts.fmt_date(game.publish_at, weekday=True)} "
+            f"в {texts.fmt_time(game.publish_at)} — тогда же придёт анонс для WhatsApp. До этого игроки игру не видят.")
+
+
+async def publish_planned(bot: Bot, session: AsyncSession, game: Game) -> tuple[str, str, str]:
+    """Выложить заранее созданную игру: разослать опрос (по времени или «Выложить сейчас»)."""
+    if game.status != GameStatus.PLANNED:
+        raise OpError("Игра уже выложена.")
+    if game.starts_at <= config.now():
+        raise OpError("Время игры уже прошло — измените время или удалите.")
+    game.status, game.publish_at = GameStatus.OPEN, None
+    game.created_at = datetime.utcnow()  # «создана сейчас»: сроки и минусы — от момента опроса
+    await session.commit()
+    result = await _publish(bot, session, game, None)
+    await audit.record(session, "📣 Выложил (опрос ушёл)", game)
+    return result
+
+
+async def _publish(bot: Bot, session: AsyncSession, game: Game, creator: User | None) -> tuple[str, str, str]:
     chat_id = await notifier.group_chat_id(session)
     if chat_id is not None:
         await notifier.publish_game(bot, session, game, chat_id)
@@ -224,8 +258,7 @@ async def create_game(
         )
 
     announce = whatsapp.clean(whatsapp.announce(game, deadline, now, await whatsapp.game_link(bot, game)))
-    await audit.record(session, "➕ Создал", game)
-    return game, poll_report, " ".join(hint), announce
+    return poll_report, " ".join(hint), announce
 
 
 async def update_game(
@@ -243,7 +276,8 @@ async def update_game(
 
     Отметившимся и назначенным — личное сообщение с изменениями.
     """
-    _require_active(game)
+    if game.status != GameStatus.PLANNED:
+        _require_active(game)
     if kind not in texts.KIND_TITLES:
         raise OpError("Выберите: игра или тренировка.")
     if starts_at <= config.now():
@@ -258,6 +292,10 @@ async def update_game(
             f"🕗 {texts.fmt_date(game.starts_at, weekday=True)}, {texts.fmt_time(game.starts_at)} → "
             f"{texts.fmt_date(starts_at, weekday=True)}, {texts.fmt_time(starts_at)}"
         )
+        if game.status == GameStatus.PLANNED and game.publish_at:  # опрос сдвигается вместе с игрой
+            game.publish_at += starts_at - game.starts_at
+            if game.publish_at <= config.now():
+                game.publish_at = config.now()
         game.starts_at = starts_at
         # Напоминания — заново под новое время.
         game.personal_reminder_sent = False

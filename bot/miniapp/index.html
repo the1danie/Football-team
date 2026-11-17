@@ -543,10 +543,30 @@ function gamesTab() {
   const head = h("div", { class: "head-row" }, h("h1", {}, "Игры"),
     d.is_admin ? h("button", { class: "chip accent", style: "padding:7px 12px", onclick: () => openSheet({ type: "schedules" }) },
       `🔁 Расписание${d.schedules && d.schedules.length ? " · " + d.schedules.filter((x) => x.active).length : ""}`) : null);
+  if (!d.games.length && (d.planned || []).length) return h("div", {}, head, plannedSection(), archiveSection());
   if (!d.games.length) return h("div", {}, head, h("div", { class: "card empty" }, h("div", { class: "big" }, "🏟"),
     h("p", {}, "Запланированных игр нет."), d.is_admin ? h("p", { class: "muted small" }, "Создайте игру кнопкой «＋ Новая игра».") : h("p", { class: "muted small" }, "Когда админ создаст игру, бот пришлёт сообщение.")),
     archiveSection());
-  return h("div", {}, head, webBanner(), saveBanner(), d.games.map(gameCard), archiveSection());
+  return h("div", {}, head, webBanner(), saveBanner(), plannedSection(), d.games.map(gameCard), archiveSection());
+}
+
+// Созданы заранее: опрос ещё не ушёл — видит только админ.
+function plannedSection() {
+  const list = S.data.planned || [];
+  if (!list.length) return null;
+  return h("div", {}, list.map((g) => h("div", { class: "card", style: "border:2px dashed var(--sep)" },
+    h("div", { class: "head-row" }, h("div", { style: "font-weight:700" }, `${g.date_label} · ${g.time}`), h("span", { class: "chip" }, g.kind_title)),
+    g.location ? h("div", { class: "small muted", style: "margin-top:4px" }, `📍 ${g.location}`) : null,
+    h("div", { class: "banner info" }, `📅 Опрос уйдёт ${g.publish_label}. Игроки пока не видят эту игру.`),
+    h("div", { class: "admin-bar" },
+      h("button", { class: "btn small secondary", onclick: async () => {
+        if (!(await confirmBox(`Выложить сейчас? Игрокам сразу уйдёт опрос: ${g.kind_title}, ${g.date_label} ${g.time}.`))) return;
+        const r = await api("publish_now", { game_id: g.id });
+        if (r) { haptic("ok"); S.sheet = { type: "created", note: r.note, wa: r.whatsapp }; render(); } } }, "📣 Выложить сейчас"),
+      h("button", { class: "btn small secondary", onclick: () => openSheet({ type: "create", edit: g }) }, "✏️ Изменить"),
+      h("button", { class: "btn small danger", onclick: async () => {
+        if (!(await confirmBox("Удалить? Опрос ещё не уходил — никому не придёт сообщение."))) return;
+        const r = await api("cancel", { game_id: g.id }); if (r) render(); } }, "🗑 Удалить")))));
 }
 
 // ---------------------------------------------------------------- сайт: сохранить на телефон
@@ -1205,7 +1225,7 @@ function createSheet() {
     ? { date: ed.date_iso, minutes: ed.minutes, kind: ed.kind, location: ed.location || "", url: ed.location_url || "", opponent: ed.opponent || "", custom: ed.minutes < 13 * 60 || ed.minutes % 30 !== 0,
         min: ed.min_players || 0, repeat: false, openDays: 2 }
     : { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", url: "", opponent: "", custom: false,
-        min: 0, repeat: !!S.sheet.repeat, openDays: 2 });
+        min: 0, repeat: !!S.sheet.repeat, openDays: 2, publishDays: 0 });
   const days = [];
   const now = new Date();
   for (let i = 0; i < 14; i++) {
@@ -1227,6 +1247,11 @@ function createSheet() {
   const ready = st.date && st.minutes !== null;
   // Повтор: если до ближайшей тренировки больше «за сколько дней открывать опрос» — опрос уйдёт позже.
   let pollLater = null;
+  if (!ed && !st.repeat && ready && st.publishDays) {
+    const [y, m, dd] = st.date.split("-").map(Number);
+    const opens = new Date(y, m - 1, dd - st.publishDays, 0, st.minutes);
+    if (opens > now) pollLater = opens.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" }) + " в " + label(st.minutes);
+  }
   if (!ed && st.repeat && ready) {
     const [y, m, dd] = st.date.split("-").map(Number);
     const wd = new Date(y, m - 1, dd).getDay();
@@ -1270,11 +1295,16 @@ function createSheet() {
       h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Минимум игроков"),
         h("div", { class: "small muted" }, st.min ? `Если к закрытию сбора «Буду» меньше ${st.min} — бот спросит вас: провести, подождать или отменить.` : "Без минимума — состоится при любом количестве.")),
         stepper(st.min, 0, 30, (v) => { st.min = v; render(); }, (v) => (v ? v : "нет"))),
+      ed || st.repeat ? null : h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "📣 Когда выложить опрос"),
+        h("div", { class: "small muted" }, st.publishDays
+          ? (pollLater ? `Игроки увидят игру и получат опрос ${pollLater}. До этого — только вы.` : "Этот день уже прошёл — опрос уйдёт сразу.")
+          : "Сразу после создания. Или заранее создайте, а бот выложит за несколько дней до игры.")),
+        stepper(st.publishDays, 0, 14, (v) => { st.publishDays = v; render(); }, (v) => (v ? `за ${v} ${plural(v, "день", "дня", "дней")}` : "сразу"))),
       ed ? null : h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "🔁 Повторять каждую неделю"),
         h("div", { class: "small muted" }, st.repeat && st.date
           ? `${cap(everyWeekday(st.date))}${st.minutes !== null ? " в " + label(st.minutes) : ""} — бот сам создаст и разошлёт опрос.`
           : "Например, тренировки по понедельникам и пятницам.")),
-        h("button", { class: "switch" + (st.repeat ? " on" : ""), role: "switch", "aria-checked": st.repeat ? "true" : "false", onclick: () => { st.repeat = !st.repeat; render(); } })),
+        h("button", { class: "switch" + (st.repeat ? " on" : ""), role: "switch", "aria-checked": st.repeat ? "true" : "false", onclick: () => { st.repeat = !st.repeat; st.publishDays = 0; render(); } })),
       st.repeat && !ed ? h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Опрос открывать за"),
         h("div", { class: "small muted" }, "Сколько дней до тренировки бот создаёт её и присылает опрос.")),
         stepper(st.openDays, 1, 6, (v) => { st.openDays = v; render(); }, (v) => `${v} ${plural(v, "день", "дня", "дней")}`)) : null),
@@ -1284,12 +1314,12 @@ function createSheet() {
         const r = ed
           ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, min_players: st.min, opponent: st.opponent })
           : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, opponent: st.opponent,
-              min_players: st.min, repeat: st.repeat, open_days_before: st.openDays });
-        if (r) { haptic("ok"); S.sheet = { type: "created", edited: !!ed, scheduled: !!r.scheduled, note: r.note || r.message, wa: r.whatsapp }; render(); } else e.target.disabled = false;
+              min_players: st.min, repeat: st.repeat, open_days_before: st.openDays, publish_days: st.repeat ? 0 : st.publishDays });
+        if (r) { haptic("ok"); S.sheet = { type: "created", edited: !!ed, scheduled: !!r.scheduled, planned: !!r.planned, note: r.note || r.message, wa: r.whatsapp }; render(); } else e.target.disabled = false;
       } }, ready ? (pollLater ? "Сохранить расписание" : `${ed ? "Сохранить" : "Создать"}: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}`) : "Выберите день и время"),
     h("p", { class: "muted small", style: "margin:8px 4px 0" }, ed
       ? "Всем, кто отметился, бот напишет, что изменилось. Текст для WhatsApp — на следующем шаге."
-      : pollLater ? `🔁 Сейчас ничего не уйдёт: опрос игрокам бот пришлёт ${pollLater}.`
+      : pollLater ? `${st.repeat ? "🔁" : "📅"} Сейчас ничего не уйдёт: опрос игрокам бот пришлёт ${pollLater}.`
       : "Игрокам придёт опрос в Telegram. Анонс для WhatsApp — на следующем шаге."));
 }
 
@@ -1507,7 +1537,7 @@ function notDoneSheet() {
 
 function createdSheet() {
   const s = S.sheet;
-  if (s.scheduled) return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, "🔁"), h("h3", {}, "Расписание сохранено")),
+  if (s.scheduled) return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, s.planned ? "📅" : "🔁"), h("h3", {}, s.planned ? "Игра запланирована" : "Расписание сохранено")),
     h("div", { class: "card small", style: "white-space:pre-line" }, s.note || ""),
     h("button", { class: "btn secondary", style: "margin-top:8px", onclick: closeSheet }, "Готово"));
   return h("div", {}, h("div", { class: "empty", style: "padding:10px" }, h("div", { class: "big" }, "✅"), h("h3", {}, s.edited ? "Изменения сохранены" : "Игра создана")),

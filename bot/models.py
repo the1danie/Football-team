@@ -18,6 +18,7 @@ class GameStatus:
     FINISHED = "finished"
     CANCELLED = "cancelled"
     DELETED = "deleted"  # удалена админом из архива (тестовая): нигде не показывается и не считается
+    PLANNED = "planned"  # создана заранее, опрос ещё не ушёл (выложится в publish_at) — игроки не видят
 
     ACTIVE = (OPEN, DISTRIBUTED)
     NOT_PLAYED = (CANCELLED, DELETED)
@@ -112,6 +113,8 @@ class Game(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), default="game")  # game / training
+    # Отложенная публикация: когда бот разошлёт опрос (игра до этого в статусе PLANNED).
+    publish_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Против кого игра (только для «Игры»; у тренировки — нет).
     opponent: Mapped[str | None] = mapped_column(String(80), nullable=True)
     # Локальное время команды (см. config.timezone).

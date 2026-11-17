@@ -34,6 +34,24 @@ async def tick(bot: Bot, session: AsyncSession) -> None:
             log.exception("Schedule %s: game not created", schedule.id)
             await session.rollback()
 
+    # Разовые игры, созданные заранее: пора выложить — опрос игрокам и анонс админам.
+    for game in (await session.scalars(select(Game).where(
+            Game.status == GameStatus.PLANNED, Game.publish_at <= now))).all():
+        try:
+            poll_report, hint, announce = await operations.publish_planned(bot, session, game)
+            await notifier.notify_admins(
+                bot, f"📣 Выложена: {texts.game_header(game)}\n\n{poll_report}\n\n<i>{hint}</i>"
+                     "\n\n📤 Анонс для WhatsApp — следующим сообщением 👇")
+            await whatsapp.send_draft(bot, announce)
+            await session.commit()
+        except operations.OpError as e:  # время игры прошло — сообщить, не выкладывать
+            game.publish_at = None
+            await notifier.notify_admins(bot, f"⚠️ {texts.game_header(game)} не выложена: {texts.h(str(e))}")
+            await session.commit()
+        except Exception:
+            log.exception("Planned game %s: publish failed", game.id)
+            await session.rollback()
+
     game_ids = (await session.scalars(select(Game.id).where(Game.status.in_(GameStatus.ACTIVE)))).all()
     for game_id in game_ids:
         game = await session.get(Game, game_id)

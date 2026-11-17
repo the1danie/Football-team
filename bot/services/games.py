@@ -243,6 +243,12 @@ async def upcoming_games(session: AsyncSession, now: datetime, grace_hours: floa
     return list(rows.all())
 
 
+async def planned_games(session: AsyncSession) -> list[Game]:
+    """Созданы заранее, опрос ещё не ушёл."""
+    return list((await session.scalars(
+        select(Game).where(Game.status == GameStatus.PLANNED).order_by(Game.starts_at))).all())
+
+
 async def undistribute(session: AsyncSession, game: Game) -> list[Assignment]:
     """Отменить распределение: назначения снимаются, игра снова «идёт сбор» — бот распределит в срок."""
     dropped = await active_assignments(session, game.id)
