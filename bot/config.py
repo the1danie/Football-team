@@ -77,7 +77,8 @@ class Config:
         or (f"https://{os.environ['VERCEL_PROJECT_PRODUCTION_URL']}" if os.getenv("VERCEL_PROJECT_PRODUCTION_URL") else "")
     )
     # Сбор за столько минут до начала («сбор в 22:30»); 0 — не показывать.
-    gather_minutes: float = field(default_factory=lambda: _float("GATHER_MINUTES", 30))
+    gather_minutes: float = field(default_factory=lambda: _float("GATHER_MINUTES", 30))  # тренировка
+    gather_minutes_game: float = field(default_factory=lambda: _float("GATHER_MINUTES_GAME", 60))  # игра
     # Через сколько минут после начала распределять обязанности «после тренировки».
     # Свой сервер (bot/server.py): пул соединений с базой вместо «одно соединение на вызов» как на Vercel,
     # и встроенный планировщик раз в минуту (cron-job.org не нужен).

@@ -22,6 +22,8 @@ def distribute_at(game: Game) -> datetime | None:
     """
     if config.auto_distribute_hours <= 0:
         return None
+    if getattr(game, "rsvp_deadline_at", None):  # своё закрытие опроса — тогда же и распределение
+        return game.rsvp_deadline_at
     created = created_local(game)
     for hours in (config.auto_distribute_hours, config.personal_reminder_hours):
         moment = game.starts_at - timedelta(hours=hours)
@@ -36,7 +38,19 @@ def rsvp_deadline(game: Game) -> datetime:
     Это момент автораспределения; если оно выключено — за PERSONAL_REMINDER_HOURS до начала.
     Ручное распределение срок не меняет: минусы начисляются только в этот момент.
     """
+    if getattr(game, "rsvp_deadline_at", None):
+        return game.rsvp_deadline_at
     return distribute_at(game) or game.starts_at - timedelta(hours=config.personal_reminder_hours)
+
+
+def default_rsvp_deadline(starts_at: datetime, now: datetime) -> datetime:
+    """Когда закроется опрос «как обычно» у игры, созданной сейчас (для подсказки в форме)."""
+    if config.auto_distribute_hours > 0:
+        for hours in (config.auto_distribute_hours, config.personal_reminder_hours):
+            moment = starts_at - timedelta(hours=hours)
+            if moment > now:
+                return moment
+    return starts_at - timedelta(hours=config.personal_reminder_hours)
 
 
 def rsvp_reminder_at(game: Game) -> datetime | None:

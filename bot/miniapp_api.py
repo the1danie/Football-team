@@ -168,6 +168,8 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "minutes": game.starts_at.hour * 60 + game.starts_at.minute,
         "location": game.location,
         "location_url": game.location_url,
+        "gather_minutes": game.gather_minutes, "rsvp_deadline_custom": game.rsvp_deadline_at.isoformat(timespec="minutes")
+        if game.rsvp_deadline_at else None,
         "map_url": texts.map_url(game.location, game.location_url),
         "map_label": texts.map_label(texts.map_url(game.location, game.location_url)),
         "status": game.status,
@@ -261,11 +263,16 @@ async def state_view(bot: Bot, session: AsyncSession, tg: dict, user: User | Non
             data["schedules"] = [schedule_view(x) for x in await svc.schedules(session)]
             data["places"] = await svc.places(session)
             data["opponents"] = await svc.opponents(session)
+            # Для формы: сбор по умолчанию и как считается закрытие опроса «как обычно».
+            data["time_defaults"] = {"gather_game": int(config.gather_minutes_game), "gather_training": int(config.gather_minutes),
+                                     "auto_hours": config.auto_distribute_hours, "reminder_hours": config.personal_reminder_hours}
             data["planned"] = [{
                 "id": g.id, "kind": g.kind, "kind_title": texts.kind_title(g), "opponent": g.opponent,
                 "date_label": texts.fmt_date(g.starts_at, weekday=True), "time": texts.fmt_time(g.starts_at),
                 "date_iso": g.starts_at.date().isoformat(), "minutes": g.starts_at.hour * 60 + g.starts_at.minute,
                 "location": g.location, "location_url": g.location_url, "min_players": g.min_players or 0,
+                "gather_minutes": g.gather_minutes,
+                "rsvp_deadline_custom": g.rsvp_deadline_at.isoformat(timespec="minutes") if g.rsvp_deadline_at else None,
                 "publish_label": f"{texts.fmt_date(g.publish_at, weekday=True)} в {texts.fmt_time(g.publish_at)}"
                 if g.publish_at else "—",
             } for g in await svc.planned_games(session)]
@@ -397,6 +404,17 @@ TEST_GAME_MAX_YES = 4
 
 def _can_delete(game: Game, yes: int) -> bool:
     return game.status == GameStatus.CANCELLED or yes < TEST_GAME_MAX_YES
+
+
+def _custom_times(body: dict) -> tuple:
+    """Своё время сбора (минут до начала) и закрытия опроса. ... — не прислали (не менять), None — по умолчанию."""
+    gather = ...
+    if "gather_minutes" in body:
+        gather = None if body["gather_minutes"] in (None, "") else int(body["gather_minutes"])
+    deadline = ...
+    if "rsvp_deadline" in body:
+        deadline = datetime.fromisoformat(body["rsvp_deadline"]) if body["rsvp_deadline"] else None
+    return gather, deadline
 
 
 async def _game(session: AsyncSession, body: dict) -> Game:
@@ -659,12 +677,13 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                         ),
                         "state": await state_view(bot, session, tg, user),
                     }
+            gather, deadline = _custom_times(body)
             publish_days = 0 if schedule else max(0, min(14, int(body.get("publish_days") or 0)))
             publish_at = starts_at - timedelta(days=publish_days) if publish_days else None
             game, poll_report, hint, announce = await operations.create_game(
                 bot, session, user, body.get("kind", "game"), starts_at, body.get("location"),
                 min_players, schedule.id if schedule else None, body.get("location_url"), body.get("opponent"),
-                publish_at,
+                publish_at, None if gather is ... else gather, None if deadline is ... else deadline,
             )
             if game.status == GameStatus.PLANNED:
                 return {"scheduled": True, "planned": True, "message": poll_report,
@@ -758,6 +777,7 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
                 bot, session, game, body.get("kind", game.kind), starts_at, body.get("location"),
                 int(body.get("min_players") or 0), body.get("location_url"),
                 body["opponent"] if "opponent" in body else ...,
+                *_custom_times(body),
             )
             await session.flush()
             return {

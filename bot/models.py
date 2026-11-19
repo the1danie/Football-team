@@ -113,6 +113,10 @@ class Game(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(16), default="game")  # game / training
+    # Своё время сбора (минут до начала; 0 — не показывать). None — по умолчанию: игра за час, тренировка за 30 мин.
+    gather_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Своё время закрытия опроса (местное). None — как обычно (в момент автораспределения).
+    rsvp_deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Отложенная публикация: когда бот разошлёт опрос (игра до этого в статусе PLANNED).
     publish_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # Счёт после игры (вносит админ): наши голы : голы соперника. None — ещё не внесли.

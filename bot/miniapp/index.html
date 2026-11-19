@@ -1277,8 +1277,11 @@ function createSheet() {
   const ed = S.sheet.edit;
   const st = S.sheet.form || (S.sheet.form = ed
     ? { date: ed.date_iso, minutes: ed.minutes, kind: ed.kind, location: ed.location || "", url: ed.location_url || "", opponent: ed.opponent || "", custom: ed.minutes < 13 * 60 || ed.minutes % 30 !== 0,
+        gather: ed.gather_minutes ?? null, dl: ed.rsvp_deadline_custom ? "custom" : "default",
+        dlDate: ed.rsvp_deadline_custom ? ed.rsvp_deadline_custom.slice(0, 10) : null, dlTime: ed.rsvp_deadline_custom ? ed.rsvp_deadline_custom.slice(11, 16) : "18:00",
         min: ed.min_players || 0, repeat: false, openDays: 2 }
     : { date: null, minutes: null, kind: S.sheet.repeat ? "training" : "game", location: "", url: "", opponent: "", custom: false,
+        gather: null, dl: "default", dlDate: null, dlTime: "18:00",
         min: 0, repeat: !!S.sheet.repeat, openDays: 2, publishDays: 0 });
   const days = [];
   const now = new Date();
@@ -1337,6 +1340,7 @@ function createSheet() {
     h("div", { class: "row", style: "margin-top:8px" }, h("span", { class: "small muted" }, "или своё:"),
       h("input", { class: "field", type: "time", style: "max-width:140px", value: st.custom && st.minutes !== null ? label(st.minutes) : "",
         onchange: (e) => { const [hh, mm] = e.target.value.split(":").map(Number); if (!isNaN(hh)) { st.minutes = hh * 60 + mm; st.custom = true; render(); } } })),
+    timesBlock(st, ed, days, label),
     h("div", { class: "label" }, "Место (необязательно)"),
     h("input", { class: "field", placeholder: "Например: Стадион Динамо", value: st.location, maxlength: 255, oninput: (e) => { st.location = e.target.value; } }),
     places.length ? h("div", { class: "people" }, places.map((p) => h("button", { class: "chip" + (st.location === p.name ? " accent" : ""),
@@ -1366,8 +1370,8 @@ function createSheet() {
       onclick: async (e) => {
         e.target.disabled = true;
         const r = ed
-          ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, min_players: st.min, opponent: st.opponent })
-          : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, opponent: st.opponent,
+          ? await api("update_game", { game_id: ed.id, date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, min_players: st.min, opponent: st.opponent, ...timesBody(st) })
+          : await api("create_game", { date: st.date, minutes: st.minutes, kind: st.kind, location: st.location, location_url: st.url, opponent: st.opponent, ...timesBody(st),
               min_players: st.min, repeat: st.repeat, open_days_before: st.openDays, publish_days: st.repeat ? 0 : st.publishDays });
         if (r) { haptic("ok"); S.sheet = { type: "created", edited: !!ed, scheduled: !!r.scheduled, planned: !!r.planned, note: r.note || r.message, wa: r.whatsapp }; render(); } else e.target.disabled = false;
       } }, ready ? (pollLater ? "Сохранить расписание" : `${ed ? "Сохранить" : "Создать"}: ${days.find((d) => d[0] === st.date)[1]}, ${label(st.minutes)}`) : "Выберите день и время"),
@@ -1375,6 +1379,49 @@ function createSheet() {
       ? "Всем, кто отметился, бот напишет, что изменилось. Текст для WhatsApp — на следующем шаге."
       : pollLater ? `${st.repeat ? "🔁" : "📅"} Сейчас ничего не уйдёт: опрос игрокам бот пришлёт ${pollLater}.`
       : "Игрокам придёт опрос в Telegram. Анонс для WhatsApp — на следующем шаге."));
+}
+
+// Сбор и закрытие опроса: по умолчанию или своё — для конкретной игры.
+function timesBody(st) {
+  const custom = st.dl === "custom" && st.dlDate && st.dlTime;
+  return { gather_minutes: st.gather, rsvp_deadline: custom ? `${st.dlDate}T${st.dlTime}` : null };
+}
+function timesBlock(st, ed, days, label) {
+  const td = S.data.time_defaults || { gather_game: 60, gather_training: 30, auto_hours: 4, reminder_hours: 2 };
+  const defGather = st.kind === "game" ? td.gather_game : td.gather_training;
+  const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)} ч${m % 60 ? " " + (m % 60) + " мин" : ""}` : `${m} мин`);
+  const ready = st.date && st.minutes !== null;
+  let start = null, defDl = null;
+  if (ready) {
+    const [y, m, d] = st.date.split("-").map(Number);
+    start = new Date(y, m - 1, d, 0, st.minutes);
+    const now = new Date();
+    defDl = new Date(start.getTime() - td.auto_hours * 3600e3);
+    if (!(td.auto_hours > 0) || defDl <= now) defDl = new Date(start.getTime() - td.reminder_hours * 3600e3);
+  }
+  const fmtDt = (dt) => dt.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "long" }) + " в " + dt.toTimeString().slice(0, 5);
+  const gatherAt = (mins) => (start && mins > 0 ? " (" + new Date(start.getTime() - mins * 60e3).toTimeString().slice(0, 5) + ")" : "");
+  const dlDays = ready ? days.filter((x) => x[0] <= st.date) : [];
+  if (st.dl === "custom" && !st.dlDate && dlDays.length) st.dlDate = dlDays[0][0];
+  return h("div", {},
+    h("div", { class: "label" }, "🕢 Сбор"),
+    h("div", { class: "people" },
+      h("button", { class: "chip" + (st.gather === null ? " accent" : ""), onclick: () => { st.gather = null; render(); } },
+        `как обычно — за ${fmtMin(defGather)}${gatherAt(defGather)}`),
+      [0, 15, 30, 45, 60, 90].filter((m) => m !== defGather).map((m) => h("button", { class: "chip" + (st.gather === m ? " accent" : ""),
+        onclick: () => { st.gather = m; render(); } }, m ? `за ${fmtMin(m)}${gatherAt(m)}` : "без сбора"))),
+    h("div", { class: "label" }, "🔒 Опрос закрывается"),
+    h("div", { class: "seg" },
+      h("button", { class: st.dl === "default" ? "on" : "", onclick: () => { st.dl = "default"; render(); } }, "Как обычно"),
+      h("button", { class: st.dl === "custom" ? "on" : "", onclick: () => { st.dl = "custom"; render(); } }, "Своё время")),
+    st.dl === "default"
+      ? h("div", { class: "small muted", style: "margin:6px 2px 0" }, defDl ? `${cap(fmtDt(defDl))} — тогда же бот распределит обязанности и поставит минус молчащим.` : "Выберите день и время игры.")
+      : h("div", {},
+        dlDays.length ? h("div", { class: "pick", style: "margin-top:8px" }, dlDays.map(([iso, top, bottom]) =>
+          h("button", { class: st.dlDate === iso ? "on" : "", onclick: () => { st.dlDate = iso; render(); } }, top, h("small", {}, bottom)))) : h("div", { class: "small muted" }, "Сначала выберите день игры."),
+        h("div", { class: "row", style: "margin-top:8px" }, h("span", { class: "small muted" }, "во сколько:"),
+          h("input", { class: "field", type: "time", style: "max-width:140px", value: st.dlTime, onchange: (e) => { st.dlTime = e.target.value; render(); } })),
+        h("div", { class: "small muted", style: "margin:6px 2px 0" }, "В это время бот закроет опрос, распределит обязанности и поставит минус молчащим. Только для этой игры.")));
 }
 
 function rsvpForSheet() {

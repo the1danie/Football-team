@@ -100,9 +100,20 @@ def gather_time(game: Game) -> str | None:
 
     from bot.config import config
 
-    if config.gather_minutes <= 0:
+    minutes = gather_minutes(game)
+    if minutes <= 0:
         return None
-    return fmt_time(game.starts_at - timedelta(minutes=config.gather_minutes))
+    return fmt_time(game.starts_at - timedelta(minutes=minutes))
+
+
+def gather_minutes(game: Game) -> int:
+    """За сколько минут до начала сбор: своё у игры или по умолчанию (игра — за час, тренировка — за 30 мин)."""
+    from bot.config import config
+
+    own = getattr(game, "gather_minutes", None)
+    if own is not None:
+        return int(own)
+    return int(config.gather_minutes_game if game.kind == "game" else config.gather_minutes)
 
 
 def gather_suffix(game: Game) -> str:

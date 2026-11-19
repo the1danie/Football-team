@@ -185,6 +185,8 @@ async def create_game(
     location_url: str | None = None,
     opponent: str | None = None,
     publish_at: datetime | None = None,
+    gather_minutes: int | None = None,
+    rsvp_deadline_at: datetime | None = None,
 ) -> tuple[Game, str, str, str]:
     """Создать игру, опубликовать в Telegram-группу (если есть), разослать опрос.
 
@@ -197,10 +199,12 @@ async def create_game(
         raise OpError("Это время уже прошло.")
     if min_players is not None and not 0 <= min_players <= 100:
         raise OpError("Минимум игроков — от 0 до 100.")
+    _check_custom_times(starts_at, gather_minutes, rsvp_deadline_at)
     game = await svc.create_game(
         session, kind, starts_at, (location or "").strip()[:255] or None, creator, min_players, schedule_id
     )
     game.opponent = texts.clean_opponent(opponent) if kind == "game" else None
+    game.gather_minutes, game.rsvp_deadline_at = gather_minutes, rsvp_deadline_at
     # Ссылка на карту: вставленная или запомненная для этого места.
     game.location_url = texts.normalize_map_url(location_url) or await svc.known_place_url(session, game.location)
     if publish_at is not None and publish_at > config.now():
@@ -216,6 +220,19 @@ async def create_game(
     poll_report, hint, announce = await _publish(bot, session, game, creator)
     await audit.record(session, "➕ Создал", game)
     return game, poll_report, hint, announce
+
+
+GATHER_MAX = 180
+
+
+def _check_custom_times(starts_at: datetime, gather_minutes: int | None, deadline: datetime | None) -> None:
+    if gather_minutes is not None and not 0 <= gather_minutes <= GATHER_MAX:
+        raise OpError("Сбор — от 0 до 3 часов до начала.")
+    if deadline is not None:
+        if deadline >= starts_at:
+            raise OpError("Опрос должен закрыться до начала игры.")
+        if deadline <= config.now() + timedelta(minutes=10):
+            raise OpError("Время закрытия опроса уже прошло (или через пару минут) — выберите позже.")
 
 
 def planned_note(game: Game) -> str:
@@ -271,6 +288,8 @@ async def update_game(
     min_players: int | None,
     location_url: str | None = None,
     opponent: object = ...,  # ... — не менять
+    gather_minutes: object = ...,
+    rsvp_deadline_at: object = ...,
 ) -> tuple[list[str], str]:
     """Изменить игру. Возвращает (что поменялось, текст для WhatsApp).
 
@@ -287,6 +306,14 @@ async def update_game(
     location = (location or "").strip()[:255] or None
 
     changes: list[str] = []
+    new_gather = game.gather_minutes if gather_minutes is ... else gather_minutes
+    new_deadline = game.rsvp_deadline_at if rsvp_deadline_at is ... else rsvp_deadline_at
+    if new_deadline != game.rsvp_deadline_at and (game.penalties_applied or game.auto_declined
+                                                  or config.now() >= rsvp_deadline(game)):
+        raise OpError("Сбор уже закрыт — время закрытия опроса больше не поменять.")
+    _check_custom_times(starts_at, new_gather, new_deadline if new_deadline != game.rsvp_deadline_at else None)
+    if new_deadline is not None and new_deadline >= starts_at:
+        raise OpError("Опрос должен закрыться до начала игры.")
     if starts_at != game.starts_at:
         changes.append(
             f"🕗 {texts.fmt_date(game.starts_at, weekday=True)}, {texts.fmt_time(game.starts_at)} → "
@@ -327,6 +354,18 @@ async def update_game(
         if kind == "game":
             changes.append(f"🆚 Соперник: {new_opponent or 'не указан'}" + (f" (было: {game.opponent})" if game.opponent else ""))
         game.opponent = new_opponent
+    old_gather = texts.gather_time(game)
+    game.gather_minutes = new_gather
+    if texts.gather_time(game) != old_gather:
+        changes.append(f"🕢 Сбор: {texts.gather_time(game) or 'не указан'}" + (f" (было: {old_gather})" if old_gather else ""))
+    if new_deadline != game.rsvp_deadline_at:
+        old = rsvp_deadline(game)
+        game.rsvp_deadline_at = new_deadline
+        new = rsvp_deadline(game)
+        if new != old:
+            changes.append(f"🔒 Опрос закрывается: {texts.fmt_date(new, weekday=True)} в {texts.fmt_time(new)}")
+            if not game.penalties_applied:
+                game.rsvp_nudge_sent = False
     if (min_players or None) != game.min_players:
         changes.append(f"Минимум игроков: {min_players or 'без минимума'}")
         game.min_players = min_players or None
