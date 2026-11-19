@@ -757,7 +757,7 @@ function gameCard(g) {
   const locked = !d.is_admin && g.deadline_passed && !g.past;
   if (locked && !staff)
     add(card, h("div", { class: "small muted", style: "margin-top:12px" }, "🔒 Сбор закрыт — свой ответ меняет только админ. Нажмите другой вариант — админу уйдёт запрос."));
-  if (!staff && !g.past) add(card, h("div", { class: "rsvp" + (locked ? " locked" : "") }, Object.entries(RSVP).map(([key, [e, label]]) =>
+  if (!staff && !g.past) add(card, h("div", { class: "rsvp" + (locked ? " locked" : "") }, Object.entries(RSVP).filter(([key]) => !(g.deadline_passed && key === "maybe" && g.my_rsvp !== "maybe")).map(([key, [e, label]]) =>
     h("button", { class: `${key}${g.my_rsvp === key ? " on" : ""}`, "aria-pressed": g.my_rsvp === key ? "true" : "false",
       onclick: async () => { if (g.my_rsvp === key) return; haptic(); const r = await api("rsvp", { game_id: g.id, status: key }); if (r) { haptic("ok"); render(); } } },
       h("span", { class: "e" }, e), label))));
@@ -1440,7 +1440,7 @@ function rsvpForSheet() {
   };
   return h("div", {}, h("h3", {}, `Отметить за: ${u.name}`),
     h("p", { class: "muted small", style: "margin:-6px 2px 12px" }, "Например, ответил в WhatsApp или добавлен вручную без Telegram. Отметка считается как его собственная: минуса за молчание не будет."),
-    h("div", { class: "rsvp" }, Object.entries(RSVP).map(([key, [e, label]]) =>
+    h("div", { class: "rsvp" }, Object.entries(RSVP).filter(([key]) => !(g.deadline_passed && key === "maybe")).map(([key, [e, label]]) =>
       h("button", { class: key, onclick: () => set(key) }, h("span", { class: "e" }, e), label))),
     u.manual ? h("button", { class: "btn secondary", style: "margin-top:14px", onclick: () => invitePlayer(u) }, "📤 Пригласить в бота") : null,
     u.burpees ? h("button", { class: "btn", style: "margin-top:10px", onclick: async () => { if (await markBurpees(u, g)) closeSheet(); } }, `💪 Сделал ${u.burpees} бёрпи — обнулить минусы`) : null);

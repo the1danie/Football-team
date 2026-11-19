@@ -24,6 +24,9 @@ class OpError(Exception):
     """Ошибка, текст которой можно показать пользователю."""
 
 
+MAYBE_CLOSED = "🔒 Сбор закрыт — «Не знаю» уже нельзя: только «✅ Буду» или «❌ Не буду»."
+
+
 class RsvpLocked(OpError):
     """Сбор закрыт — игрок сам ответ не меняет, только через админа."""
 
@@ -88,6 +91,8 @@ async def link_account(bot: Bot, session: AsyncSession, manual: User, telegram_i
 
 async def request_rsvp_change(bot: Bot, session: AsyncSession, game: Game, user: User, status: str) -> str:
     """Сбор закрыт: отправить админам просьбу игрока изменить ответ (кнопки «Подтвердить / Отклонить»)."""
+    if status == Rsvp.MAYBE:
+        return MAYBE_CLOSED
     current = await svc.get_rsvp(session, game.id, user.id)
     if current == status:
         return f"Ты уже отметил: {texts.RSVP_LABELS[status]}"
@@ -147,6 +152,8 @@ async def change_rsvp(
         raise OpError("Сбор по этой игре закрыт.")
     if config.now() >= game.starts_at:
         raise OpError("Игра уже началась.")
+    if status == Rsvp.MAYBE and config.now() >= rsvp_deadline(game):
+        raise OpError(MAYBE_CLOSED)
     if not by_admin and not config.is_admin(user.telegram_id) and config.now() >= rsvp_deadline(game):
         raise RsvpLocked("🔒 Сбор закрыт — изменить ответ может только админ.")
     if user.is_staff:

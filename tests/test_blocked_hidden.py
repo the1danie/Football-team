@@ -38,3 +38,26 @@ async def test_blocked_player_hidden_from_game(team):  # noqa: F811
     async with webhook._sessionmaker() as s:
         assert await s.get(GameParticipant, (gid, sasha_id)) is not None
         assert (await s.get(User, sasha_id)).status == UserStatus.BLOCKED
+
+
+async def test_no_maybe_after_poll_closed(team):  # noqa: F811
+    from bot import keyboards
+    from bot.models import Game
+
+    sasha = tg_user(2, "Александр")
+    sasha_id = await _approve(sasha)
+    day = (config.now() + timedelta(days=2)).date().isoformat()
+    _, res = await api(ADMIN, "create_game", date=day, minutes=19 * 60, kind="training")
+    gid = res["state"]["games"][0]["id"]
+    async with webhook._sessionmaker() as s:  # сбор закрылся час назад
+        g = await s.get(Game, gid)
+        g.rsvp_deadline_at = config.now() - timedelta(hours=1)
+        await s.commit()
+        assert "maybe" not in [b.callback_data.split(":")[-1] for b in keyboards.rsvp(g).inline_keyboard[0]]
+
+    status, body = await api(sasha, "rsvp", game_id=gid, status="maybe")
+    assert status == 400 and "Не знаю" in body["error"]
+    status, body = await api(ADMIN, "rsvp_for", game_id=gid, user_id=sasha_id, status="maybe")
+    assert status == 400
+    status, _ = await api(ADMIN, "rsvp_for", game_id=gid, user_id=sasha_id, status="yes")
+    assert status == 200

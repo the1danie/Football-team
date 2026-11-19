@@ -76,13 +76,17 @@ def profile_actions() -> InlineKeyboardMarkup:
 
 
 def rsvp(game: Game) -> InlineKeyboardMarkup | None:
+    from bot.config import config  # noqa: PLC0415
+    from bot.deadlines import rsvp_deadline  # noqa: PLC0415
+
     if game.status not in GameStatus.ACTIVE:
         return None
+    closed = game.created_at is not None and config.now() >= rsvp_deadline(game)  # после закрытия «Не знаю» нет
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(text=texts.RSVP_LABELS[s], callback_data=f"rsvp:{game.id}:{s}")
-                for s in (Rsvp.YES, Rsvp.NO, Rsvp.MAYBE)
+                for s in (Rsvp.YES, Rsvp.NO, Rsvp.MAYBE) if not (closed and s == Rsvp.MAYBE)
             ]
         ]
     )
