@@ -453,6 +453,9 @@ function photoRow(p, userId) {
 }
 function openLink(url) { if (tg && tg.openLink && tg.initData) tg.openLink(url); else window.open(url, "_blank"); }
 
+const READ_ACTIONS = new Set(["state", "stats", "players", "player_detail", "player_stats", "explain", "audit", "archive",
+  "attendance_report", "attendance_pdf", "balance_pdf", "swap_targets", "duties", "calendar_link", "whatsapp",
+  "result_whatsapp", "push_key", "my_pin"]);
 async function api(action, body = {}, { quiet } = {}) {
   try {
     const res = await fetch("/api/miniapp", {
@@ -468,6 +471,8 @@ async function api(action, body = {}, { quiet } = {}) {
       if (!quiet) { haptic("err"); toast(json.error || "Ошибка"); }
       return null;
     }
+    // любое изменение (снял минус, отметил опоздание, бёрпи…) — рейтинг перечитать, иначе висят старые цифры
+    if (!READ_ACTIONS.has(action)) S.stats = null;
     if (json.state) { S.data = json.state; const g0 = (json.state.games || [])[0]; if (g0 && g0.server_ts) S.skew = g0.server_ts - Date.now(); }
     if (json.note) toast(json.note);
     return json;
@@ -917,7 +922,10 @@ function statsTab() {
       h("button", { class: board === k ? "on" : "", onclick: () => { S.statsBoard = k; haptic(); render(); } }, b.title))),
     h("div", { class: "seg", style: "margin-bottom:12px" }, periodTabs().map(([k, l]) =>
       h("button", { class: period === k ? "on" : "", onclick: () => { S.statsPeriod = k; S.stats = null; render(); loadStats(); } }, l)))];
-  if (!S.stats) return h("div", {}, head, h("div", { class: "spinner", style: "margin:60px auto" }));
+  if (!S.stats) {
+    if (!S.statsLoading) { S.statsLoading = true; loadStats().finally(() => { S.statsLoading = false; }); }
+    return h("div", {}, head, h("div", { class: "spinner", style: "margin:60px auto" }));
+  }
 
   const me = S.data.user && S.data.user.id;
   const rows = [...S.stats].sort((x, y) => y[board] - x[board] || x.name.localeCompare(y.name, "ru"));
