@@ -369,7 +369,9 @@ async def participants(session: AsyncSession, game_id: int) -> list[GameParticip
     """Ответы на опрос. Молчавшие, которых бот при закрытии сбора записал в «Не буду», — не ответ."""
     rows = await session.scalars(
         select(GameParticipant)
+        .join(User, User.id == GameParticipant.user_id)
         .where(GameParticipant.game_id == game_id)
+        .where(User.status != UserStatus.BLOCKED)  # удалённые игроки в списках не видны
         .where(or_(GameParticipant.auto_from.is_(None), GameParticipant.auto_from != "silent"))
         .order_by(GameParticipant.updated_at)
     )
@@ -1041,8 +1043,17 @@ async def set_user_status(
     user.status = status
     await session.flush()
     if status == UserStatus.BLOCKED:
-        return await _leave_upcoming_games(session, user, now)
+        return await _leave_upcoming_games(session, user, now)  # из списков ответов скрывает participants()
     return []
+
+
+async def _drop_upcoming_answers(session: AsyncSession, user: User, now: datetime) -> None:
+    """Убрать ответы игрока из ещё не начавшихся игр — его там больше нет."""
+    for game in await upcoming_games(session, now, grace_hours=0):
+        p = await session.get(GameParticipant, (game.id, user.id))
+        if p is not None:
+            await session.delete(p)
+    await session.flush()
 
 
 async def staff(session: AsyncSession) -> list[User]:
@@ -1065,11 +1076,7 @@ async def set_staff(
     if not title:
         return []
     moves = await _leave_upcoming_games(session, user, now)
-    for game in await upcoming_games(session, now, grace_hours=0):
-        p = await session.get(GameParticipant, (game.id, user.id))
-        if p is not None:
-            await session.delete(p)
-    await session.flush()
+    await _drop_upcoming_answers(session, user, now)
     return moves
 
 
