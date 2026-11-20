@@ -124,6 +124,11 @@ async def test_history_drives_next_distribution_and_stats(session, rng):
     # Никто не получил ту же обязанность второй раз подряд.
     assert all(first[d] != second[d] for d in first)
 
+    # обязанности на будущие игры ещё не выполнены — не считаются
+    assert all(n == 0 for _, n in await svc.team_stats(session))
+    for g in (g1, g2):
+        g.starts_at -= timedelta(days=30)
+    await session.flush()
     stats = dict((u.name, n) for u, n in await svc.team_stats(session))
     assert stats == {"А": 2, "Б": 2, "В": 2, "Г": 2}
     detail = await svc.player_stats(session, players[0].id)

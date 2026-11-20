@@ -965,7 +965,7 @@ function statsTab() {
       h("div", { class: "num", style: p[board] < 0 ? "color:var(--danger)" : "" }, board === "balance" && p[board] > 0 ? `+${p[board]}` : p[board])))));
 }
 async function openPlayerStats(id) {
-  const r = await api("player_stats", { user_id: id });
+  const r = await api("player_stats", { user_id: id, period: S.statsPeriod || "month" });
   if (r) openSheet({ type: "playerStats", player: r });
 }
 
@@ -1825,8 +1825,20 @@ function playerSheet() {
 function playerStatsSheet() {
   const p = S.sheet.player;
   return h("div", {}, h("div", { class: "row", style: "margin-bottom:12px" }, avatar(p.name, p.id), h("h3", { style: "margin:0" }, p.name + (p.car ? " 🚗" : ""))),
+    h("div", { class: "label" }, "Обязанности за всё время"),
     h("div", { class: "list" }, p.duties.map((x) => h("div", { class: "item" }, h("span", { style: "font-size:20px" }, x.emoji), h("div", { class: "grow" }, x.name), h("div", { class: "num" }, x.count)))),
-    p.minuses.length ? h("div", { class: "card small" }, `⚠️ Минусы: ${p.minuses.length}`, h("div", { class: "muted" }, p.minuses.map((m) => m.game).join(", "))) : null);
+    p.balance ? balanceCard(p.balance) : null);
+}
+function balanceCard(b) {
+  const label = (periodTabs().find(([k]) => k === b.period) || [, "всё время"])[1];
+  const sign = (n) => (n > 0 ? "+" : "") + n;
+  return h("div", { class: "card", style: "margin-top:12px" },
+    h("div", { style: "font-weight:700" }, `⚖️ Итог (${label.toLowerCase()}): +${b.help_total} − ${b.minus_total} = ${sign(b.total)}`),
+    h("div", { class: "small muted", style: "margin:4px 0 8px" }, "+1 за каждую обязанность в прошедших играх, −1 за каждый минус. Отработанный минус остаётся в счёте — его «закрыла» обязанность, поэтому вместе они дают 0."),
+    b.help.length ? h("div", { class: "small", style: "margin-top:6px" }, h("b", {}, `🏆 Помощь +${b.help_total}`),
+      ...b.help.map((x) => h("div", {}, `${x.emoji} ${x.name} — ${x.game}`))) : h("div", { class: "small muted" }, "🏆 Обязанностей в прошедших играх нет"),
+    b.minuses.length ? h("div", { class: "small", style: "margin-top:8px" }, h("b", {}, `⚠️ Минусы −${b.minus_total}`),
+      ...b.minuses.map((m) => h("div", {}, `−${m.points} ${m.reason}${m.game ? " — " + m.game : ""} · `, h("span", { class: "muted" }, m.state)))) : null);
 }
 
 function renameSheet() {

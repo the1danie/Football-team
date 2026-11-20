@@ -882,7 +882,8 @@ def _counted():
     return (
         select(Assignment.user_id, Assignment.duty_id, func.count().label("cnt"))
         .join(Game, Assignment.game_id == Game.id)
-        .where(Assignment.status == AssignmentStatus.ACTIVE, Game.status.not_in(GameStatus.NOT_PLAYED))
+        .where(Assignment.status == AssignmentStatus.ACTIVE, Game.status.not_in(GameStatus.NOT_PLAYED),
+               Game.starts_at <= config.now())  # обязанность на будущую игру ещё не выполнена
         .group_by(Assignment.user_id, Assignment.duty_id)
     )
 
@@ -1318,6 +1319,36 @@ async def leaderboard(session: AsyncSession, now: datetime, since: datetime | No
         }
         for u in users
     ]
+
+
+async def balance_breakdown(session: AsyncSession, user_id: int, now: datetime, since: datetime | None = None) -> dict:
+    """Из чего сложился «⚖️ Итог» игрока за период — те же правила, что в leaderboard()."""
+    played = [Game.status.not_in(GameStatus.NOT_PLAYED), Game.starts_at <= now]
+    if since is not None:
+        played.append(Game.starts_at >= since)
+    help_rows = (await session.execute(
+        select(Game, Duty).join(Assignment, Assignment.game_id == Game.id).join(Duty, Duty.id == Assignment.duty_id)
+        .where(Assignment.user_id == user_id, Assignment.status == AssignmentStatus.ACTIVE, *played)
+        .order_by(Game.starts_at)
+    )).all()
+    pen_q = select(Penalty).outerjoin(Game, Game.id == Penalty.game_id).where(
+        Penalty.user_id == user_id, Penalty.status.not_in((PenaltyStatus.CANCELLED, PenaltyStatus.BURPEES)))
+    if since is not None:
+        from bot.deadlines import to_utc  # noqa: PLC0415
+
+        pen_q = pen_q.where(or_(
+            and_(Penalty.game_id.is_not(None), Game.starts_at >= since, Game.starts_at <= now),
+            and_(Penalty.game_id.is_(None), Penalty.created_at >= to_utc(since), Penalty.created_at <= to_utc(now)),
+        ))
+    pens = list((await session.scalars(pen_q.order_by(Penalty.created_at, Penalty.id))).unique().all())
+    redeemed_games = {g.id: g for g in (await session.scalars(select(Game).where(
+        Game.id.in_([p.redeemed_game_id for p in pens if p.redeemed_game_id])))).all()}
+    return {
+        "help": [(g, d) for g, d in help_rows],
+        "minuses": [(p, redeemed_games.get(p.redeemed_game_id)) for p in pens],
+        "help_total": len(help_rows),
+        "minus_total": sum(p.points for p in pens),
+    }
 
 
 # ---------------------------------------------------------------- места

@@ -315,6 +315,24 @@ async def stats_view(session: AsyncSession, period: str = "all") -> dict:
     }
 
 
+async def _balance_view(session: AsyncSession, user: User, period: str) -> dict:
+    """«⚖️ Итог» игрока за период по пунктам: +1 за каждую обязанность, −минус за каждый минус."""
+    now = config.now()
+    end, since = periods.bounds(period, now)
+    b = await svc.balance_breakdown(session, user.id, end, since)
+    return {
+        "period": periods.normalize(period),
+        "help_total": b["help_total"], "minus_total": b["minus_total"], "total": b["help_total"] - b["minus_total"],
+        "help": [{"emoji": d.emoji, "name": d.name, "game": texts.game_header(g)} for g, d in b["help"]],
+        "minuses": [
+            {"points": p.points, "game": texts.game_header(p.game) if p.game else "", "reason": texts.penalty_reason(p.reason),
+             "state": (f"отработан ({texts.game_header(rg)})" if rg else "отработан") if p.status == PenaltyStatus.REDEEMED
+             else "действует"}
+            for p, rg in b["minuses"]
+        ],
+    }
+
+
 async def player_view(session: AsyncSession, user: User, is_admin: bool) -> dict:
     penalties = await svc.user_penalties(session, user.id, open_only=True)
     view = {
@@ -639,7 +657,10 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         elif action == "stats":
             return await stats_view(session, body.get("period", "all"))
         elif action == "player_stats":
-            return await player_view(session, await _user(session, body.get("user_id")), is_admin)
+            target = await _user(session, body.get("user_id"))
+            view = await player_view(session, target, is_admin)
+            view["balance"] = await _balance_view(session, target, body.get("period", "all"))
+            return view
         # --- админ
         elif action == "create_game":
             day = date.fromisoformat(body.get("date", ""))
