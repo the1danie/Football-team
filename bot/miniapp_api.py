@@ -203,7 +203,8 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         view["no_answer"] = [_user_brief(u) for u in await svc.non_responders(session, game)]
         team = await svc.roster(session)
         view["team_count"] = len(team)
-        if is_admin and game.status == GameStatus.FINISHED:  # исправить «кто что делал» можно любым из команды
+        if is_admin and (game.status == GameStatus.FINISHED or results.has_result(game) and results.started(game)):
+            # исправить «кто что делал» / вписать гол или пас — любому из команды
             view["team"] = [_user_brief(u) for u in team]
         if (
             is_admin and now >= deadline and game.penalties_applied and penalties_enabled(game)
@@ -660,6 +661,14 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
             target = await _user(session, body.get("user_id"))
             view = await player_view(session, target, is_admin)
             view["balance"] = await _balance_view(session, target, body.get("period", "all"))
+            end, since = periods.bounds(body.get("period", "all"), config.now())
+            rows = await svc.ga_breakdown(session, target.id, end, since)
+            view["ga"] = {
+                "goals": sum(st.goals for _, st in rows), "assists": sum(st.assists for _, st in rows),
+                "games": [{"game": texts.game_header(g), "goals": st.goals, "assists": st.assists,
+                           "score": f"{g.score_us}:{g.score_them}" if g.score_us is not None else None}
+                          for g, st in rows],
+            }
             return view
         # --- админ
         elif action == "create_game":

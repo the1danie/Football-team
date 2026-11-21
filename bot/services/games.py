@@ -1351,6 +1351,20 @@ async def balance_breakdown(session: AsyncSession, user_id: int, now: datetime, 
     }
 
 
+async def ga_breakdown(session: AsyncSession, user_id: int, now: datetime, since: datetime | None = None) -> list:
+    """Голы и пасы игрока по играм за период — те же игры, что в рейтинге «Гол+пас»."""
+    from bot.models import GameStat  # noqa: PLC0415
+
+    played = [Game.status.not_in(GameStatus.NOT_PLAYED), Game.starts_at <= now]
+    if since is not None:
+        played.append(Game.starts_at >= since)
+    return list((await session.execute(
+        select(Game, GameStat).join(GameStat, GameStat.game_id == Game.id)
+        .where(GameStat.user_id == user_id, (GameStat.goals + GameStat.assists) > 0, *played)
+        .order_by(Game.starts_at.desc())
+    )).all())
+
+
 # ---------------------------------------------------------------- места
 
 

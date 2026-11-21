@@ -87,3 +87,21 @@ async def test_bot_asks_result_after_game(team):  # noqa: F811
         await tick(webhook.make_bot(), s)
         await s.commit()
     assert not any("как сыграли" in m.text for m in fake.sent(1))
+
+
+async def test_admin_sets_assist_for_anyone_and_player_card_shows_ga(team):  # noqa: F811
+    rustam, beka = tg_user(2, "Рустам"), tg_user(3, "Бека")
+    rid = await _member(rustam)
+    bid = await _member(beka)
+    gid = await _played_game(rustam)  # Бека не отметился «Буду», но играл
+
+    _, res = await api(ADMIN, "state")
+    g = next(x for x in res["state"]["games"] if x["id"] == gid)
+    assert bid in [u["id"] for u in g["team"]]  # админ может выбрать его в окне голов и пасов
+    await api(ADMIN, "result_score", game_id=gid, us=3, them=5)
+    assert (await api(ADMIN, "result_stat", game_id=gid, user_id=rid, goals=2, assists=0))[0] == 200
+    assert (await api(ADMIN, "result_stat", game_id=gid, user_id=bid, goals=1, assists=2))[0] == 200
+
+    _, card = await api(rustam, "player_stats", user_id=bid, period="month")
+    assert (card["ga"]["goals"], card["ga"]["assists"]) == (1, 2)
+    assert card["ga"]["games"][0]["score"] == "3:5" and "Барыс" in card["ga"]["games"][0]["game"]
