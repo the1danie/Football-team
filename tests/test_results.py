@@ -105,3 +105,23 @@ async def test_admin_sets_assist_for_anyone_and_player_card_shows_ga(team):  # n
     _, card = await api(rustam, "player_stats", user_id=bid, period="month")
     assert (card["ga"]["goals"], card["ga"]["assists"]) == (1, 2)
     assert card["ga"]["games"][0]["score"] == "3:5" and "Барыс" in card["ga"]["games"][0]["game"]
+
+
+async def test_no_result_questions_if_already_entered(team):  # noqa: F811
+    fake = team  # noqa: F811
+    rustam, nurik = tg_user(2, "Рустам"), tg_user(3, "Нурик")
+    await _member(rustam)
+    await _member(nurik)
+    gid = await _played_game(rustam, nurik)
+    await api(ADMIN, "result_score", game_id=gid, us=3, them=5)  # внесли сразу после игры
+    await api(rustam, "result_stat", game_id=gid, goals=2, assists=0)
+    async with webhook._sessionmaker() as s:
+        (await s.get(Game, gid)).starts_at = config.now() - timedelta(hours=config.finish_after_hours + 1)
+        await s.commit()
+    fake.reset()
+    async with webhook._sessionmaker() as s:
+        await tick(webhook.make_bot(), s)
+        await s.commit()
+    assert not any("как сыграли" in m.text for m in fake.sent(1))
+    assert not any("Забил или" in m.text for m in fake.sent(2))  # Рустам уже отметил
+    assert any("Забил или" in m.text for m in fake.sent(3))  # Нурик — ещё нет

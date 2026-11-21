@@ -299,12 +299,16 @@ async def ask_result(bot: Bot, session: AsyncSession, game: Game) -> None:
     if not results.has_result(game):
         return
     header = texts.game_header(game)
-    ask = InlineKeyboardBuilder()
-    ask.button(text="✍️ Ввести счёт", callback_data=f"res:{game.id}")
-    for admin_id in config.all_admin_ids:
-        await notifier.send_raw(bot, admin_id, f"🏁 <b>{header}</b> — как сыграли? Нажмите и пришлите счёт, например 5:3.",
-                                keyboards.with_app_button(ask.as_markup(), game.id))
+    if game.score_us is None:  # счёт уже внесли (например, сразу после игры) — не спрашиваем
+        ask = InlineKeyboardBuilder()
+        ask.button(text="✍️ Ввести счёт", callback_data=f"res:{game.id}")
+        for admin_id in config.all_admin_ids:
+            await notifier.send_raw(bot, admin_id, f"🏁 <b>{header}</b> — как сыграли? Нажмите и пришлите счёт, например 5:3.",
+                                    keyboards.with_app_button(ask.as_markup(), game.id))
+    marked = {r.user_id for r in await results.stats(session, game.id) if r.goals or r.assists}
     for user in (await svc.participants_by_status(session, game.id))[Rsvp.YES]:
+        if user.id in marked:  # уже отметил себе гол/пас — второй раз не спрашиваем
+            continue
         if await results.was_there(session, game, user):
             await notifier.send_dm(bot, user, f"⚽ <b>{header}</b>\nЗабил или отдал голевой пас? Отметь себе:",
                                    keyboards.with_app_button(keyboards.my_stat(game.id), game.id))
