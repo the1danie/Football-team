@@ -102,3 +102,45 @@ async def test_only_nearest_game_counts(team):  # noqa: F811
     later = max(g["id"] for g in res["state"]["games"])
     _, st = await api(timur, "state")
     assert _gear(st, gid) and _gear(st, later) == []  # ко второй игре мячи поедут уже с первой
+
+
+async def _tick():
+    async with webhook._sessionmaker() as s:
+        await tick(webhook.make_bot(), s)
+        await s.commit()
+
+
+async def test_game_day_reminder(team):  # noqa: F811
+    fake = team  # noqa: F811
+    timur, nurik = tg_user(2, "Тимур"), tg_user(3, "Нурик")
+    tid = await _member(timur)
+    await _member(nurik)
+    gid, did = await _setup(tid)
+    await api(timur, "rsvp", game_id=gid, status="yes")
+
+    fake.reset()
+    await _tick()  # игра через 2 дня — рано
+    assert not any("Не забудь" in (m.text or "") for m in fake.sent(2))
+
+    async with webhook._sessionmaker() as s:  # день игры, до начала 2 часа
+        (await s.get(Game, gid)).starts_at = config.now() + timedelta(hours=2)
+        await s.commit()
+    await _tick()
+    assert [m.text for m in fake.sent(2) if "Не забудь" in (m.text or "")] and "мячи" in fake.sent(2)[-1].text
+    fake.reset()
+    await _tick()  # второй раз не напоминает
+    assert not any("Не забудь" in (m.text or "") for m in fake.sent(2))
+
+
+async def test_game_day_reminder_not_coming_asks_again(team):  # noqa: F811
+    fake = team  # noqa: F811
+    timur = tg_user(2, "Тимур")
+    tid = await _member(timur)
+    gid, _ = await _setup(tid)
+    await api(timur, "rsvp", game_id=gid, status="no")
+    async with webhook._sessionmaker() as s:
+        (await s.get(Game, gid)).starts_at = config.now() + timedelta(hours=2)
+        await s.commit()
+    fake.reset()
+    await _tick()
+    assert any("Игра сегодня" in (m.text or "") and "Кому передашь" in m.text for m in fake.sent(2))

@@ -162,3 +162,25 @@ async def lines_for_card(session: AsyncSession, game: Game, me: User | None) -> 
             line += " — передаст сам"
         out.append(line)
     return out
+
+
+def reminder_at(game: Game):
+    """Утром в день игры (по умолчанию в 10:00), но не позже чем за 3 часа до начала."""
+    from bot.config import config  # noqa: PLC0415
+
+    morning = game.starts_at.replace(hour=config.gear_reminder_hour, minute=0, second=0, microsecond=0)
+    return min(morning, game.starts_at - timedelta(hours=3))
+
+
+async def remind(bot: Bot, session: AsyncSession, game: Game) -> None:
+    """День игры: тому, у кого вещи, — «не забудь»; если не идёт и не передал — ещё раз «передай»."""
+    game.gear_reminded = True
+    for h in await holders(session, game):
+        header = texts.game_header(game)
+        if h.coming:
+            await notifier.send_dm(bot, h.user, f"🎒 <b>{header}</b>\nНе забудь {h.duty.emoji} {h.what} — они у тебя"
+                                               + (f" (передал {texts.h(h.handed_from.name)})" if h.handed_from else "") + " 🙏")
+        elif h.needs_handover:
+            users = await coming_players(session, game, h.user.id)
+            await notifier.send_dm(bot, h.user, f"⏰ Игра сегодня, а {h.duty.emoji} {h.what} всё ещё у тебя.\n" + ask_text(game, h),
+                                   picker(game, h.duty, users))

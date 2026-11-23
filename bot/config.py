@@ -42,6 +42,7 @@ class Config:
     auto_distribute_hours: float = field(default_factory=lambda: _float("AUTO_DISTRIBUTE_HOURS", 4))
     # Личное напоминание ответственным.
     personal_reminder_hours: float = field(default_factory=lambda: _float("PERSONAL_REMINDER_HOURS", 2))
+    gear_reminder_hour: int = field(default_factory=lambda: int(_float("GEAR_REMINDER_HOUR", 10)))  # 🎒 утром в день игры
     # Напоминание в общий чат.
     group_reminder_hours: float = field(default_factory=lambda: _float("GROUP_REMINDER_HOURS", 2))
     # Новые игроки попадают в команду только после подтверждения админом (0 — сразу).

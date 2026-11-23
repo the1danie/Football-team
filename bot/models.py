@@ -140,6 +140,8 @@ class Game(Base):
     group_reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     # Напоминание тем, кто не отметился, и начисление минусов.
     rsvp_nudge_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # 🎒 В день игры утром — «не забудь мячи/манишки» тому, у кого они.
+    gear_reminded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     penalties_applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Сбор закрыт: «Не знаю» и молчащие переведены в «Не буду».
     auto_declined: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")

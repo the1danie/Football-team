@@ -124,6 +124,13 @@ async def _close_and_distribute(bot: Bot, session: AsyncSession, game: Game, now
     if now >= game.starts_at:
         return
 
+    # 🎒 Утром в день игры — «не забудь мячи / манишки» тому, у кого они.
+    if not game.gear_reminded:
+        from bot import gear  # noqa: PLC0415
+
+        if now >= gear.reminder_at(game):
+            await gear.remind(bot, session, game)
+
     # Напоминание молчащим (даже если админ уже распределил вручную — срок сбора тот же).
     nudge_at = rsvp_reminder_at(game)
     if not game.rsvp_nudge_sent and not game.penalties_applied and nudge_at is not None and now >= nudge_at:
