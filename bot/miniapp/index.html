@@ -692,6 +692,20 @@ function resultBlock(g) {
         h("button", { class: "btn small secondary", onclick: async () => { const x = await api("result_whatsapp", { game_id: g.id }); if (x) openLink(x.whatsapp.url); } }, "📤 Итог в WhatsApp"))) : null);
   return box;
 }
+function gearSheet() {
+  const g = findGame(S.sheet.game.id) || S.sheet.game;
+  const x = (g.gear || []).find((y) => y.duty_id === S.sheet.duty_id);
+  if (!x) return h("div", {}, h("h3", {}, "🎒 Передача"), h("p", { class: "muted" }, "Уже не нужно."));
+  const give = async (to) => {
+    const r = await api("gear_handover", { game_id: g.id, duty_id: x.duty_id, to_user_id: to });
+    if (r) { haptic("ok"); closeSheet(); }
+  };
+  return h("div", {}, h("h3", {}, `🎒 Кому передать ${x.what}?`),
+    h("p", { class: "muted small", style: "margin:-6px 2px 10px" }, `${x.mine ? "Ты забрал" : x.holder.name + " забрал"} их после: ${x.source}. Выберите того, кто отметил «Буду», — ему придёт сообщение договориться.`),
+    x.candidates.length ? h("div", { class: "list" }, x.candidates.map((u) => h("button", { class: "item", onclick: () => give(u.id) }, avatar(u.name, u.id), h("div", { class: "grow" }, u.name), u.car ? h("span", {}, "🚗") : null)))
+      : h("div", { class: "card muted small" }, "Пока никто не отметил «Буду». Напишите в чат команды или вернитесь позже."),
+    h("button", { class: "btn secondary", style: "margin-top:12px", onclick: () => give(0) }, "🤝 Договорюсь сам"));
+}
 function resultPlayersSheet() {
   const g = (S.archive || []).find((x) => x.id === S.sheet.game.id) || findGame(S.sheet.game.id) || S.sheet.game;
   const st = (id) => g.result.scorers.find((x) => x.id === id) || { goals: 0, assists: 0 };
@@ -762,6 +776,19 @@ function gameCard(g) {
       h("div", { class: "cd-num", "data-deadline": g.deadline_ts }, countdownText(g.deadline_ts - Date.now() - (S.skew || 0)))));
   if (mine.length)
     add(card, h("div", { class: "banner info" }, h("b", {}, "Твоя обязанность: "), mine.map((m) => `${m.emoji} ${m.action}`).join(", ")));
+  for (const x of (g.gear || [])) {
+    if (x.mine && x.needs_handover)
+      add(card, h("div", { class: "banner", style: "margin-top:12px" },
+        h("b", {}, `🎒 ${x.emoji} ${cap(x.what)} у тебя, а ты не идёшь`),
+        h("div", { class: "small", style: "margin:4px 0 8px" }, "Передай их заранее тому, кто будет, — иначе команда останется без них."),
+        h("button", { class: "btn small", onclick: () => openSheet({ type: "gear", game: g, duty_id: x.duty_id }) }, "Кому передам?")));
+    else
+      add(card, h("div", { class: "small", style: `margin-top:8px;${x.needs_handover ? "color:var(--danger)" : ""}` },
+        `🎒 ${x.emoji} ${cap(x.what)} ${x.mine ? "у тебя" : "держит " + x.holder.name}`
+        + (x.from ? ` (передал ${x.from})` : "")
+        + (x.needs_handover ? " — не идёт, нужно передать" : x.self_arranged && !x.coming ? " — передаст сам" : ""),
+        x.needs_handover && d.is_admin ? h("button", { class: "btn small secondary", style: "margin-left:8px", onclick: () => openSheet({ type: "gear", game: g, duty_id: x.duty_id }) }, "Передать") : null));
+  }
 
   const locked = !d.is_admin && g.deadline_passed && !g.past;
   if (locked && !staff)
@@ -1279,7 +1306,7 @@ function renderSheet() {
   const content = { create: createSheet, swap: swapSheet, assign: assignSheet, whatsapp: whatsappSheet, player: playerSheet,
     playerStats: playerStatsSheet, rename: renameSheet, created: createdSheet, schedules: schedulesSheet,
     scheduleEdit: scheduleEditSheet, duties: dutiesSheet, attendance: attendanceSheet, weblink: webLinkSheet,
-    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, crop: cropSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet, resultPlayers: resultPlayersSheet, tg2: tg2Sheet, late: lateSheet, lateNotice: lateNoticeSheet }[S.sheet.type]();
+    rsvpFor: rsvpForSheet, addPlayer: addPlayerSheet, report: reportSheet, explain: explainSheet, crop: cropSheet, audit: auditSheet, save: saveSheet, myPin: myPinSheet, calendar: calendarSheet, notDone: notDoneSheet, resultPlayers: resultPlayersSheet, tg2: tg2Sheet, late: lateSheet, lateNotice: lateNoticeSheet, gear: gearSheet }[S.sheet.type]();
   const box = h("div", { class: "sheet", role: "dialog" }, h("div", { class: "grab" }), content);
   const bg = h("div", { class: "sheet-bg" + (same ? " still" : ""), onclick: (e) => { if (e.target === bg) closeSheet(); } }, box);
   bg.__sheet = S.sheet;

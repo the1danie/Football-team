@@ -14,7 +14,7 @@ from aiogram import Bot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot import actions, audit, discipline, periods, results, operations, photos, texts, whatsapp
+from bot import actions, audit, discipline, gear, periods, results, operations, photos, texts, whatsapp
 from bot.config import config
 from bot.deadlines import penalties_enabled, rsvp_deadline, to_utc
 from bot.models import EVERY_WEEKDAY, WEEKDAYS_FULL, Duty, DutyPhase, Game, GameStatus, PenaltyStatus, Rsvp, Schedule, User, UserStatus
@@ -198,6 +198,15 @@ async def game_view(session: AsyncSession, game: Game, me: User, is_admin: bool,
         "waiting_until": texts.fmt_time(game.min_recheck_at) if game.min_recheck_at else None,
         "from_schedule": game.schedule_id is not None,
         "duties": duties,
+        "gear": [
+            {"duty_id": x.duty.id, "emoji": x.duty.emoji, "what": x.what, "holder": _user_brief(x.user),
+             "mine": x.user.id == me.id, "coming": x.coming, "needs_handover": x.needs_handover,
+             "self_arranged": x.self_arranged, "from": x.handed_from.name if x.handed_from else None,
+             "source": texts.game_header(x.source),
+             "candidates": [_user_brief(u) for u in await gear.coming_players(session, game, x.user.id)]
+             if x.needs_handover and (x.user.id == me.id or is_admin) else []}
+            for x in await gear.holders(session, game)
+        ],
     }
     if is_admin or staff:
         view["no_answer"] = [_user_brief(u) for u in await svc.non_responders(session, game)]
@@ -754,6 +763,19 @@ async def _handle(bot: Bot, session: AsyncSession, tg: dict, body: dict) -> dict
         elif action == "team_invite":
             text = whatsapp.team_invite((await bot.me()).username)
             return {"text": text, "url": whatsapp.share_url(text)}
+        elif action == "gear_handover":
+            from bot.models import Duty as _Duty  # noqa: PLC0415
+
+            game = await _game(session, body)
+            duty = await session.get(_Duty, int(body.get("duty_id", 0)))
+            to_user = await _user(session, body["to_user_id"]) if body.get("to_user_id") else None
+            if duty is None:
+                raise ApiError("Не найдено.")
+            try:
+                note = await gear.handover(bot, session, game, duty, user, to_user, by_admin=is_admin)
+            except ValueError as e:
+                raise ApiError(str(e)) from e
+            await audit.record(session, f"🎒 {duty.name}: передача" + (f" → {to_user.name}" if to_user else " (сам)"), game)
         elif action in ("late", "late_notice"):
             game = await _game(session, body)
             try:

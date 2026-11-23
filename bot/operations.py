@@ -166,6 +166,10 @@ async def change_rsvp(
         await notifier.refresh_game(bot, session, game)
         await notifier.announce_reassignments(bot, game, result.reassigned)
         await notifier.announce_new_assignments(bot, game, result.filled)
+        if status != Rsvp.YES:  # у него мячи/манишки с прошлой игры — пусть передаст заранее
+            from bot import gear  # noqa: PLC0415
+
+            await gear.warn(bot, session, game, user)
         if count_transfer:  # отказался после распределения — обязанность ушла другому
             from bot import discipline
 

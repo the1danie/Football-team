@@ -196,7 +196,17 @@ async def announce_penalties(bot: Bot, session: AsyncSession, game: Game, result
 
 async def auto_decline_and_notify(bot: Bot, session: AsyncSession, game: Game, digest: dict | None = None) -> None:
     """Сбор закрыт: «Не знаю» и молчащие становятся «Не буду»."""
+    from bot import gear  # noqa: PLC0415
+
     silent, maybe = await svc.auto_decline(session, game)
+    gear_lines = []
+    for user in silent + maybe:  # молчал / «Не знаю», а мячи у него
+        gear_lines += await gear.warn(bot, session, game, user, to_admins=False)
+    if gear_lines:
+        if digest is not None:
+            digest["admin"] += gear_lines
+        else:
+            await notifier.notify_admins(bot, f"🔒 {texts.game_header(game)}\n" + "\n".join(gear_lines))
     if not silent and not maybe:
         return
     await notifier.refresh_game(bot, session, game)
@@ -262,6 +272,12 @@ async def game_card(
         lines += ["", "<b>Обязанности</b>"] + texts.duties_block(assignments, unassigned)
     elif game.status == GameStatus.OPEN:
         lines += ["", "<i>Обязанности ещё не распределены.</i>"]
+    from bot import gear  # noqa: PLC0415
+
+    gear_holders = await gear.holders(session, game)
+    gear_lines = await gear.lines_for_card(session, game, user)
+    if gear_lines:
+        lines += [""] + gear_lines
 
     b = InlineKeyboardBuilder()
     rsvp = keyboards.rsvp(game)
@@ -279,6 +295,9 @@ async def game_card(
         extra.append(InlineKeyboardButton(text=texts.BTN_WHY, callback_data=f"why:{game.id}"))
     if extra:
         b.row(*extra)
+    for h in gear_holders:
+        if user is not None and h.user.id == user.id and h.needs_handover:
+            b.row(InlineKeyboardButton(text=f"🎒 Передать {h.what}", callback_data=f"gh:{game.id}:{h.duty.id}"))
     if is_admin:
         b.attach(InlineKeyboardBuilder.from_markup(keyboards.game_admin(game)))
         if game.status != GameStatus.CANCELLED and config.now() >= game.starts_at - timedelta(hours=1):
