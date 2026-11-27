@@ -92,6 +92,28 @@ async def distribute_after_and_announce(
     return "\n".join(lines)
 
 
+async def unanswered_polls(session: AsyncSession, user: User, exclude_game_id: int | None = None) -> list[Game]:
+    """Игры, где сбор ещё идёт, а игрок не ответил (кроме exclude_game_id)."""
+    now = config.now()
+    out = []
+    for g in await svc.upcoming_games(session, now, grace_hours=0):
+        if g.id == exclude_game_id or g.status not in GameStatus.ACTIVE or now >= rsvp_deadline(g):
+            continue
+        if await svc.get_rsvp(session, g.id, user.id) is None:
+            out.append(g)
+    return out
+
+
+async def remind_other_polls(bot: Bot, session: AsyncSession, user: User, answered_game_id: int) -> None:
+    """Ответил на один опрос — сразу показать второй (тренировка и игра в ленте сливаются)."""
+    if user.is_staff:
+        return
+    for g in await unanswered_polls(session, user, answered_game_id):
+        text = "👉 <b>Есть ещё опрос — ты на него не ответил</b>\n\n" + texts.poll_invite(
+            g, rsvp_deadline(g), config.now(), config.penalty_points)
+        await notifier.send_dm(bot, user, text, keyboards.with_app_button(keyboards.rsvp(g), g.id))
+
+
 async def send_poll_invites(bot: Bot, session: AsyncSession, game: Game, skip: User | None = None) -> str:
     """Разослать игрокам в личку: открыт сбор, кнопки ответа прямо в сообщении."""
     deadline = rsvp_deadline(game)

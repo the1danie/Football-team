@@ -183,7 +183,7 @@ async def test_full_flow(h: Harness):
     await h.click(ADMIN, "newgame:publish")
     announce = fake.sent(GROUP)[-1]
     assert "⚽ Игра" in announce.text and "🕗 20:00" in announce.text and "Стадион Динамо" in announce.text
-    assert [b.text for b in buttons(announce.reply_markup)] == ["✅ Буду", "❌ Не буду", "🤔 Пока не знаю"]
+    assert [b.text.split(" · ")[0] for b in buttons(announce.reply_markup)] == ["✅ Буду", "❌ Не буду", "🤔 Пока не знаю"]
     game_id = int(buttons(announce.reply_markup)[0].callback_data.split(":")[1])
 
     # --- отметки в группе (6 — посторонний: не зарегистрирован и не подтверждён — не пускаем)
@@ -563,7 +563,7 @@ async def test_whatsapp_team_without_telegram_group(h: Harness):
         await h.click(ADMIN, f"pl:approve:{(await svc.get_user_by_tg(s, 5)).id}")
     card = fake.sent(5)[-1]
     assert "Игра —" in card.text and "Твой статус: не отмечен" in card.text
-    assert [b.text for b in buttons(card.reply_markup)][:3] == ["✅ Буду", "❌ Не буду", "🤔 Пока не знаю"]
+    assert [b.text.split(" · ")[0] for b in buttons(card.reply_markup)][:3] == ["✅ Буду", "❌ Не буду", "🤔 Пока не знаю"]
     await h.click(5, f"rsvp:{game_id}:yes")
     assert "Твой статус: ✅ Буду" in fake.edits(5)[-1].text
 

@@ -85,7 +85,8 @@ def rsvp(game: Game) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=texts.RSVP_LABELS[s], callback_data=f"rsvp:{game.id}:{s}")
+                InlineKeyboardButton(text=f"{texts.RSVP_LABELS[s]}" + (f" · {texts.WEEKDAYS[game.starts_at.weekday()]}" if game.starts_at else ""),
+                                     callback_data=f"rsvp:{game.id}:{s}")
                 for s in (Rsvp.YES, Rsvp.NO, Rsvp.MAYBE) if not (closed and s == Rsvp.MAYBE)
             ]
         ]

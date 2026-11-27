@@ -175,3 +175,24 @@ async def test_result_buttons_in_bot(h: Harness):
     async with h.sm() as s:
         row = (await s.scalars(select(GameStat).where(GameStat.user_id == rus.id))).one()
         assert (row.goals, row.assists) == (0, 0)
+
+
+async def test_two_polls_dont_blend(h: Harness):
+    """Ответил на тренировку — бот сразу показывает игру, на которую ещё не ответил."""
+    fake = h.fake
+    await h.register(ADMIN, "Даниял", car=True)
+    await h.register(2, "Рустам", car=False)
+    t = await _game_with(h, kind="training")
+    g = await _game_with(h, kind="game")
+    invite = next(m for m in fake.sent(2) if "Открыт сбор: 🏃 ТРЕНИРОВКА" in (m.text or ""))
+    assert "придёшь?" in invite.text
+    assert all(" · " in b.text for b in buttons(invite.reply_markup) if b.callback_data and b.callback_data.startswith("rsvp:"))
+    fake.reset()
+    await h.click(2, f"rsvp:{t}:yes")
+    follow = [m for m in fake.sent(2) if "Есть ещё опрос" in (m.text or "")]
+    assert len(follow) == 1 and "ИГРА" in follow[0].text
+    assert f"rsvp:{g}:yes" in [b.callback_data for b in buttons(follow[0].reply_markup)]
+    fake.reset()
+    await h.click(2, f"rsvp:{g}:no")  # ответил на всё — больше не напоминает
+    await h.click(2, f"rsvp:{t}:no")  # смена ответа — тоже
+    assert not any("Есть ещё опрос" in (m.text or "") for m in fake.sent(2))

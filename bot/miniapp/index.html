@@ -552,7 +552,14 @@ function gamesTab() {
   if (!d.games.length) return h("div", {}, head, h("div", { class: "card empty" }, h("div", { class: "big" }, "🏟"),
     h("p", {}, "Запланированных игр нет."), d.is_admin ? h("p", { class: "muted small" }, "Создайте игру кнопкой «＋ Новая игра».") : h("p", { class: "muted small" }, "Когда админ создаст игру, бот пришлёт сообщение.")),
     archiveSection());
-  return h("div", {}, head, webBanner(), saveBanner(), plannedSection(), d.games.map(gameCard), archiveSection());
+  const staff = d.user && d.user.staff;
+  const waiting = staff ? [] : d.games.filter((g) => !g.past && !g.my_rsvp && !g.deadline_passed && g.status !== "cancelled");
+  const waitBanner = waiting.length && d.games.length > 1 ? h("div", { class: "card", style: "background:var(--maybe-soft);border:2px solid var(--maybe)" },
+    h("b", {}, `❗ Ждут твоего ответа: ${waiting.length} из ${d.games.length}`),
+    waiting.map((g) => h("button", { class: "row", style: "width:100%;margin-top:8px;text-align:left", onclick: () => {
+      const el = document.getElementById("game-" + g.id); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); } },
+      h("span", { class: "grow" }, `${g.kind_title} · ${g.date_label}, ${g.time}`), h("span", { class: "muted" }, "ответить ›")))) : null;
+  return h("div", {}, head, webBanner(), saveBanner(), waitBanner, plannedSection(), d.games.map(gameCard), archiveSection());
 }
 
 // Созданы заранее: опрос ещё не ушёл — видит только админ.
@@ -750,7 +757,9 @@ function gameCard(g) {
   const mine = g.duties.filter((x) => x.mine);
   const relative = g.day_word === "Сегодня" || g.day_word === "Завтра";
   const staff = d.user && d.user.staff;
-  const card = h("div", { class: "card", id: "game-" + g.id });
+  const waiting = !staff && !g.past && !g.my_rsvp && !g.deadline_passed && g.status !== "cancelled";
+  const card = h("div", { class: "card", id: "game-" + g.id, style: waiting ? "border:2px solid var(--maybe);box-shadow:0 0 0 4px var(--maybe-soft)" : "" });
+  if (waiting) add(card, h("div", { class: "chip warn", style: "margin-bottom:8px;font-weight:700" }, "❗ Ты ещё не ответил на этот опрос"));
   if (g.past) add(card, h("div", { class: "head-row", style: "margin-bottom:6px" },
     h("span", { class: "chip" }, g.status === "cancelled" ? "❌ Отменена" : "🏁 Прошла"),
     S.openPast === g.id ? h("button", { class: "toggle-link", onclick: () => { S.openPast = null; render(); } }, "Свернуть ▲") : null));

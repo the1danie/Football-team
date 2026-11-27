@@ -291,8 +291,19 @@ def game_lines(game: Game) -> list[str]:
     return lines
 
 
+def poll_title(game: Game) -> list[str]:
+    """Две первые строки опроса — чтобы тренировку и игру нельзя было спутать в ленте."""
+    from bot.models import WEEKDAYS_FULL  # noqa: PLC0415
+
+    title = KIND_TITLES.get(game.kind, KIND_TITLES["game"]).upper()  # «⚽ ИГРА» / «🏃 ТРЕНИРОВКА» — крупно
+    if game.kind == "game" and getattr(game, "opponent", None):
+        title += f" против «{game.opponent}»"
+    return [f"📣 <b>Открыт сбор: {title}</b>",
+            f"<b>{WEEKDAYS_FULL[game.starts_at.weekday()].capitalize()}, {fmt_date(game.starts_at)}</b> — придёшь?"]
+
+
 def poll_invite(game: Game, deadline: datetime, now: datetime, penalty_points: int) -> str:
-    lines = ["📣 <b>Открыт сбор на игру — кто придёт?</b>", ""] + game_lines(game)
+    lines = poll_title(game) + [""] + game_lines(game)[2:]
     lines += ["", f"Отметься {until(deadline, now)} кнопками ниже."]
     if game.min_players:
         lines.append(f"Нужно минимум {game.min_players} {people_word(game.min_players)}.")

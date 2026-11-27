@@ -67,3 +67,5 @@ async def on_rsvp(cb: CallbackQuery, session: AsyncSession, bot: Bot):
         )
         show_alert = True
     await cb.answer(alert, show_alert=show_alert)
+    if result.old_status is None and cb.message and cb.message.chat.type == "private":
+        await actions.remind_other_polls(bot, session, user, game.id)
