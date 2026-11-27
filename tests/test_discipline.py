@@ -252,7 +252,7 @@ async def test_removed_player_not_in_rating(team):  # noqa: F811
 
 
 async def test_came_without_yes(team):  # noqa: F811
-    """Нажал «Не буду», а пришёл: стал «Буду», первым на обязанность «после», 1-й раз без минуса, 2-й — −1."""
+    """Нажал «Не буду», а пришёл: стал «Буду», первым на обязанность «после», минуса нет никогда."""
     from datetime import datetime
 
     fake = team  # noqa: F811
@@ -283,17 +283,33 @@ async def test_came_without_yes(team):  # noqa: F811
         cands = {c.user_id: c for c in await svc.build_candidates(s, game)}
         assert cands[aid].penalty_bonus == config.penalty_priority  # первым на «после»
     assert await _open_points(aid) == 0
-    assert any("Здорово, что пришёл" in m.text and "без минуса" in m.text for m in fake.sent(5))
+    assert any("Здорово, что пришёл" in m.text for m in fake.sent(5))
     _, rep = await api(ADMIN, "attendance_report", period="all")
     assert next(r for r in rep["rows"] if r["id"] == aid)["unannounced"] == 1
 
     gid2 = await game_with_no(0)
     await api(ADMIN, "attendance", game_id=gid2, user_id=aid, present=True)
-    assert await _open_points(aid) == 1  # 2-й раз за 30 дней — −1
-    assert any("2-й раз" in m.text for m in fake.sent(5))
-    # сняли отметку — минус уходит, снова «Не буду», минуса за неявку нет
+    assert await _open_points(aid) == 0  # и 2-й раз — без минуса
+    # сняли отметку — снова «Не буду», минуса за неявку нет
     await api(ADMIN, "attendance", game_id=gid2, user_id=aid, present=False)
     assert await _open_points(aid) == 0
     _, st = await api(ADMIN, "state")
     g = next(x for x in st["state"]["games"] if x["id"] == gid2)
     assert aid in {u["id"] for u in g["participants"]["no"]}
+
+
+async def test_old_unannounced_minuses_cancelled_once(team):  # noqa: F811
+    """Уже поставленные минусы «нажал «Не буду», а пришёл» снимаются при обновлении (один раз)."""
+    from bot.db import NO_UNANNOUNCED_MINUS_KEY, init_db
+    from bot.models import Penalty, PenaltyReason, PenaltyStatus, Setting
+
+    aid = await _member(tg_user(5, "Артур"))
+    async with webhook._sessionmaker() as s:
+        s.add(Penalty(user_id=aid, points=1, reason=PenaltyReason.CAME_UNANNOUNCED))
+        s.add(Penalty(user_id=aid, points=1, reason=PenaltyReason.NO_RESPONSE))
+        await s.delete(await s.get(Setting, NO_UNANNOUNCED_MINUS_KEY))
+        await s.commit()
+    await init_db(webhook._engine)
+    assert await _open_points(aid) == 1  # остался только минус за молчание
+    async with webhook._sessionmaker() as s:
+        assert await s.get(Setting, NO_UNANNOUNCED_MINUS_KEY) is not None

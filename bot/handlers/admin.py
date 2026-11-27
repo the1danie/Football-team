@@ -542,7 +542,7 @@ async def penalty_cancel(cb: CallbackQuery, session: AsyncSession, bot: Bot):
 
     found = await session.get(Penalty, int(cb.data.split(":")[1]))
     me = await svc.get_user_by_tg(session, cb.from_user.id)
-    if found is not None and me is not None and found.user_id == me.id:
+    if found is not None and me is not None and found.user_id == me.id and not config.is_owner(cb.from_user.id):
         await cb.answer("Свои минусы админ не снимает — попросите другого админа.", show_alert=True)
         return
     penalty = await svc.cancel_penalty(session, int(cb.data.split(":")[1]))
@@ -596,7 +596,7 @@ async def attendance_toggle(cb: CallbackQuery, session: AsyncSession, bot: Bot):
     if game is None or user is None:
         await cb.answer("Не найдено.", show_alert=True)
         return
-    if (present == "1" and (await svc.get_user_by_tg(session, cb.from_user.id)) is user
+    if (present == "1" and not config.is_owner(cb.from_user.id) and (await svc.get_user_by_tg(session, cb.from_user.id)) is user
             and (await svc.attendance(session, game.id)).get(user.id) is False):
         await cb.answer("Свои минусы админ не снимает — попросите другого админа.", show_alert=True)
         return

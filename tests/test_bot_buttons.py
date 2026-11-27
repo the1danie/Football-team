@@ -84,11 +84,11 @@ async def test_late_buttons_in_bot(h: Harness):
     async with h.sm() as s:
         assert not (await svc.open_penalty_points(s, [nur.id])).get(nur.id)
         me = await svc.get_user_by_tg(s, ADMIN)
-    # себе админ форс-мажор не ставит
+    # главный админ может и себе поставить форс-мажор (обычный админ — нет, см. test_late)
     await h.click(ADMIN, f"lta:{gid}:{me.id}:20:0")
     await h.click(ADMIN, f"lta:{gid}:{me.id}:20:1")
     async with h.sm() as s:
-        assert (await svc.open_penalty_points(s, [me.id])).get(me.id) == 1
+        assert not (await svc.open_penalty_points(s, [me.id])).get(me.id)
 
 
 async def _game(h, gid):

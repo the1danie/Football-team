@@ -471,8 +471,9 @@ SELF_MINUS = "Свои минусы админ не снимает — попр�
 
 
 def _not_self(me: User | None, target_id: int | None) -> None:
-    """Админ не может снимать минусы сам себе (и отмечать себе то, что их снимает) — только другой админ."""
-    if me is not None and target_id == me.id:
+    """Админ не может снимать минусы сам себе (и отмечать себе то, что их снимает) — только другой админ.
+    Главному админу можно."""
+    if me is not None and target_id == me.id and not config.is_owner(me.telegram_id):
         raise ApiError(SELF_MINUS, 403)
 
 

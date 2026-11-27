@@ -18,6 +18,7 @@ DEFAULT_DUTIES = [
 # Один раз: «Стирка манишек» объединяется с «Манишками» (история переносится, обязанность выключается).
 MERGE_LAUNDRY_INTO_BIBS = True
 MERGE_LAUNDRY_KEY = "merge_laundry_v1"
+NO_UNANNOUNCED_MINUS_KEY = "no_unannounced_minus_v1"
 BURPEES_STATUS_KEY = "burpees_status_v2"  # v2: ещё и время бёрпи (для 25 → 50 → 75)
 DUTY_PHASES_KEY = "duty_phases_v1"
 
@@ -126,6 +127,14 @@ async def init_db(engine: AsyncEngine) -> None:
         if await session.get(Setting, BURPEES_STATUS_KEY) is None:
             await _mark_burpees_history(session)
             session.add(Setting(key=BURPEES_STATUS_KEY, value="1"))
+        if await session.get(Setting, NO_UNANNOUNCED_MINUS_KEY) is None:
+            # «Нажал «Не буду», а пришёл» больше без минуса — снять уже поставленные (один раз).
+            from bot.models import Penalty, PenaltyReason, PenaltyStatus  # noqa: PLC0415
+
+            for p in (await session.scalars(select(Penalty).where(
+                    Penalty.reason == PenaltyReason.CAME_UNANNOUNCED, Penalty.status == PenaltyStatus.OPEN))).all():
+                p.status = PenaltyStatus.CANCELLED
+            session.add(Setting(key=NO_UNANNOUNCED_MINUS_KEY, value="1"))
         await session.commit()
 
 

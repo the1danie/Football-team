@@ -1186,7 +1186,7 @@ function lateSheet() {
       stepper(f.minutes, 0, 180, (v) => { f.minutes = v; render(); }, (v) => `${v} мин`)),
     h("div", { class: "people", style: "margin:4px 0 8px" }, [5, 10, 15, 20, 30, 45, 60].map((m) => h("button", { class: "chip" + (f.minutes === m ? " accent" : ""),
       onclick: () => { f.minutes = m; render(); } }, `${m}`))),
-    u.id === (S.data.user && S.data.user.id) ? h("div", { class: "small muted", style: "margin:6px 2px" }, "Себе админ ставит опоздание, но снять или поставить «форс-мажор» может только другой админ.") :
+    u.id === (S.data.user && S.data.user.id) && !S.data.real_owner ? h("div", { class: "small muted", style: "margin:6px 2px" }, "Себе админ ставит опоздание, но снять или поставить «форс-мажор» может только другой админ.") :
     h("div", { class: "switch-row" }, h("div", { class: "grow" }, h("div", {}, "Форс-мажор — без минуса"),
       h("div", { class: "small muted" }, "Уважительная причина: не было возможности предупредить и т. п.")),
       h("button", { class: "switch" + (f.excused ? " on" : ""), role: "switch", "aria-checked": f.excused ? "true" : "false", onclick: () => { f.excused = !f.excused; render(); } })),
@@ -1860,7 +1860,7 @@ function playerSheet() {
     p.minuses && p.minuses.length ? h("div", {}, h("div", { class: "label" }, `Минусы: ${p.minuses.length}`),
       p.id === (S.data.user && S.data.user.id) ? h("div", { class: "small muted", style: "margin:-4px 2px 8px" }, "Свои минусы админ не снимает — их может снять другой админ.") : null,
       h("div", { class: "list" }, p.minuses.map((m) => h("div", { class: "item" }, h("div", { class: "grow small" }, `−${m.points} · ${m.reason}: ${m.game}`),
-        p.id === (S.data.user && S.data.user.id) ? null : h("button", { class: "btn small secondary", onclick: async () => { const r = await api("penalty_cancel", { penalty_id: m.id }); if (r) { S.sheet.player = r.player; render(); } } }, "Снять"))))) : null,
+        p.id === (S.data.user && S.data.user.id) && !S.data.real_owner ? null : h("button", { class: "btn small secondary", onclick: async () => { const r = await api("penalty_cancel", { penalty_id: m.id }); if (r) { S.sheet.player = r.player; render(); } } }, "Снять"))))) : null,
     h("div", { style: "margin-top:16px" },
       p.status === "approved" && !p.is_owner ? h("button", { class: "btn danger", onclick: () => playerOp(p, "block") }, "Удалить из команды") : null,
       p.status === "blocked" ? h("button", { class: "btn secondary", onclick: () => playerOp(p, "approve") }, "♻️ Вернуть в команду") : null),

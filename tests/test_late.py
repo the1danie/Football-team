@@ -110,34 +110,44 @@ async def test_late_in_attendance_report(team):  # noqa: F811
 
 
 async def test_admin_cannot_remove_own_minuses(team):  # noqa: F811
+    """Обычный админ свои минусы не снимает — только другой админ. Главному админу можно и себе."""
     marat = tg_user(5, "Марат")
     mid = await _member(marat)
-    await api(ADMIN, "player", user_id=mid, op="admin_on")  # второй админ
+    await api(ADMIN, "player", user_id=mid, op="admin_on")  # второй (не главный) админ
     _, st = await api(ADMIN, "state")
-    me = st["state"]["user"]["id"]
+    owner = st["state"]["user"]["id"]
     gid = await _game_starting(-30, ADMIN, marat)
 
-    # себе опоздание поставить можно, снять/форс-мажор — нет
-    assert (await api(ADMIN, "late", game_id=gid, user_id=me, minutes=15))[0] == 200
-    assert await _open_points(me) == 1
-    status, res = await api(ADMIN, "late", game_id=gid, user_id=me, minutes=15, excused=True)
+    # Марат: себе опоздание поставить можно, снять/форс-мажор — нет
+    assert (await api(marat, "late", game_id=gid, user_id=mid, minutes=15))[0] == 200
+    assert await _open_points(mid) == 1
+    status, res = await api(marat, "late", game_id=gid, user_id=mid, minutes=15, excused=True)
     assert status == 403 and "другого админа" in res["error"]
-    assert (await api(ADMIN, "late", game_id=gid, user_id=me, minutes=0))[0] == 403
-    assert await _open_points(me) == 1
+    assert (await api(marat, "late", game_id=gid, user_id=mid, minutes=0))[0] == 403
+    assert await _open_points(mid) == 1
 
-    # «Снять» в списке минусов — себе нельзя, другому админу — можно
-    _, p = await api(ADMIN, "player_detail", user_id=me)
+    # «Снять» в списке минусов — себе нельзя, главному админу — можно
+    _, p = await api(marat, "player_detail", user_id=mid)
     pid = p["minuses"][0]["id"]
-    assert (await api(ADMIN, "penalty_cancel", penalty_id=pid))[0] == 403
-    assert await _open_points(me) == 1
-    assert (await api(marat, "penalty_cancel", penalty_id=pid))[0] == 200
-    assert await _open_points(me) == 0
+    assert (await api(marat, "penalty_cancel", penalty_id=pid))[0] == 403
+    assert await _open_points(mid) == 1
+    assert (await api(ADMIN, "penalty_cancel", penalty_id=pid))[0] == 200
+    assert await _open_points(mid) == 0
 
     # «не пришёл» → «пришёл» себе (снимает минус за неявку) — нельзя
-    await api(ADMIN, "attendance", game_id=gid, user_id=me, present=False)
-    assert await _open_points(me) >= 1
-    assert (await api(ADMIN, "attendance", game_id=gid, user_id=me, present=True))[0] == 403
-    assert (await api(marat, "attendance", game_id=gid, user_id=me, present=True))[0] == 200
+    await api(marat, "attendance", game_id=gid, user_id=mid, present=False)
+    assert await _open_points(mid) >= 1
+    assert (await api(marat, "attendance", game_id=gid, user_id=mid, present=True))[0] == 403
+    assert (await api(ADMIN, "attendance", game_id=gid, user_id=mid, present=True))[0] == 200
+
+    # главный админ — и себе: опоздание с форс-мажором, «Снять»
+    assert (await api(ADMIN, "late", game_id=gid, user_id=owner, minutes=15))[0] == 200
+    assert (await api(ADMIN, "late", game_id=gid, user_id=owner, minutes=15, excused=True))[0] == 200
+    assert await _open_points(owner) == 0
+    await api(ADMIN, "late", game_id=gid, user_id=owner, minutes=20)
+    _, p = await api(ADMIN, "player_detail", user_id=owner)
+    assert (await api(ADMIN, "penalty_cancel", penalty_id=p["minuses"][0]["id"]))[0] == 200
+    assert await _open_points(owner) == 0
 
 
 def test_late_notice_window_is_whole_game_day():

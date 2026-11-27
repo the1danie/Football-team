@@ -144,25 +144,10 @@ async def unannounced_in_window(session: AsyncSession, user_id: int, now: dateti
 
 
 async def came_unannounced(bot: Bot, session: AsyncSession, game: Game, user: User) -> str:
-    """Пришёл без «Буду»: 1-й раз за 30 дней — без минуса, дальше −1, −2… Возвращает текст игроку."""
-    n = await unannounced_in_window(session, user.id)
-    points = transfer_points(n)
-    days = TRANSFER_WINDOW.days
-    text = (f"👍 Здорово, что пришёл на {texts.game_header(game)}! Ты отвечал «Не буду», поэтому вода "
+    """Пришёл без «Буду»: минуса нет (решение команды) — только обязанность после игры в первую очередь."""
+    return (f"👍 Здорово, что пришёл на {texts.game_header(game)}! Ты отвечал «Не буду», поэтому вода "
             "распределилась без тебя — после тренировки обязанность (мячи или манишки) в первую очередь достанется тебе.\n"
             "В следующий раз, если идёшь, нажми «Буду» — так обязанности делятся честно.")
-    if not points:
-        return text + f"\nПервый раз за {days} дней — без минуса, дальше −1, −2 и т. д."
-    exists = await session.scalar(select(Penalty).where(
-        Penalty.user_id == user.id, Penalty.game_id == game.id, Penalty.reason == PenaltyReason.CAME_UNANNOUNCED,
-        Penalty.status == PenaltyStatus.OPEN))
-    if exists is not None:
-        return text
-    total = await penalize(bot, session, user, game, points, PenaltyReason.CAME_UNANNOUNCED)
-    await notifier.notify_admins(
-        bot, f"🙈 {texts.h(user.name)} нажал «Не буду», а пришёл — {n}-й раз за {days} дней: −{points} (всего −{total})."
-    )
-    return text + f"\n⚠️ Уже {n}-й раз за {days} дней: −{points}. Всего минусов: {total}."
 
 
 async def unannounced_undone(session: AsyncSession, game: Game, user: User) -> None:
@@ -261,7 +246,7 @@ SELF_MINUS = "Свои минусы админ не снимает — попр�
 
 async def check_self_late(session: AsyncSession, actor: User | None, target: User, game: Game, minutes, excused) -> None:
     """Себе админ опоздание ставит, но уменьшить/снять/форс-мажор — только другой админ."""
-    if actor is None or actor.id != target.id:
+    if actor is None or actor.id != target.id or config.is_owner(actor.telegram_id):  # главному админу можно
         return
     old = await session.scalar(select(Penalty).where(
         Penalty.user_id == target.id, Penalty.game_id == game.id,
